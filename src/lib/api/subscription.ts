@@ -90,7 +90,7 @@ export const subscriptionApi = {
 
       // Get user profile - gracefully handle missing columns (migration not run yet)
       let profile: any = null;
-      let tier = 'free';
+      let tier: 'free' | 'paid' = 'free';
       
       try {
         const { data, error: profileError } = await supabase
@@ -111,7 +111,8 @@ export const subscriptionApi = {
           }
         } else {
           profile = data;
-          tier = profile?.subscription_tier || 'free';
+          const subscriptionTier = profile?.subscription_tier;
+          tier = (subscriptionTier === 'paid' || subscriptionTier === 'free') ? subscriptionTier : 'free';
         }
       } catch (err: any) {
         // Handle column not found errors gracefully
