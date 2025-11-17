@@ -90,7 +90,8 @@ export type Background = {
 export type ProjectType =
   | "REDDIT_STORY"
   | "TWO_CHAR_CONVO"
-  | "NORMAL_STORY";
+  | "NORMAL_STORY"
+  | "story";
 
 export type RenderStatus = "QUEUED" | "RENDERING" | "READY" | "FAILED";
 
