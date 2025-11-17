@@ -151,9 +151,9 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       if (currentDraft.characters.A) {
         const result = await charactersApi.create(project.id, {
           name: currentDraft.characters.A.name,
-          voice_id: currentDraft.characters.A.voiceId,
+          voice_id: currentDraft.characters.A.voiceId ?? undefined,
           voice_provider: "elevenlabs",
-          avatar_url: currentDraft.characters.A.imageUrl,
+          avatar_url: currentDraft.characters.A.avatarUrl,
           position: 0,
         });
         const character = (result as any).character;
@@ -167,9 +167,9 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       if (currentDraft.characters.B) {
         const result = await charactersApi.create(project.id, {
           name: currentDraft.characters.B.name,
-          voice_id: currentDraft.characters.B.voiceId,
+          voice_id: currentDraft.characters.B.voiceId ?? undefined,
           voice_provider: "elevenlabs",
-          avatar_url: currentDraft.characters.B.imageUrl,
+          avatar_url: currentDraft.characters.B.avatarUrl,
           position: 1,
         });
         const character = (result as any).character;
@@ -198,8 +198,8 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         userId: userId,
         type: currentDraft.type,
         title: currentDraft.title,
-        status: "DRAFT",
-        characters: characters,
+        status: "QUEUED",
+        characters: characters as { A: Character; B: Character },
         script: currentDraft.script,
         overlays: currentDraft.overlays,
         textOverlays: currentDraft.textOverlays,
@@ -207,8 +207,8 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         previewUrl: null,
         finalUrl: null,
         durationSec: null,
-        createdAt: project.created_at,
-        updatedAt: project.updated_at,
+        createdAt: (project as any).created_at || new Date().toISOString(),
+        updatedAt: (project as any).updated_at || new Date().toISOString(),
       };
 
       // Add to local state
