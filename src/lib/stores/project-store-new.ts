@@ -149,13 +149,14 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       const characters: { A: any; B: any } = { A: null, B: null };
       
       if (currentDraft.characters.A) {
-        const { character } = await charactersApi.create(project.id, {
+        const result = await charactersApi.create(project.id, {
           name: currentDraft.characters.A.name,
           voice_id: currentDraft.characters.A.voiceId,
           voice_provider: "elevenlabs",
           avatar_url: currentDraft.characters.A.imageUrl,
           position: 0,
         });
+        const character = (result as any).character;
         characters.A = {
           ...currentDraft.characters.A,
           id: character.id,
@@ -164,13 +165,14 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       }
 
       if (currentDraft.characters.B) {
-        const { character } = await charactersApi.create(project.id, {
+        const result = await charactersApi.create(project.id, {
           name: currentDraft.characters.B.name,
           voice_id: currentDraft.characters.B.voiceId,
           voice_provider: "elevenlabs",
           avatar_url: currentDraft.characters.B.imageUrl,
           position: 1,
         });
+        const character = (result as any).character;
         characters.B = {
           ...currentDraft.characters.B,
           id: character.id,
