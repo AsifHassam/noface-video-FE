@@ -24,7 +24,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { SignInCard } from "@/components/auth/sign-in-card";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -707,7 +707,10 @@ export default function HomePage() {
             transition={{ duration: 0.6 }}
             className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 p-8 sm:p-12 text-center text-white shadow-2xl"
           >
-            <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10" />
+            <div className="absolute inset-0 opacity-10" style={{
+              backgroundImage: `repeating-linear-gradient(0deg, rgba(255,255,255,0.1) 0px, transparent 1px, transparent 40px, rgba(255,255,255,0.1) 41px),
+                                repeating-linear-gradient(90deg, rgba(255,255,255,0.1) 0px, transparent 1px, transparent 40px, rgba(255,255,255,0.1) 41px)`
+            }} />
             <div className="relative z-10">
               <h2 className="text-3xl sm:text-4xl font-bold lg:text-5xl">
                 Ready to Go Viral?
@@ -742,6 +745,12 @@ export default function HomePage() {
       {/* Sign In Dialog */}
       <Dialog open={signInDialogOpen} onOpenChange={setSignInDialogOpen}>
         <DialogContent className="max-w-md p-0 border-none bg-transparent shadow-none">
+          <DialogTitle className="sr-only">
+            Sign in to your account
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Sign in to your account to create faceless videos
+          </DialogDescription>
           <SignInCard />
         </DialogContent>
       </Dialog>

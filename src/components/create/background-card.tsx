@@ -8,6 +8,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Play, Eye } from "lucide-react";
@@ -96,6 +97,9 @@ export function BackgroundCard({
             <DialogContent className="max-w-4xl rounded-3xl">
               <DialogHeader>
                 <DialogTitle>{background.name}</DialogTitle>
+                <DialogDescription>
+                  Preview this background video before selecting it for your project.
+                </DialogDescription>
               </DialogHeader>
               <div className="aspect-video w-full overflow-hidden rounded-2xl bg-black">
                 {background.previewUrl ? (

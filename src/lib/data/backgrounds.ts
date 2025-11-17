@@ -1,10 +1,17 @@
 import type { Background } from "@/types";
 
 // Get server URL for background videos
+// Uses NEXT_PUBLIC_VIDEO_API_URL if set, otherwise falls back to NEXT_PUBLIC_REMOTION_SERVER_URL
+// (since background videos are served from the same remotion server)
 const getServerUrl = () => {
-  if (typeof window === "undefined") return "http://localhost:3001";
-  // In production, this should be an environment variable
-  return process.env.NEXT_PUBLIC_VIDEO_API_URL || "http://localhost:3001";
+  if (typeof window === "undefined") {
+    return process.env.NEXT_PUBLIC_VIDEO_API_URL || 
+           process.env.NEXT_PUBLIC_REMOTION_SERVER_URL || 
+           "https://nofacevideo-0f67ae173a97.herokuapp.com";
+  }
+  return process.env.NEXT_PUBLIC_VIDEO_API_URL || 
+         process.env.NEXT_PUBLIC_REMOTION_SERVER_URL || 
+         "https://nofacevideo-0f67ae173a97.herokuapp.com";
 };
 
 const BACKGROUND_VIDEO_MAP: Record<string, string> = {

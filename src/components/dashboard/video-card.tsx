@@ -5,7 +5,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Play, EllipsisVertical, Download, Trash2, Edit, Check, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -389,6 +389,9 @@ export const VideoCard = ({ project, onDelete }: { project: Project; onDelete: (
           <DialogContent className="max-w-xl rounded-3xl">
             <DialogHeader>
               <DialogTitle>{project.title}</DialogTitle>
+              <DialogDescription>
+                Preview your video in vertical format (9:16) optimized for TikTok and Reels.
+              </DialogDescription>
             </DialogHeader>
             {/* Vertical video container for TikTok/Reels format (9:16) */}
             <div className="mx-auto aspect-[9/16] w-full max-w-sm overflow-hidden rounded-2xl bg-black">
