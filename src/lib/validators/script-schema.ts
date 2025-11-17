@@ -33,7 +33,7 @@ type CharacterMap = {
   B: string;
 };
 
-const SPEAKER_PATTERN = /^\s*\[(?<speaker>.+?)\]\s*:\s*(?<text>.+)$/;
+const SPEAKER_PATTERN = /^\s*\[(.+?)\]\s*:\s*(.+)$/;
 
 export const parseScriptInput = (
   raw: string,
@@ -49,7 +49,7 @@ export const parseScriptInput = (
 
   trimmedLines.forEach((line, index) => {
     const match = line.match(SPEAKER_PATTERN);
-    if (!match?.groups?.speaker || !match.groups.text) {
+    if (!match || !match[1] || !match[2]) {
       errors.push({
         index,
         message: "Use the format [Character]: dialogue.",
@@ -57,8 +57,8 @@ export const parseScriptInput = (
       return;
     }
 
-    const speakerName = match.groups.speaker.trim().toLowerCase();
-    const text = match.groups.text.trim();
+    const speakerName = match[1].trim().toLowerCase();
+    const text = match[2].trim();
 
     let speaker: ScriptLine["speaker"] | null = null;
     if (speakerName === characters.A.toLowerCase()) {
@@ -68,7 +68,7 @@ export const parseScriptInput = (
     } else {
       errors.push({
         index,
-        message: `Unknown speaker "${match.groups.speaker}"`,
+        message: `Unknown speaker "${match[1]}"`,
       });
       return;
     }
