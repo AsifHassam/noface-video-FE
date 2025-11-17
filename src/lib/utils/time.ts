@@ -13,15 +13,15 @@ export const msToTimestamp = (ms: number): string => {
 export const timestampToMs = (timestamp: string): number => {
   const match =
     timestamp?.match(
-      /^(?<hours>\d{1,2}):(?<minutes>\d{2}):(?<seconds>\d{2})\.(?<ms>\d{1,3})$/,
+      /^(\d{1,2}):(\d{2}):(\d{2})\.(\d{1,3})$/,
     ) ?? null;
 
-  if (!match?.groups) return 0;
+  if (!match) return 0;
 
-  const hours = Number(match.groups.hours ?? 0);
-  const minutes = Number(match.groups.minutes ?? 0);
-  const seconds = Number(match.groups.seconds ?? 0);
-  const milliseconds = Number(match.groups.ms ?? 0);
+  const hours = Number(match[1] ?? 0);
+  const minutes = Number(match[2] ?? 0);
+  const seconds = Number(match[3] ?? 0);
+  const milliseconds = Number(match[4] ?? 0);
 
   return hours * 3_600_000 + minutes * 60_000 + seconds * 1_000 + milliseconds;
 };
