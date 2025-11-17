@@ -1,0 +1,15 @@
+[build]
+  command = "npm run build"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Environment variables should be set in Netlify dashboard:
+# NEXT_PUBLIC_SUPABASE_URL
+# NEXT_PUBLIC_SUPABASE_ANON_KEY
+# NEXT_PUBLIC_REMOTION_SERVER_URL (optional)
+# NEXT_PUBLIC_VIDEO_API_URL (optional)
+

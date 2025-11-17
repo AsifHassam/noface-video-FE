@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FacelessForge (Front-end MVP)
+
+FacelessForge is a Next.js 14 application built with TypeScript, Tailwind CSS, Zustand, and shadcn/ui. It demonstrates the full "2 Characters Having a Conversation" creation flow with **real video generation** using the remotion video server.
+
+## Features
+- Mock authentication with localStorage persistence (optional Supabase button placeholder)
+- Authenticated dashboard with seeded and user-created projects, status badges, and preview dialog
+- Guided creation flow with stepper: character selection, script editor with validation, preview & overlays
+- **Real video generation** with free Google TTS (no API keys required)
+- Subtitles editor with auto-generation, overlay uploads (client previews)
+- Framer Motion micro-interactions, accessible UI, responsive layouts, and sonner toasts
 
 ## Getting Started
 
-First, run the development server:
-
+### 1. Start the Video Server (Required for video generation)
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cd ../remotion-video/server
+npm install
+npm start
 ```
+Server will run on http://localhost:3001
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Start the Frontend
+```bash
+npm install
+npm run dev
+```
+> Prefer pnpm? Run `pnpm install && pnpm dev` instead.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Open http://localhost:3000 to explore the marketing page. Sign in with any email to access the dashboard and creation flow.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**🎬 To generate TikTok/Reels videos:**
+1. Select 2 characters
+2. Write your script
+3. Click "Next: Preview"
+4. Click "Generate TikTok/Reels Preview"
+5. Wait 30-60 seconds for your vertical video (1080×1920)!
 
-## Learn More
+See [VIDEO_PREVIEW_INTEGRATION.md](./VIDEO_PREVIEW_INTEGRATION.md) for detailed documentation.
 
-To learn more about Next.js, take a look at the following resources:
+## Tech Stack
+- Next.js 14 App Router + TypeScript
+- Tailwind CSS (v4) + shadcn/ui components
+- Zustand for state, React Hook Form + Zod for validation
+- Framer Motion, lucide-react icons, sonner toasts
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Notes
+- **Video Generation:** Real videos are generated using the remotion server with free Google TTS
+- **Storage:** All data (draft projects, user preferences) stored in browser localStorage
+- **Persist Middleware:** State persists across page refreshes thanks to Zustand persist middleware
+- Pricing and Settings sections are intentionally disabled with tooltips ("Coming soon")
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Documentation
+- [Video Preview Integration Guide](./VIDEO_PREVIEW_INTEGRATION.md) - How the video generation works
+- [Frontend Specification](./FEspec.md) - Original design spec
+- [Remotion Server Docs](../remotion-video/server/README.md) - Backend video server documentation
