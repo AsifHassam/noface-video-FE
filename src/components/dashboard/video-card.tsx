@@ -82,12 +82,14 @@ export const VideoCard = ({ project, onDelete }: { project: Project; onDelete: (
         previewRoute = "/app/create/two-char/preview?editing=true";
       } 
       // Check if it's explicitly a story narration project
-      // Note: "story" is stored as metadata.type, not in ProjectType enum
+      // Note: Story narration type can be stored as "STORY_NARRATION", "story", "NORMAL_STORY", or "REDDIT_STORY" in metadata.type
       else if (
         String(effectiveType) === "story" || 
+        effectiveType === "STORY_NARRATION" ||
         effectiveType === "NORMAL_STORY" || 
         effectiveType === "REDDIT_STORY" ||
-        metadataType === "story"
+        metadataType === "story" ||
+        metadataType === "STORY_NARRATION"
       ) {
         previewRoute = "/app/create/story/preview?editing=true";
       }

@@ -13,9 +13,10 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Download } from "lucide-react";
+import { Download, ChevronDown, ChevronUp } from "lucide-react";
 import { config } from "@/lib/config";
 import { supabase } from "@/lib/supabase";
+import { RenderWaitGame } from "@/components/create/RenderWaitGame";
 
 const steps = [
   { label: "Step 1", description: "Write narration" },
@@ -96,6 +97,7 @@ export default function StoryPreviewPage() {
 
   const subtitleText = draft?.srtText ?? "";
   const [showSubtitles, setShowSubtitles] = useState(draft?.subtitleEnabled ?? true);
+  const [isSubtitlesExpanded, setIsSubtitlesExpanded] = useState(false); // Initially closed
   const [isGenerating, setIsGenerating] = useState(false);
   const [isRenderingFinal, setIsRenderingFinal] = useState(false);
   const [renderProgress, setRenderProgress] = useState(0);
@@ -120,7 +122,19 @@ export default function StoryPreviewPage() {
   }, [subtitleText, showSubtitles]);
   
   const status = draft?.status ?? null;
-  
+
+  // Reset generating state when render completes or fails
+  useEffect(() => {
+    if (status === "READY" || status === "FAILED") {
+      if (isGenerating) {
+        setIsGenerating(false);
+      }
+      if (isRenderingFinal) {
+        setIsRenderingFinal(false);
+      }
+    }
+  }, [status, isGenerating, isRenderingFinal]);
+
   // Calculate progress value for progress bar
   const progressValue = useMemo(() => {
     if (status === "READY" && draft?.finalUrl) return 100;
@@ -319,7 +333,8 @@ export default function StoryPreviewPage() {
         console.warn("⚠️ No render_job_id returned, cannot set up Realtime subscription");
       }
       
-      setIsGenerating(false);
+      // Don't set isGenerating to false here - let it stay true so the game shows
+      // The useEffect will reset it when status becomes READY or FAILED
     } catch (error) {
       console.error("❌ Preview generation error:", error);
       const errorMessage = error instanceof Error 
@@ -709,6 +724,8 @@ export default function StoryPreviewPage() {
           subtitlePosition: draft.subtitlePosition,
           subtitleFontSize: draft.subtitleFontSize,
           subtitleEnabled: showSubtitles,
+          subtitleSingleLine: draft.subtitleSingleLine ?? false,
+          subtitleSingleWord: draft.subtitleSingleWord ?? false,
           playbackRate: draft.playbackRate || 1,
           // Preserve video URLs - don't let them get overwritten
           previewUrl: draft.previewUrl, // Preserve preview URL
@@ -844,38 +861,56 @@ export default function StoryPreviewPage() {
           </div>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
-          <div className="space-y-4">
-            <SubtitlesEditor
-              value={subtitleText}
-              onChange={(value) => {
-                updateDraft({ srtText: value });
-              }}
-              onReset={handleResetSubtitles}
-              segments={subtitleSegments}
-            />
-          </div>
-          <div className="space-y-4">
-            <SubtitleStyleSelector
-              value={draft?.subtitleStyle || "classic"}
-              onChange={(style) => {
-                updateDraft({ subtitleStyle: style });
-                toast.success(`Subtitle style: ${style.replace("-", " ")}`);
-              }}
-              fontSize={draft?.subtitleFontSize || 100}
-              onFontSizeChange={(size) => {
-                updateDraft({ subtitleFontSize: size });
-              }}
-              singleLine={draft?.subtitleSingleLine ?? false}
-              onSingleLineChange={(v) => {
-                updateDraft({ subtitleSingleLine: v });
-              }}
-              singleWord={draft?.subtitleSingleWord ?? false}
-              onSingleWordChange={(v) => {
-                updateDraft({ subtitleSingleWord: v });
-              }}
-            />
-          </div>
+        {/* Collapsible Subtitles Section */}
+        <div className="space-y-4">
+          <Button
+            variant="outline"
+            onClick={() => setIsSubtitlesExpanded(!isSubtitlesExpanded)}
+            className="w-full justify-between rounded-2xl"
+          >
+            <span className="font-medium">Subtitles & Styling</span>
+            {isSubtitlesExpanded ? (
+              <ChevronUp className="h-4 w-4" />
+            ) : (
+              <ChevronDown className="h-4 w-4" />
+            )}
+          </Button>
+          
+          {isSubtitlesExpanded && (
+            <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+              <div className="space-y-4">
+                <SubtitlesEditor
+                  value={subtitleText}
+                  onChange={(value) => {
+                    updateDraft({ srtText: value });
+                  }}
+                  onReset={handleResetSubtitles}
+                  segments={subtitleSegments}
+                />
+              </div>
+              <div className="space-y-4">
+                <SubtitleStyleSelector
+                  value={draft?.subtitleStyle || "classic"}
+                  onChange={(style) => {
+                    updateDraft({ subtitleStyle: style });
+                    toast.success(`Subtitle style: ${style.replace("-", " ")}`);
+                  }}
+                  fontSize={draft?.subtitleFontSize || 100}
+                  onFontSizeChange={(size) => {
+                    updateDraft({ subtitleFontSize: size });
+                  }}
+                  singleLine={draft?.subtitleSingleLine ?? false}
+                  onSingleLineChange={(v) => {
+                    updateDraft({ subtitleSingleLine: v });
+                  }}
+                  singleWord={draft?.subtitleSingleWord ?? false}
+                  onSingleWordChange={(v) => {
+                    updateDraft({ subtitleSingleWord: v });
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Action Buttons & Progress */}
@@ -1048,6 +1083,24 @@ export default function StoryPreviewPage() {
           )}
         </div>
       </div>
+
+      {/* Render Wait Game - Show during preview or final rendering */}
+      <RenderWaitGame
+        open={
+          (isGenerating && (status === "QUEUED" || status === "RENDERING" || status === null)) ||
+          (isRenderingFinal && (status === "RENDERING" || status === null))
+        }
+        title={
+          isRenderingFinal
+            ? "Rendering your final video..."
+            : "Generating your preview..."
+        }
+        description={
+          isRenderingFinal
+            ? "This may take a few minutes. Play a game while you wait!"
+            : "This may take a few minutes. Play a game while you wait!"
+        }
+      />
     </div>
   );
 }

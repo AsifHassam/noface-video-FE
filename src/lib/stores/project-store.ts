@@ -405,14 +405,14 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         });
       }
       
-      // Handle subtitle settings, character sizes, and positions - need to merge with existing metadata
-      if (updates.subtitleStyle || updates.subtitlePosition || updates.subtitleFontSize !== undefined || updates.subtitleEnabled !== undefined || (updates as any).characterSizes || (updates as any).characterPositions) {
+      // Handle subtitle settings, character sizes, positions, and playback rate - need to merge with existing metadata
+      if (updates.subtitleStyle || updates.subtitlePosition || updates.subtitleFontSize !== undefined || updates.subtitleEnabled !== undefined || (updates as any).characterSizes || (updates as any).characterPositions || (updates as any).playbackRate !== undefined) {
         // Fetch current project to get existing metadata
         try {
           const { project: currentProject } = await projectsApi.get(id);
           const existingMetadata = (currentProject as any).metadata || {};
           
-          // Merge subtitle settings and character sizes into metadata
+          // Merge subtitle settings, character sizes, and playback rate into metadata
           const metadata = {
             ...existingMetadata,
             type: existingMetadata.type || 'TWO_CHAR_CONVO',
@@ -424,6 +424,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           if ((updates as any).subtitleSingleLine !== undefined) metadata.subtitleSingleLine = (updates as any).subtitleSingleLine;
           if ((updates as any).subtitleSingleWord !== undefined) metadata.subtitleSingleWord = (updates as any).subtitleSingleWord;
           if (updates.subtitleEnabled !== undefined) metadata.subtitleEnabled = updates.subtitleEnabled;
+          if ((updates as any).playbackRate !== undefined) metadata.playbackRate = (updates as any).playbackRate;
           if ((updates as any).characterSizes) metadata.characterSizes = (updates as any).characterSizes;
           if ((updates as any).characterPositions) metadata.characterPositions = (updates as any).characterPositions;
           
@@ -439,6 +440,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           if ((updates as any).subtitleSingleLine !== undefined) metadata.subtitleSingleLine = (updates as any).subtitleSingleLine;
           if ((updates as any).subtitleSingleWord !== undefined) metadata.subtitleSingleWord = (updates as any).subtitleSingleWord;
           if (updates.subtitleEnabled !== undefined) metadata.subtitleEnabled = updates.subtitleEnabled;
+          if ((updates as any).playbackRate !== undefined) metadata.playbackRate = (updates as any).playbackRate;
           if ((updates as any).characterSizes) metadata.characterSizes = (updates as any).characterSizes;
           if ((updates as any).characterPositions) metadata.characterPositions = (updates as any).characterPositions;
           apiUpdates.metadata = metadata;
@@ -688,7 +690,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       // For story narration projects, we need to preserve scriptInput from metadata or reconstruct it
       // Story narration projects don't have script segments with speakers, they have plain text
       let scriptInput = "";
-      if (projectType === "story" || projectType === "NORMAL_STORY" || projectType === "REDDIT_STORY") {
+      if (projectType === "story" || projectType === "STORY_NARRATION" || projectType === "NORMAL_STORY" || projectType === "REDDIT_STORY") {
         // For story narration, check if scriptInput is stored in metadata or reconstruct from script segments
         // If not available, try to reconstruct from SRT text (extract text from subtitle segments)
         scriptInput = projectMetadata.scriptInput || formattedProject.script?.map((line: ScriptLine) => line.text).join('\n') || "";

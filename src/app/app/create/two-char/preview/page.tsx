@@ -16,7 +16,8 @@ import { useAuthStore } from "@/lib/stores/auth-store";
 import { parseSrtText, generateMockFromScript } from "@/lib/utils/srt";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
-import { Download } from "lucide-react";
+import { Download, ChevronDown, ChevronUp } from "lucide-react";
+import { RenderWaitGame } from "@/components/create/RenderWaitGame";
 
 const steps = [
   { label: "Step 1", description: "Pick two characters" },
@@ -59,6 +60,9 @@ export default function PreviewPage() {
   const [showOverlays, setShowOverlays] = useState(true);
   const subtitleText = draft?.srtText ?? "";
   const [showSubtitles, setShowSubtitles] = useState(false);
+  const [isSubtitlesExpanded, setIsSubtitlesExpanded] = useState(false); // Initially closed
+  const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
+  const [isRenderingFinal, setIsRenderingFinal] = useState(false);
   
   // Initialize captionsGenerated based on whether srtText exists
   // In edit mode, if srtText exists, captions were already generated
@@ -86,6 +90,18 @@ export default function PreviewPage() {
   }, [subtitleText, showSubtitles]);
   
   const status = draft?.status ?? null;
+
+  // Reset generating state when render completes or fails
+  useEffect(() => {
+    if (status === "READY" || status === "FAILED") {
+      if (isGeneratingPreview) {
+        setIsGeneratingPreview(false);
+      }
+      if (isRenderingFinal) {
+        setIsRenderingFinal(false);
+      }
+    }
+  }, [status, isGeneratingPreview, isRenderingFinal]);
 
   // Debug: log status changes
   useEffect(() => {
@@ -130,6 +146,7 @@ export default function PreviewPage() {
     }
     
     try {
+      setIsGeneratingPreview(true);
       toast.info("Queuing video generation...");
       
       // Only pass project ID if we're editing AND it's a valid database project ID
@@ -140,8 +157,11 @@ export default function PreviewPage() {
       console.log("🎬 Calling enqueuePreview with:", { projectId, userId });
       await enqueuePreview(projectId, userId);
       // Don't show success here - it will be shown when the job actually completes
+      // Don't set isGeneratingPreview to false here - let it stay true so the game shows
+      // The useEffect will reset it when status becomes READY or FAILED
     } catch (error) {
       console.error("Preview generation error:", error);
+      setIsGeneratingPreview(false);
       toast.error(
         error instanceof Error 
           ? error.message 
@@ -183,11 +203,14 @@ export default function PreviewPage() {
     }
     
     try {
+      setIsRenderingFinal(true);
       toast.info("Starting final render with all customizations...");
       await simulateRender();
-      toast.success("Final video rendered successfully! 🎬");
+      // Don't set isRenderingFinal to false here - let it stay true so the game shows
+      // The useEffect will reset it when status becomes READY or FAILED
     } catch (error) {
       console.error("Final render error:", error);
+      setIsRenderingFinal(false);
       toast.error(
         error instanceof Error 
           ? error.message 
@@ -232,7 +255,9 @@ export default function PreviewPage() {
           subtitleStyle: draft.subtitleStyle,
           subtitlePosition: draft.subtitlePosition,
           subtitleFontSize: draft.subtitleFontSize,
-          subtitleEnabled: draft.subtitleEnabled,
+          subtitleEnabled: showSubtitles,
+          subtitleSingleLine: draft.subtitleSingleLine ?? false,
+          subtitleSingleWord: draft.subtitleSingleWord ?? false,
           characterSizes: draft.characterSizes,
           characterPositions: draft.characterPositions,
           playbackRate: draft.playbackRate || 1,
@@ -564,40 +589,58 @@ export default function PreviewPage() {
           )}
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
-          <div className="space-y-4">
-            {captionsGenerated && (
-            <SubtitlesEditor
-              value={subtitleText}
-              onChange={(value) => {
-                updateDraft({ srtText: value });
-              }}
-              onReset={handleResetSubtitles}
-              segments={subtitleSegments}
-            />
+        {/* Collapsible Subtitles Section */}
+        <div className="space-y-4">
+          <Button
+            variant="outline"
+            onClick={() => setIsSubtitlesExpanded(!isSubtitlesExpanded)}
+            className="w-full justify-between rounded-2xl"
+          >
+            <span className="font-medium">Subtitles & Styling</span>
+            {isSubtitlesExpanded ? (
+              <ChevronUp className="h-4 w-4" />
+            ) : (
+              <ChevronDown className="h-4 w-4" />
             )}
-          </div>
-          <div className="space-y-4">
-            <SubtitleStyleSelector
-              value={draft?.subtitleStyle || "classic"}
-              onChange={(style) => {
-                updateDraft({ subtitleStyle: style });
-                toast.success(`Subtitle style: ${style.replace("-", " ")}`);
-              }}
-              fontSize={draft?.subtitleFontSize ?? 100}
-              onFontSizeChange={(size) => {
-                updateDraft({ subtitleFontSize: size });
-              }}
-              singleLine={draft?.subtitleSingleLine ?? false}
-              onSingleLineChange={(v) => {
-                updateDraft({ subtitleSingleLine: v });
-              }}
-              singleWord={draft?.subtitleSingleWord ?? false}
-              onSingleWordChange={(v) => {
-                updateDraft({ subtitleSingleWord: v });
-              }}
-            />
-          </div>
+          </Button>
+          
+          {isSubtitlesExpanded && (
+            <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+              <div className="space-y-4">
+                {captionsGenerated && (
+                <SubtitlesEditor
+                  value={subtitleText}
+                  onChange={(value) => {
+                    updateDraft({ srtText: value });
+                  }}
+                  onReset={handleResetSubtitles}
+                  segments={subtitleSegments}
+                />
+                )}
+              </div>
+              <div className="space-y-4">
+                <SubtitleStyleSelector
+                  value={draft?.subtitleStyle || "classic"}
+                  onChange={(style) => {
+                    updateDraft({ subtitleStyle: style });
+                    toast.success(`Subtitle style: ${style.replace("-", " ")}`);
+                  }}
+                  fontSize={draft?.subtitleFontSize ?? 100}
+                  onFontSizeChange={(size) => {
+                    updateDraft({ subtitleFontSize: size });
+                  }}
+                  singleLine={draft?.subtitleSingleLine ?? false}
+                  onSingleLineChange={(v) => {
+                    updateDraft({ subtitleSingleLine: v });
+                  }}
+                  singleWord={draft?.subtitleSingleWord ?? false}
+                  onSingleWordChange={(v) => {
+                    updateDraft({ subtitleSingleWord: v });
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap justify-end gap-3">
           <Button variant="ghost" className="rounded-2xl" onClick={() => router.push("/app/create/two-char/background")}>
@@ -617,6 +660,24 @@ export default function PreviewPage() {
           </Button>
         </div>
       </div>
+
+      {/* Render Wait Game - Show during preview or final rendering */}
+      <RenderWaitGame
+        open={
+          (isGeneratingPreview && (status === "QUEUED" || status === "RENDERING" || status === null)) ||
+          (isRenderingFinal && (status === "RENDERING" || status === null))
+        }
+        title={
+          isRenderingFinal
+            ? "Rendering your final video..."
+            : "Generating your preview..."
+        }
+        description={
+          isRenderingFinal
+            ? "This may take a few minutes. Play a game while you wait!"
+            : "This may take a few minutes. Play a game while you wait!"
+        }
+      />
     </div>
   );
 }

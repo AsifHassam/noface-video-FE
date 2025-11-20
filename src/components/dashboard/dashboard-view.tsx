@@ -8,20 +8,52 @@ import { VideoCard } from "@/components/dashboard/video-card";
 import { SubscriptionCard } from "@/components/dashboard/subscription-card";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { useAuthStore } from "@/lib/stores/auth-store";
+import { subscriptionApi } from "@/lib/api/subscription";
 import { toast } from "sonner";
 import { Loader2, ChevronLeft, ChevronRight } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 const VIDEOS_PER_PAGE = 10;
 
 export const DashboardView = () => {
   const { projects, deleteProject, loadProjects, loading, clearDraft } = useProjectStore();
   const { user } = useAuthStore();
+  const router = useRouter();
   const [currentPage, setCurrentPage] = useState(1);
+  const [canCreateVideo, setCanCreateVideo] = useState(true);
+  const [checkingLimit, setCheckingLimit] = useState(false);
+  const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'paid' | null>(null);
 
   // Load projects from API on mount
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
+
+  // Check subscription limits
+  useEffect(() => {
+    const checkSubscription = async () => {
+      if (!user?.id) {
+        setCanCreateVideo(true); // Allow if not authenticated (for dev/testing)
+        return;
+      }
+      
+      try {
+        setCheckingLimit(true);
+        const result = await subscriptionApi.getSubscriptionInfo();
+        setCanCreateVideo(result.subscription.canCreateVideo);
+        setSubscriptionTier(result.subscription.tier);
+      } catch (error) {
+        console.error("Error checking subscription:", error);
+        // On error, allow creation (don't block users)
+        setCanCreateVideo(true);
+        setSubscriptionTier('free');
+      } finally {
+        setCheckingLimit(false);
+      }
+    };
+
+    checkSubscription();
+  }, [user?.id]);
 
   const userProjects = useMemo(
     () =>
@@ -57,8 +89,56 @@ export const DashboardView = () => {
     setCurrentPage((prev) => Math.min(totalPages, prev + 1));
   };
 
-  const handleCreateNewVideo = () => {
+  const handleCreateNewVideo = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    
+    if (!user?.id) {
+      // If not authenticated, allow navigation (for dev/testing)
+      clearDraft();
+      router.push("/app/create");
+      return;
+    }
+
+    // Check subscription limit before allowing navigation
+    if (checkingLimit) {
+      toast.info("Checking subscription limits...");
+      return;
+    }
+
+    if (!canCreateVideo) {
+      try {
+        const result = await subscriptionApi.getSubscriptionInfo();
+        const { tier, usage, limit } = result.subscription;
+        
+        if (tier === 'free') {
+          toast.error(`You've reached your free plan limit of ${limit} videos.`, {
+            description: "Upgrade to Pro to create unlimited videos!",
+            action: {
+              label: "Upgrade Now",
+              onClick: () => {
+                if (!user?.email) {
+                  toast.error("Email address is required for upgrade");
+                  return;
+                }
+                const redirectUrl = `${window.location.origin}/app/payment/success`;
+                const paystackUrl = `https://paystack.shop/pay/up7whihnxl?email=${encodeURIComponent(user.email)}&callback_url=${encodeURIComponent(redirectUrl)}`;
+                window.location.href = paystackUrl;
+              }
+            }
+          });
+        } else if (tier === 'paid') {
+          toast.error(`You've reached your weekly limit of ${limit} videos. Your limit resets on Monday.`);
+        } else {
+          toast.error("You've reached your video creation limit.");
+        }
+      } catch (error) {
+        toast.error("Failed to check subscription limits. Please try again.");
+      }
+      return;
+    }
+
     clearDraft();
+    router.push("/app/create");
   };
 
   if (loading) {
@@ -81,13 +161,63 @@ export const DashboardView = () => {
             Manage previews, iterate on scripts, and present a polished mock workflow.
           </p>
         </div>
-        <Button asChild className="rounded-2xl">
-          <Link href="/app/create" onClick={handleCreateNewVideo}>Create new video</Link>
+        <Button 
+          className="rounded-2xl"
+          onClick={handleCreateNewVideo}
+          disabled={checkingLimit || (!canCreateVideo && !!user?.id)}
+        >
+          {checkingLimit ? "Checking..." : "Create new video"}
         </Button>
       </div>
       
       {/* Subscription Card */}
       {user && <SubscriptionCard />}
+      
+      {/* Upgrade Prompt when limit reached (only for free tier) */}
+      {user && !canCreateVideo && !checkingLimit && subscriptionTier === 'free' && (
+        <div className="rounded-2xl border border-primary/20 bg-gradient-to-r from-primary/10 to-primary/5 p-6">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-foreground mb-1">
+                You've reached your video limit
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Upgrade to Pro to create unlimited videos and unlock premium features!
+              </p>
+            </div>
+            <Button
+              onClick={() => {
+                if (!user?.email) {
+                  toast.error("Email address is required for upgrade");
+                  return;
+                }
+                const redirectUrl = `${window.location.origin}/app/payment/success`;
+                const paystackUrl = `https://paystack.shop/pay/up7whihnxl?email=${encodeURIComponent(user.email)}&callback_url=${encodeURIComponent(redirectUrl)}`;
+                window.location.href = paystackUrl;
+              }}
+              className="rounded-2xl whitespace-nowrap"
+            >
+              Upgrade to Pro
+            </Button>
+          </div>
+        </div>
+      )}
+      
+      {/* Limit reached message for paid tier (no upgrade option) */}
+      {user && !canCreateVideo && !checkingLimit && subscriptionTier === 'paid' && (
+        <div className="rounded-2xl border border-orange-200 bg-orange-50 p-6">
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-foreground mb-1">
+                You've reached your weekly video limit
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Your limit of 3 videos per week resets every Monday. Come back then to create more videos!
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       
       {userProjects.length === 0 ? (
         <EmptyState />
