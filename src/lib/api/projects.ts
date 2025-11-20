@@ -377,3 +377,9 @@ export const renderApi = {
   },
 };
 
+/**
+ * Named export for getRenderJobStatus for convenience
+ * This allows dynamic imports like: const { getRenderJobStatus } = await import('@/lib/api/projects');
+ */
+export const getRenderJobStatus = renderApi.getRenderJobStatus.bind(renderApi);
+
