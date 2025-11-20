@@ -30,13 +30,14 @@ export default function PreviewPage() {
   const searchParams = useSearchParams();
   const isEditing = searchParams.get("editing") === "true";
   const { user } = useAuthStore();
+  const draft = useProjectStore((state) => state.draft);
   const {
-    draft,
     updateDraft,
     enqueuePreview,
     simulateRender,
     createProjectFromDraft,
     updateProject,
+    unsubscribeFromRenderJob,
   } = useProjectStore();
 
   useEffect(() => {
@@ -86,6 +87,25 @@ export default function PreviewPage() {
   
   const status = draft?.status ?? null;
 
+  // Debug: log status changes
+  useEffect(() => {
+    console.log("🔍 Draft status changed:", {
+      status,
+      queuePosition: draft?.queuePosition,
+      estimatedWaitTime: draft?.estimatedWaitTime,
+      renderProgress: draft?.renderProgress,
+      draftId: draft?.id
+    });
+  }, [status, draft?.queuePosition, draft?.estimatedWaitTime, draft?.renderProgress, draft?.id]);
+
+  // Cleanup: Unsubscribe from realtime updates when component unmounts
+  useEffect(() => {
+    return () => {
+      console.log("🧹 Cleaning up render job subscription on unmount");
+      unsubscribeFromRenderJob();
+    };
+  }, [unsubscribeFromRenderJob]);
+
   // Debug: log duration value
   useEffect(() => {
     console.log("🎥 Preview page - Draft duration:", {
@@ -110,7 +130,7 @@ export default function PreviewPage() {
     }
     
     try {
-      toast.info("Starting video generation with free TTS...");
+      toast.info("Queuing video generation...");
       
       // Only pass project ID if we're editing AND it's a valid database project ID
       // For new projects, draft.id is a local UUID, so we pass undefined to trigger creation
@@ -119,7 +139,7 @@ export default function PreviewPage() {
       
       console.log("🎬 Calling enqueuePreview with:", { projectId, userId });
       await enqueuePreview(projectId, userId);
-      toast.success("Preview generated successfully! 🎉");
+      // Don't show success here - it will be shown when the job actually completes
     } catch (error) {
       console.error("Preview generation error:", error);
       toast.error(
@@ -417,6 +437,8 @@ export default function PreviewPage() {
             }`}>
               {status === "RENDERING" && renderProgress > 0
                 ? `Rendering... ${renderProgress}%`
+                : status === "QUEUED"
+                ? `Queued (Position #${draft?.queuePosition || '?'}) - Est. wait: ${draft?.estimatedWaitTime ? Math.round(draft.estimatedWaitTime / 60) : '?'} min`
                 : status === "FAILED" 
                 ? "Failed - Try again" 
                 : status === "READY" && draft?.finalUrl

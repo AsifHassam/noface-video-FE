@@ -104,6 +104,15 @@ async function apiRequest<T>(
 
     const data = await response.json();
     console.log("🔵 Success:", data);
+    console.log("🔍 Response data structure:", {
+      hasSuccess: 'success' in data,
+      success: data.success,
+      hasRenderJobId: 'render_job_id' in data,
+      renderJobId: data.render_job_id,
+      hasStatus: 'status' in data,
+      status: data.status,
+      allKeys: Object.keys(data)
+    });
     return data;
   } catch (error) {
     console.error("❌ Fetch failed:", error);
@@ -282,19 +291,15 @@ export const scriptApi = {
  */
 export const renderApi = {
   /**
-   * Generate preview video with free TTS
+   * Generate preview video with free TTS (queued)
    */
   async generatePreview(projectId: string): Promise<{
     success: boolean;
-    videoUrl: string;
-    durationSec: number;
-    srtText: string;
-    conversations: Array<{
-      speaker: string;
-      text: string;
-      startMs: number;
-      endMs: number;
-    }>;
+    render_job_id: string | null;
+    status: 'pending' | 'processing' | 'completed' | 'failed';
+    queue_position: number;
+    estimated_wait_time: number;
+    message?: string;
   }> {
     console.log("🎬 renderApi.generatePreview called for project:", projectId);
     return apiRequest(`/api/projects/${projectId}/render/preview`, {
@@ -315,8 +320,12 @@ export const renderApi = {
     characterPositions?: any;
   }): Promise<{
     success: boolean;
-    videoUrl: string;
+    message?: string;
     render_job_id?: string;
+    status?: string;
+    queue_position?: number;
+    estimated_wait_time?: number;
+    videoUrl?: string; // For backward compatibility
   }> {
     console.log("🎬 renderApi.generateFinal called for project:", projectId);
     return apiRequest(`/api/projects/${projectId}/render/final`, {
@@ -332,10 +341,20 @@ export const renderApi = {
     success: boolean;
     render_job: {
       id: string;
-      status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+      status: 'pending' | 'processing' | 'completed' | 'failed';
       progress: number;
       video_url: string | null;
       error_message: string | null;
+      metadata?: {
+        durationSec?: number;
+        srtText?: string;
+        conversations?: Array<{
+          speaker: string;
+          text: string;
+          startMs: number;
+          endMs: number;
+        }>;
+      };
     };
   }> {
     return apiRequest(`/api/projects/${projectId}/render/${jobId}`, {

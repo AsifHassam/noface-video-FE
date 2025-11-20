@@ -21,6 +21,8 @@ import type {
 import { CHARACTERS } from "@/lib/data/characters";
 import { generateMockFromScript, parseSrtText } from "@/lib/utils/srt";
 import { config } from "@/lib/config";
+import { supabase } from "@/lib/supabase";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 type DraftProject = {
   id: string;
@@ -49,6 +51,8 @@ type DraftProject = {
   characterPositions?: CharacterPositions;
   renderProgress?: number;
   playbackRate?: number;
+  queuePosition?: number;
+  estimatedWaitTime?: number;
   updatedAt: string;
 };
 
@@ -57,6 +61,8 @@ type ProjectStoreState = {
   draft: DraftProject;
   loading: boolean;
   error: string | null;
+  renderJobSubscription: RealtimeChannel | null;
+  realtimeConnected: boolean;
   
   // Project management
   loadProjects: () => Promise<void>;
@@ -74,6 +80,10 @@ type ProjectStoreState = {
   // Video generation
   enqueuePreview: (projectId?: string, userId?: string) => Promise<void>;
   simulateRender: (projectId?: string) => Promise<void>;
+  
+  // Realtime subscriptions
+  subscribeToRenderJob: (jobId: string, projectId: string) => void;
+  unsubscribeFromRenderJob: () => void;
 };
 
 const initialDraft = (): DraftProject => ({
@@ -121,6 +131,8 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
   draft: initialDraft(),
   loading: false,
   error: null,
+  renderJobSubscription: null,
+  realtimeConnected: false,
 
   /**
    * Load all projects from API
@@ -447,7 +459,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         let updatedDraft = state.draft;
         
         if (shouldUpdateDraft) {
-          // Merge updates into draft, preserving previewUrl/finalUrl
+          // Merge updates into draft, preserving previewUrl/finalUrl and status
           const draftUpdates: Partial<DraftProject> = {
             ...updates,
             // Explicitly preserve previewUrl and finalUrl if they weren't in updates
@@ -455,6 +467,8 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
             finalUrl: updates.finalUrl !== undefined ? (updates.finalUrl || null) : state.draft.finalUrl,
             // Ensure srtText is always a string (not null)
             srtText: updates.srtText !== undefined ? (updates.srtText || '') : state.draft.srtText,
+            // Preserve status if it wasn't explicitly updated (don't overwrite QUEUED/RENDERING with null)
+            status: updates.status !== undefined ? updates.status : state.draft.status,
             updatedAt: new Date().toISOString(),
           };
           
@@ -774,8 +788,32 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           throw new Error("Failed to create project");
         }
         
+        if (!newProject.id) {
+          console.error("❌ CRITICAL: Project created but ID is missing!", newProject);
+          throw new Error("Project created but ID is missing");
+        }
+        
         targetProjectId = newProject.id;
-        console.log("✅ Project created:", targetProjectId);
+        console.log("✅ Project created with ID:", targetProjectId);
+        console.log("🔍 Verifying targetProjectId:", {
+          targetProjectId,
+          type: typeof targetProjectId,
+          isUndefined: targetProjectId === undefined,
+          isNull: targetProjectId === null,
+          isEmpty: targetProjectId === ''
+        });
+        
+        // IMPORTANT: Update draft ID to match the new project ID
+        // This ensures the status update works correctly
+        // targetProjectId is guaranteed to be a string at this point (we validated above)
+        const projectIdForDraft: string = targetProjectId;
+        set((state) => ({
+          draft: {
+            ...state.draft,
+            id: projectIdForDraft,
+          }
+        }));
+        console.log("🔄 Updated draft ID to match project ID:", projectIdForDraft);
       } else {
         console.log("📝 Using existing project ID:", targetProjectId);
         console.log("📝 Draft has characters:", draft?.characters);
@@ -787,71 +825,172 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         }
       }
       
-      // Update status to RENDERING in draft
-      set((state) => ({
-        draft: { ...state.draft, status: "RENDERING" }
-      }));
-      
-      // Call render API
-      console.log("🎬 Calling renderApi.generatePreview for project:", targetProjectId);
-      const result = await renderApi.generatePreview(targetProjectId);
-      console.log("✅ Preview result:", result);
-      
-      // Update draft with results (always update, whether new or editing)
-      console.log("📝 Updating draft with preview results:", {
-        videoUrl: result.videoUrl,
-        durationSec: result.durationSec,
-        srtTextLength: result.srtText?.length || 0,
-        srtTextPreview: result.srtText?.substring(0, 100) || 'No SRT'
-      });
-      
-      set((state) => ({
-        draft: {
-          ...state.draft,
-          id: targetProjectId, // Store the project ID so we don't create duplicates
-          status: "READY",
-          previewUrl: result.videoUrl,
-          durationSec: result.durationSec,
-          srtText: result.srtText,
-          originalSrtText: result.srtText, // Store original for reset
-          subtitleEnabled: true, // Ensure subtitles are ON after preview
-        }
-      }));
-      
-      // Also update in projects list if it exists
-      set((state) => ({
-        projects: state.projects.map((p) =>
-          p.id === targetProjectId
-            ? {
-                ...p,
-                status: "READY" as RenderStatus,
-                previewUrl: result.videoUrl,
-                durationSec: result.durationSec,
-                srtText: result.srtText,
-              }
-            : p
-        ),
-      }));
-      
-      // IMPORTANT: Save preview URL to database so it persists
-      try {
-        console.log("💾 Saving preview URL to database...");
-        const currentDraft = get().draft;
-        await get().updateProject(targetProjectId, {
-          previewUrl: result.videoUrl,
-          durationSec: result.durationSec,
-          srtText: result.srtText,
-          textOverlays: currentDraft.textOverlays || [],
-          imageOverlays: currentDraft.imageOverlays || [],
-          status: "READY" as RenderStatus,
-        });
-        console.log("✅ Preview URL, text overlays, and image overlays saved to database");
-      } catch (dbError) {
-        console.error("⚠️ Failed to save preview URL to database:", dbError);
-        // Don't throw - preview still works locally
+      // Validate targetProjectId before calling API
+      if (!targetProjectId) {
+        console.error("❌ CRITICAL: targetProjectId is undefined/null before calling render API!");
+        throw new Error("Project ID is missing - cannot queue render job");
       }
       
-      console.log("✅ Preview generation complete!");
+      // Call render API (now returns queue info)
+      console.log("🎬 Calling renderApi.generatePreview for project:", targetProjectId);
+      console.log("🔍 Final targetProjectId validation:", {
+        targetProjectId,
+        type: typeof targetProjectId,
+        length: targetProjectId?.length
+      });
+      
+      let queueResult;
+      try {
+        console.log("⏳ Waiting for render API response...");
+        queueResult = await renderApi.generatePreview(targetProjectId);
+        console.log("✅ Preview job queued:", queueResult);
+        console.log("🔍 Queue result details:", {
+          hasRenderJobId: !!queueResult.render_job_id,
+          renderJobId: queueResult.render_job_id,
+          status: queueResult.status,
+          queuePosition: queueResult.queue_position,
+          estimatedWaitTime: queueResult.estimated_wait_time,
+          success: queueResult.success
+        });
+      } catch (apiError) {
+        console.error("❌ Failed to queue render job:", apiError);
+        throw apiError;
+      }
+      
+      if (!queueResult || !queueResult.render_job_id) {
+        console.error("❌ Invalid queue result:", queueResult);
+        throw new Error("Failed to queue render job - no job ID returned");
+      }
+      
+      // Update status to QUEUED in draft immediately - CRITICAL: This must happen synchronously
+      console.log("🔄 About to update draft status to QUEUED...", {
+        currentStatus: get().draft.status,
+        queuePosition: queueResult.queue_position,
+        estimatedWaitTime: queueResult.estimated_wait_time,
+        targetProjectId
+      });
+      
+      // Use a synchronous update to ensure React sees the change immediately
+      set((state) => {
+        const updatedDraft: DraftProject = {
+          ...state.draft,
+          id: targetProjectId,
+          status: "QUEUED" as const,
+          queuePosition: queueResult.queue_position,
+          estimatedWaitTime: queueResult.estimated_wait_time,
+        };
+        console.log("📝 Updated draft status to QUEUED:", {
+          status: updatedDraft.status,
+          queuePosition: updatedDraft.queuePosition,
+          estimatedWaitTime: updatedDraft.estimatedWaitTime,
+          draftId: updatedDraft.id,
+          fullDraft: updatedDraft
+        });
+        return { draft: updatedDraft };
+      });
+      
+      // Verify the update happened immediately
+      const verifyStatus = get().draft.status;
+      const verifyQueuePosition = get().draft.queuePosition;
+      console.log("✅ Verified draft status after update:", {
+        status: verifyStatus,
+        queuePosition: verifyQueuePosition,
+        draftId: get().draft.id
+      });
+      
+      if (verifyStatus !== "QUEUED") {
+        console.error("❌ CRITICAL: Status update failed! Expected QUEUED, got:", verifyStatus);
+        // Force update again
+        set((state) => ({
+          draft: {
+            ...state.draft,
+            status: "QUEUED" as const,
+            queuePosition: queueResult.queue_position,
+            estimatedWaitTime: queueResult.estimated_wait_time,
+          }
+        }));
+      }
+      
+      // CRITICAL: Capture targetProjectId and render_job_id for realtime subscription
+      const capturedProjectId = targetProjectId;
+      const capturedJobId = queueResult.render_job_id!;
+      
+      console.log("🔒 Captured values for realtime subscription:", {
+        capturedProjectId,
+        capturedJobId,
+        currentTargetProjectId: targetProjectId,
+        currentDraftId: get().draft.id
+      });
+      
+      // Do one initial status check to get current state (not polling, just one check)
+      try {
+        const initialStatus = await renderApi.getRenderJobStatus(capturedProjectId, capturedJobId);
+        const job = initialStatus.render_job;
+        const jobStatus = job.status.toLowerCase() as 'pending' | 'processing' | 'completed' | 'failed';
+        
+        console.log("📊 Initial status check:", jobStatus, "Progress:", job.progress);
+        
+        // Map backend status to frontend status
+        let frontendStatus: 'QUEUED' | 'RENDERING' | 'READY' | 'FAILED';
+        if (jobStatus === 'completed') {
+          frontendStatus = 'READY';
+        } else if (jobStatus === 'failed') {
+          frontendStatus = 'FAILED';
+        } else if (jobStatus === 'processing') {
+          frontendStatus = 'RENDERING';
+        } else {
+          frontendStatus = 'QUEUED';
+        }
+        
+        // Update status if it's different from what we set
+        if (get().draft.status !== frontendStatus) {
+          set((state) => ({
+            draft: {
+              ...state.draft,
+              renderProgress: job.progress || 0,
+              status: frontendStatus,
+            }
+          }));
+        }
+        
+        // If already completed, handle it immediately
+        if (jobStatus === 'completed' && job.video_url && job.metadata) {
+          const metadata = job.metadata;
+          set((state) => ({
+            draft: {
+              ...state.draft,
+              status: "READY" as const,
+              previewUrl: job.video_url!,
+              durationSec: metadata.durationSec || 0,
+              srtText: metadata.srtText || '',
+              originalSrtText: metadata.srtText || '',
+              subtitleEnabled: true,
+            }
+          }));
+          
+          // Save to database
+          await get().updateProject(capturedProjectId, {
+            previewUrl: job.video_url!,
+            durationSec: metadata.durationSec || 0,
+            srtText: metadata.srtText || '',
+            status: "READY" as RenderStatus,
+          }).catch(err => {
+            console.error("⚠️ Failed to save preview URL to database:", err);
+          });
+          
+          import('sonner').then(({ toast }) => {
+            toast.success("Preview generated successfully! 🎉");
+          }).catch(() => {});
+        }
+      } catch (error) {
+        console.warn("⚠️ Initial status check failed (realtime will handle updates):", error);
+      }
+      
+      // Set up Supabase Realtime subscription for real-time updates
+      // This will listen for status changes in the render_jobs table
+      // Use captured values to ensure we're subscribing to the correct job
+      console.log("🔔 Setting up realtime subscription for job:", capturedJobId, "project:", capturedProjectId);
+      get().subscribeToRenderJob(capturedJobId, capturedProjectId);
       
     } catch (error) {
       console.error("❌ Preview generation failed:", error);
@@ -868,7 +1007,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
   },
 
   /**
-   * Generate final video with status polling
+   * Generate final video with Supabase Realtime updates
    */
   simulateRender: async (projectId?: string) => {
     console.log("🎬 simulateRender called with projectId:", projectId);
@@ -883,12 +1022,12 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       
       const targetProjectId = projectId || draft.id;
       
-      // Update status to RENDERING
+      // Update status to QUEUED initially (will be updated by realtime)
       if (!projectId) {
         set((state) => ({
           draft: {
             ...state.draft,
-            status: 'RENDERING' as const,
+            status: 'QUEUED' as const,
           }
         }));
       }
@@ -913,34 +1052,68 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       
       console.log("✅ Final render result:", result);
       
-      // If we have a render job ID, poll for status updates
+      // Update draft with queue status immediately
+      if (!projectId && (result.queue_position !== undefined || result.estimated_wait_time !== undefined)) {
+        set((state) => ({
+          draft: {
+            ...state.draft,
+            status: 'QUEUED' as const,
+            queuePosition: result.queue_position,
+            estimatedWaitTime: result.estimated_wait_time,
+          }
+        }));
+      }
+      
+      // If we have a render job ID, set up Realtime subscription
       if (result.render_job_id) {
-        const pollStatus = async () => {
+        console.log("🔔 Setting up realtime subscription for final render job:", result.render_job_id, "project:", targetProjectId);
+        get().subscribeToRenderJob(result.render_job_id, targetProjectId);
+        
+        // Also get initial status immediately
           try {
-            const statusResult = await renderApi.getRenderJobStatus(targetProjectId, result.render_job_id!);
-            const job = statusResult.render_job;
+          const initialStatus = await renderApi.getRenderJobStatus(targetProjectId, result.render_job_id);
+          if (initialStatus.render_job) {
+            const job = initialStatus.render_job;
+            const jobStatus = (job.status || '').toLowerCase() as 'pending' | 'processing' | 'completed' | 'failed';
             
-            // Update draft/project with progress
+            // Map backend status to frontend status
+            let frontendStatus: 'QUEUED' | 'RENDERING' | 'READY' | 'FAILED';
+            if (jobStatus === 'completed') {
+              frontendStatus = 'READY';
+            } else if (jobStatus === 'failed') {
+              frontendStatus = 'FAILED';
+            } else if (jobStatus === 'processing') {
+              frontendStatus = 'RENDERING';
+            } else {
+              frontendStatus = 'QUEUED';
+            }
+            
             if (!projectId) {
               set((state) => ({
                 draft: {
                   ...state.draft,
-                  renderProgress: job.progress,
-                  status: job.status === 'COMPLETED' ? 'READY' as const 
-                    : job.status === 'FAILED' ? 'FAILED' as const
-                    : 'RENDERING' as const,
+                  status: frontendStatus,
+                  renderProgress: job.progress || 0,
+                  // Keep queue position if still queued
+                  queuePosition: frontendStatus === 'QUEUED' ? result.queue_position : undefined,
+                  estimatedWaitTime: frontendStatus === 'QUEUED' ? result.estimated_wait_time : undefined,
                 }
               }));
             }
             
-            // If completed, update with video URL
-            if (job.status === 'COMPLETED' && job.video_url) {
+            // If already completed, handle completion
+            if (jobStatus === 'completed' && job.video_url) {
+              const fullVideoUrl = job.video_url.startsWith('http') 
+                ? job.video_url 
+                : `${config.remotionServerUrl}${job.video_url}`;
+              
               if (!projectId) {
                 set((state) => ({
                   draft: {
                     ...state.draft,
-                    finalUrl: job.video_url!,
+                    finalUrl: fullVideoUrl,
                     status: 'READY' as const,
+                    renderProgress: 100,
                   }
                 }));
               }
@@ -949,7 +1122,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
               set((state) => ({
                 projects: state.projects.map((p) =>
                   p.id === targetProjectId
-                    ? { ...p, finalUrl: job.video_url! }
+                    ? { ...p, finalUrl: fullVideoUrl }
                     : p
                 ),
               }));
@@ -957,52 +1130,22 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
               // Save final URL to database
               try {
                 await get().updateProject(targetProjectId, {
-                  finalUrl: job.video_url,
+                  finalUrl: fullVideoUrl,
                 });
               } catch (dbError) {
                 console.error("⚠️ Failed to save final URL to database:", dbError);
               }
               
-              return true; // Stop polling
+              // Unsubscribe when completed
+              get().unsubscribeFromRenderJob();
             }
-            
-            // If failed, update status
-            if (job.status === 'FAILED') {
-              if (!projectId) {
-                set((state) => ({
-                  draft: {
-                    ...state.draft,
-                    status: 'FAILED' as const,
-                  }
-                }));
-              }
-              return true; // Stop polling
-            }
-            
-            return false; // Continue polling
-          } catch (error) {
-            console.error("Error polling render status:", error);
-            return false; // Continue polling on error
           }
-        };
-        
-        // Poll every 2 seconds until complete or failed
-        const pollInterval = setInterval(async () => {
-          const shouldStop = await pollStatus();
-          if (shouldStop) {
-            clearInterval(pollInterval);
-          }
-        }, 2000);
-        
-        // Initial poll
-        pollStatus();
-        
-        // Stop polling after 5 minutes max
-        setTimeout(() => {
-          clearInterval(pollInterval);
-        }, 300000);
+        } catch (statusError) {
+          console.warn("⚠️ Failed to get initial status:", statusError);
+          // Continue with Realtime subscription
+        }
       } else {
-        // No render job ID, use direct result
+        // No render job ID, use direct result (backward compatibility)
         // Update draft with final URL
         if (!projectId) {
           set((state) => ({
@@ -1036,7 +1179,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         }
       }
       
-      console.log("✅ Final render complete!");
+      console.log("✅ Final render queued!");
       
     } catch (error) {
       console.error("❌ Final render failed:", error);
@@ -1052,6 +1195,303 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       }
       
       throw error;
+    }
+  },
+
+  /**
+   * Subscribe to render job status changes via Supabase Realtime
+   */
+  subscribeToRenderJob: (jobId: string, projectId: string) => {
+    // Unsubscribe from any existing subscription
+    const existingSub = get().renderJobSubscription;
+    if (existingSub) {
+      console.log("🔄 Unsubscribing from existing render job subscription");
+      supabase.removeChannel(existingSub);
+    }
+
+    console.log("📡 Setting up Supabase Realtime subscription for render job:", jobId);
+    
+    const channel = supabase
+      .channel(`render-job-${jobId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'render_jobs',
+          filter: `id=eq.${jobId}`,
+        },
+        async (payload) => {
+          console.log("📨 Realtime update received:", payload);
+          const renderJob = payload.new as any;
+          
+          if (!renderJob) {
+            console.warn("⚠️ Realtime update missing render job data");
+            return;
+          }
+
+          const jobStatus = (renderJob.status || '').toLowerCase() as 'pending' | 'processing' | 'completed' | 'failed';
+          
+          // Map backend status to frontend status
+          let frontendStatus: 'QUEUED' | 'RENDERING' | 'READY' | 'FAILED';
+          if (jobStatus === 'completed') {
+            frontendStatus = 'READY';
+          } else if (jobStatus === 'failed') {
+            frontendStatus = 'FAILED';
+          } else if (jobStatus === 'processing') {
+            frontendStatus = 'RENDERING';
+          } else {
+            // pending -> QUEUED
+            frontendStatus = 'QUEUED';
+          }
+
+          console.log("🔄 Realtime status update:", {
+            jobId,
+            jobStatus,
+            frontendStatus,
+            progress: renderJob.progress,
+            hasVideoUrl: !!renderJob.result_url,
+            hasMetadata: !!renderJob.metadata,
+            currentDraftStatus: get().draft.status
+          });
+
+          // Handle project creation for story narrations (async, outside of set callback)
+          const isStoryPreview = renderJob.type === 'STORY_PREVIEW';
+          let actualProjectId = projectId;
+          const metadata = renderJob.metadata || {};
+          
+          // If this is a completed story preview and project doesn't exist, create it first
+          if (isStoryPreview && jobStatus === 'completed' && renderJob.result_url) {
+            const currentDraft = get().draft;
+            const existingProject = projectId 
+              ? get().projects.find(p => p.id === projectId)
+              : null;
+            
+            if (!existingProject) {
+              console.log("📝 Story narration: Project doesn't exist, creating it...");
+              try {
+                // Ensure draft has a title
+                if (!currentDraft.title || currentDraft.title === "Untitled Conversation") {
+                  const firstLine = currentDraft.scriptInput?.split('\n')?.[0]?.trim() || "Untitled Story";
+                  get().updateDraft({ title: firstLine.substring(0, 50) });
+                }
+                
+                // Get user ID
+                const session = await supabase.auth.getSession();
+                const userId = session.data.session?.user?.id || "mock-user";
+                
+                // Create project
+                const newProject = await get().createProjectFromDraft(userId);
+                if (newProject) {
+                  actualProjectId = newProject.id;
+                  console.log("✅ Story narration project created:", actualProjectId);
+                  
+                  // Update draft with new project ID
+                  get().updateDraft({ id: actualProjectId });
+                  
+                  // Update projects list
+                  set((state) => ({
+                    projects: [newProject, ...state.projects]
+                  }));
+                  
+                  // Now update the project with preview URL
+                  await get().updateProject(actualProjectId, {
+                    previewUrl: renderJob.result_url!,
+                    durationSec: metadata.durationSec || 0,
+                    srtText: metadata.srtText || '',
+                    status: "READY" as RenderStatus,
+                  });
+                  
+                  console.log("✅ Project updated with preview URL");
+                } else {
+                  console.error("❌ Failed to create story narration project");
+                }
+              } catch (createError) {
+                console.error("❌ Error creating story narration project:", createError);
+              }
+            }
+          }
+
+          // Update draft with realtime data (use actualProjectId which may have been updated above)
+          const finalProjectId = actualProjectId;
+          set((state) => {
+            const draftUpdate: Partial<DraftProject> = {
+              renderProgress: renderJob.progress || 0,
+              status: frontendStatus,
+            };
+            
+            console.log("💾 Realtime: Updating draft status from", state.draft.status, "to", frontendStatus);
+
+            // Preserve queue info if status is QUEUED
+            if (frontendStatus === 'QUEUED') {
+              if (state.draft.queuePosition !== undefined) {
+                draftUpdate.queuePosition = state.draft.queuePosition;
+              }
+              if (state.draft.estimatedWaitTime !== undefined) {
+                draftUpdate.estimatedWaitTime = state.draft.estimatedWaitTime;
+              }
+            }
+
+            // If completed, update with video URL and metadata
+            if (jobStatus === 'completed' && renderJob.result_url) {
+              const isFinalRender = renderJob.type === 'FINAL';
+              
+              if (isFinalRender) {
+                // Final render - update finalUrl
+                draftUpdate.finalUrl = renderJob.result_url;
+                draftUpdate.status = 'READY' as const;
+                draftUpdate.renderProgress = 100;
+
+                // Also update in projects list
+                const updatedProjects = state.projects.map((p) =>
+                  p.id === finalProjectId
+                    ? {
+                        ...p,
+                        status: "READY" as RenderStatus,
+                        finalUrl: renderJob.result_url!,
+                      }
+                    : p
+                );
+
+                // Save to database
+                if (finalProjectId && !finalProjectId.startsWith('mock-')) {
+                  get().updateProject(finalProjectId, {
+                    finalUrl: renderJob.result_url!,
+                    status: "READY" as RenderStatus,
+                  }).catch(err => {
+                    console.error("⚠️ Failed to save final URL to database:", err);
+                  });
+                }
+
+                // Show success toast
+                import('sonner').then(({ toast }) => {
+                  toast.success("Final video rendered successfully! 🎬");
+                }).catch(err => {
+                  console.warn("Failed to show success toast:", err);
+                });
+              } else {
+                // Preview render - update previewUrl
+                draftUpdate.previewUrl = renderJob.result_url;
+                draftUpdate.durationSec = metadata.durationSec || 0;
+                draftUpdate.srtText = metadata.srtText || '';
+                draftUpdate.originalSrtText = metadata.srtText || '';
+                draftUpdate.subtitleEnabled = true;
+
+                // Update projects list if project exists
+                // Note: For story narrations, project creation happens above (before this set callback)
+                if (finalProjectId) {
+                  const updatedProjects = state.projects.map((p) =>
+                    p.id === finalProjectId
+                      ? {
+                          ...p,
+                          status: "READY" as RenderStatus,
+                          previewUrl: renderJob.result_url!,
+                          durationSec: metadata.durationSec || 0,
+                          srtText: metadata.srtText || '',
+                        }
+                      : p
+                  );
+
+                  // Save to database (only if project exists and wasn't just created above)
+                  // For story narrations, the project was already updated above
+                  if (finalProjectId && !finalProjectId.startsWith('mock-') && !isStoryPreview) {
+                    get().updateProject(finalProjectId, {
+                      previewUrl: renderJob.result_url!,
+                      durationSec: metadata.durationSec || 0,
+                      srtText: metadata.srtText || '',
+                      status: "READY" as RenderStatus,
+                    }).catch(err => {
+                      console.error("⚠️ Failed to save preview URL to database:", err);
+                    });
+                  }
+
+                  // Show success toast
+                  import('sonner').then(({ toast }) => {
+                    toast.success("Preview generated successfully! 🎉");
+                  }).catch(err => {
+                    console.warn("Failed to show success toast:", err);
+                  });
+                }
+              }
+
+              // Unsubscribe when completed
+              get().unsubscribeFromRenderJob();
+            }
+
+            // If failed, update status
+            if (jobStatus === 'failed') {
+              console.error("❌ Render job failed:", renderJob.error_message);
+              draftUpdate.status = 'FAILED' as const;
+              get().unsubscribeFromRenderJob();
+            }
+
+            return {
+              draft: {
+                ...state.draft,
+                ...draftUpdate,
+              },
+              ...(jobStatus === 'completed' && renderJob.result_url ? {
+                projects: state.projects.map((p) => {
+                  if (p.id !== finalProjectId) return p;
+                  
+                  const isFinalRender = renderJob.type === 'FINAL';
+                  const metadata = renderJob.metadata || {};
+                  
+                  if (isFinalRender) {
+                    return {
+                      ...p,
+                      status: "READY" as RenderStatus,
+                      finalUrl: renderJob.result_url!,
+                    };
+                  } else {
+                    return {
+                      ...p,
+                      status: "READY" as RenderStatus,
+                      previewUrl: renderJob.result_url!,
+                      durationSec: metadata.durationSec || 0,
+                      srtText: metadata.srtText || '',
+                    };
+                  }
+                }),
+              } : {}),
+            };
+          });
+        }
+      )
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          console.log("✅ Successfully subscribed to render job realtime updates for job:", jobId);
+          set({ realtimeConnected: true });
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error("❌ Realtime subscription error:", err);
+          console.warn("⚠️ Realtime subscription failed - will use polling fallback");
+          set({ realtimeConnected: false });
+        } else if (status === 'TIMED_OUT') {
+          console.warn("⏱️ Realtime subscription timed out - will use polling fallback");
+          set({ realtimeConnected: false });
+        } else if (status === 'CLOSED') {
+          console.log("🔌 Realtime subscription closed");
+          set({ realtimeConnected: false });
+        } else {
+          console.log("📡 Realtime subscription status:", status, err ? `Error: ${err}` : '');
+          if (status !== 'SUBSCRIBED') {
+            set({ realtimeConnected: false });
+          }
+        }
+      });
+
+    set({ renderJobSubscription: channel });
+  },
+
+  /**
+   * Unsubscribe from render job status changes
+   */
+  unsubscribeFromRenderJob: () => {
+    const subscription = get().renderJobSubscription;
+    if (subscription) {
+      console.log("🔌 Unsubscribing from render job realtime updates");
+      supabase.removeChannel(subscription);
+      set({ renderJobSubscription: null });
     }
   },
 }));

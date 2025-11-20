@@ -34,6 +34,8 @@ export default function StoryPreviewPage() {
     createProjectFromDraft,
     loadProjectIntoDraft,
     projects,
+    subscribeToRenderJob,
+    unsubscribeFromRenderJob,
   } = useProjectStore();
 
   // Debug: Log draft state when it changes
@@ -97,6 +99,14 @@ export default function StoryPreviewPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isRenderingFinal, setIsRenderingFinal] = useState(false);
   const [renderProgress, setRenderProgress] = useState(0);
+
+  // Cleanup: Unsubscribe from realtime updates when component unmounts
+  useEffect(() => {
+    return () => {
+      console.log("🧹 Cleaning up render job subscription on unmount");
+      unsubscribeFromRenderJob();
+    };
+  }, [unsubscribeFromRenderJob]);
   
   useEffect(() => {
     if (draft?.subtitleEnabled !== undefined) {
@@ -115,6 +125,7 @@ export default function StoryPreviewPage() {
   const progressValue = useMemo(() => {
     if (status === "READY" && draft?.finalUrl) return 100;
     if (status === "RENDERING") return isRenderingFinal ? Math.min(renderProgress, 95) : (draft?.renderProgress ?? 50);
+    if (status === "QUEUED") return 20;
     if (status === "FAILED") return 0;
     return 0;
   }, [status, isRenderingFinal, renderProgress, draft?.renderProgress, draft?.finalUrl]);
@@ -273,106 +284,134 @@ export default function StoryPreviewPage() {
         throw new Error(errorData.error || `Server error: ${response.status}`);
       }
 
-      const data = await response.json();
-      console.log("✅ Response data:", data);
+      const queueData = await response.json();
+      console.log("✅ Queue response:", queueData);
       
-      // Generate SRT text from narrations
-      const srtLines = data.narrations.map((narration: any) => {
-        return `${narration.startMs},${narration.endMs},Narrator,${narration.text}`;
-      });
-      const generatedSrtText = srtLines.join("\n");
-      
-      // Construct full video URL
-      // If videoUrl is already a full URL (Supabase), use it directly
-      // Otherwise, prepend the server URL
-      const fullVideoUrl = data.videoUrl.startsWith('http') 
-        ? data.videoUrl 
-        : `${config.remotionServerUrl}${data.videoUrl}`;
-      console.log("🎥 Video generated:", {
-        videoUrl: data.videoUrl,
-        fullVideoUrl,
-        isSupabaseUrl: data.videoUrl.startsWith('http'),
-        durationSec: data.durationSec,
-      });
-      
-      // Update draft with video URL and subtitles first
-      updateDraft({
-        previewUrl: fullVideoUrl,
-        status: "READY",
-        durationSec: data.durationSec,
-        srtText: generatedSrtText,
-        originalSrtText: generatedSrtText, // Save original for reset functionality
-        subtitleEnabled: true,
-      });
-      
-      console.log("✅ Draft updated with preview URL");
-      
-      // Create project in database if it doesn't exist yet
-      // This allows "Save Draft" to work properly
-      try {
-        const currentDraft = useProjectStore.getState().draft;
-        const existingProject = currentDraft.id 
-          ? useProjectStore.getState().projects.find(p => p.id === currentDraft.id)
-          : null;
-        
-        // Only create if project doesn't exist yet
-        if (!existingProject && !currentDraft.id?.startsWith('mock-')) {
-          console.log("📝 Creating project in database for Story Narration...");
-          
-          // Ensure draft has a title (use script input as title if not set)
-          if (!currentDraft.title || currentDraft.title === "Untitled Conversation") {
-            const firstLine = draft?.scriptInput?.split('\n')?.[0]?.trim() || "Untitled Story";
-            updateDraft({ title: firstLine.substring(0, 50) }); // Limit title length
-          }
-          
-          // Ensure draft has correct type (use STORY_NARRATION if available, otherwise keep existing type)
-          // Note: ProjectType might not include "story", so we'll keep the existing type
-          // The backend will handle the type correctly
-          
-          // Get user ID from auth
-          const session = await supabase.auth.getSession();
-          const userId = session.data.session?.user?.id || "mock-user";
-          
-          // Create project (this will save overlays and subtitle settings)
-          const newProject = await createProjectFromDraft(userId);
-          
-          if (newProject) {
-            console.log("✅ Project created in database:", newProject.id);
-            
-            // Update draft with project ID and preview URL
-            updateDraft({
-              id: newProject.id,
-              previewUrl: fullVideoUrl,
-              status: "READY",
-              durationSec: data.durationSec,
-            });
-            
-            // Update project with preview URL
-            await updateProject(newProject.id, {
-              previewUrl: fullVideoUrl,
-              durationSec: data.durationSec,
-              srtText: generatedSrtText,
-              textOverlays: draft?.textOverlays || [],
-              imageOverlays: draft?.imageOverlays || [],
-              subtitleStyle: draft?.subtitleStyle,
-              subtitlePosition: draft?.subtitlePosition,
-              subtitleFontSize: draft?.subtitleFontSize,
-              subtitleEnabled: true,
-              playbackRate: draft?.playbackRate || 1,
-            } as any);
-            
-            console.log("✅ Project updated with preview URL and all settings");
-          }
-        } else {
-          console.log("ℹ️ Project already exists or using mock ID, skipping creation");
-        }
-      } catch (createError) {
-        console.error("⚠️ Failed to create project in database:", createError);
-        // Don't fail the preview generation - project can be created later
+      if (!queueData.success || !queueData.projectId) {
+        throw new Error(queueData.error || "Failed to queue render job");
       }
       
-      setRenderProgress(100);
-      toast.success("Story narration video generated successfully! 🎉");
+      const storyProjectId = queueData.projectId;
+      const renderJobId = queueData.render_job_id;
+      
+      // Update draft with queue status immediately
+      updateDraft({
+        status: "QUEUED" as const,
+        queuePosition: queueData.queue_position,
+        estimatedWaitTime: queueData.estimated_wait_time,
+      });
+      
+      // Set up Supabase Realtime subscription for real-time updates
+      if (renderJobId) {
+        console.log("🔔 Setting up realtime subscription for job:", renderJobId, "project:", storyProjectId);
+        subscribeToRenderJob(renderJobId, storyProjectId);
+        
+        // Also get initial status immediately
+        try {
+          const { getRenderJobStatus } = await import('@/lib/api/projects');
+          const initialStatus = await getRenderJobStatus(storyProjectId, renderJobId);
+          if (initialStatus.render_job) {
+            const job = initialStatus.render_job;
+            const jobStatus = (job.status || '').toLowerCase() as 'pending' | 'processing' | 'completed' | 'failed';
+            
+            // Map backend status to frontend status
+            let frontendStatus: 'QUEUED' | 'RENDERING' | 'READY' | 'FAILED';
+            if (jobStatus === 'completed') {
+              frontendStatus = 'READY';
+            } else if (jobStatus === 'failed') {
+              frontendStatus = 'FAILED';
+            } else if (jobStatus === 'processing') {
+              frontendStatus = 'RENDERING';
+            } else {
+              frontendStatus = 'QUEUED';
+            }
+            
+            updateDraft({
+              status: frontendStatus,
+              renderProgress: job.progress || 0,
+            });
+            
+            // If already completed, handle completion
+            if (jobStatus === 'completed' && job.result_url && job.metadata) {
+              const metadata = job.metadata as any;
+              const fullVideoUrl = job.result_url.startsWith('http') 
+                ? job.result_url 
+                : `${config.remotionServerUrl}${job.result_url}`;
+              
+              const srtText = metadata.srtText || '';
+              
+              updateDraft({
+                previewUrl: fullVideoUrl,
+                status: "READY" as const,
+                durationSec: metadata.durationSec || 0,
+                srtText: srtText,
+                originalSrtText: srtText,
+                subtitleEnabled: true,
+              });
+              
+              // Create project in database if needed
+              try {
+                const currentDraft = useProjectStore.getState().draft;
+                const existingProject = currentDraft.id 
+                  ? useProjectStore.getState().projects.find(p => p.id === currentDraft.id)
+                  : null;
+                
+                if (!existingProject && !currentDraft.id?.startsWith('mock-')) {
+                  console.log("📝 Creating project in database for Story Narration...");
+                  
+                  if (!currentDraft.title || currentDraft.title === "Untitled Conversation") {
+                    const firstLine = draft?.scriptInput?.split('\n')?.[0]?.trim() || "Untitled Story";
+                    updateDraft({ title: firstLine.substring(0, 50) });
+                  }
+                  
+                  const session = await supabase.auth.getSession();
+                  const userId = session.data.session?.user?.id || "mock-user";
+                  
+                  const newProject = await createProjectFromDraft(userId);
+                  
+                  if (newProject) {
+                    console.log("✅ Project created in database:", newProject.id);
+                    
+                    updateDraft({
+                      id: newProject.id,
+                      previewUrl: fullVideoUrl,
+                      status: "READY" as const,
+                      durationSec: metadata.durationSec || 0,
+                    });
+                    
+                    await updateProject(newProject.id, {
+                      previewUrl: fullVideoUrl,
+                      durationSec: metadata.durationSec || 0,
+                      srtText: srtText,
+                      textOverlays: draft?.textOverlays || [],
+                      imageOverlays: draft?.imageOverlays || [],
+                      subtitleStyle: draft?.subtitleStyle,
+                      subtitlePosition: draft?.subtitlePosition,
+                      subtitleFontSize: draft?.subtitleFontSize,
+                      subtitleEnabled: true,
+                      playbackRate: draft?.playbackRate || 1,
+                    } as any);
+                    
+                    console.log("✅ Project updated with preview URL and all settings");
+                  }
+                }
+              } catch (createError) {
+                console.error("⚠️ Failed to create project in database:", createError);
+              }
+              
+              setIsGenerating(false);
+              toast.success("Story narration video generated successfully! 🎉");
+            }
+          }
+        } catch (statusError) {
+          console.warn("⚠️ Failed to get initial status:", statusError);
+          // Continue with Realtime subscription
+        }
+      } else {
+        console.warn("⚠️ No render_job_id returned, cannot set up Realtime subscription");
+      }
+      
+      setIsGenerating(false);
     } catch (error) {
       console.error("❌ Preview generation error:", error);
       const errorMessage = error instanceof Error 
@@ -506,8 +545,112 @@ export default function StoryPreviewPage() {
         imageOverlays: draft.imageOverlays || [], // Send image overlays
       };
       
+      // Check if project exists in database (story narrations create project after preview)
+      // First, check if we have a project in the projects list (from store)
+      const projects = useProjectStore.getState().projects;
+      let projectId = draft?.id;
+      
+      // If draft.id doesn't exist or is a mock ID, try to find project by previewUrl
+      if (!projectId || projectId.startsWith('mock-')) {
+        // Try to find project by previewUrl in the projects list
+        const projectByPreview = projects.find(p => p.previewUrl === draft?.previewUrl);
+        if (projectByPreview) {
+          projectId = projectByPreview.id;
+          console.log("✅ Found project by previewUrl:", projectId);
+          // Update draft with the correct project ID
+          updateDraft({ id: projectId });
+        } else {
+          // If project doesn't exist yet, try to create it now
+          if (draft?.previewUrl) {
+            console.log("📝 Project not found, creating it now...");
+            try {
+              const session = await supabase.auth.getSession();
+              const userId = session.data.session?.user?.id || "mock-user";
+              
+              if (!draft.title || draft.title === "Untitled Conversation") {
+                const firstLine = draft?.scriptInput?.split('\n')?.[0]?.trim() || "Untitled Story";
+                updateDraft({ title: firstLine.substring(0, 50) });
+              }
+              
+              const newProject = await createProjectFromDraft(userId);
+              if (newProject) {
+                projectId = newProject.id;
+                console.log("✅ Project created:", projectId);
+                updateDraft({ id: projectId });
+                
+                // Update project with preview URL and settings
+                await updateProject(projectId, {
+                  previewUrl: draft.previewUrl,
+                  durationSec: draft.durationSec || 0,
+                  srtText: draft.srtText || '',
+                  textOverlays: draft?.textOverlays || [],
+                  imageOverlays: draft?.imageOverlays || [],
+                  subtitleStyle: draft?.subtitleStyle,
+                  subtitlePosition: draft?.subtitlePosition,
+                  subtitleFontSize: draft?.subtitleFontSize,
+                  subtitleEnabled: true,
+                  playbackRate: draft?.playbackRate || 1,
+                } as any);
+              } else {
+                throw new Error("Failed to create project. Please try again.");
+              }
+            } catch (createError) {
+              console.error("❌ Failed to create project:", createError);
+              throw new Error("Project not found. Please generate a preview first and wait for it to complete.");
+            }
+          } else {
+            throw new Error("Project not found. Please generate a preview first.");
+          }
+        }
+      }
+      
+      // Final check - ensure projectId is valid
+      if (!projectId || projectId.startsWith('mock-')) {
+        throw new Error("Project not found. Please generate a preview first.");
+      }
+
+      // Verify project exists in database before calling final render
+      console.log("🔍 Verifying project exists in database:", projectId);
+      try {
+        const verifyResponse = await fetch(
+          `${config.remotionServerUrl}/api/projects/${projectId}`,
+          {
+            method: "GET",
+            headers: {
+              "Authorization": `Bearer ${token}`,
+            },
+          }
+        );
+        
+        if (!verifyResponse.ok) {
+          console.error("❌ Project verification failed:", verifyResponse.status);
+          if (verifyResponse.status === 404) {
+            throw new Error("Project not found in database. Please generate a preview first and wait for it to complete.");
+          }
+          throw new Error(`Failed to verify project: ${verifyResponse.status}`);
+        }
+        
+        const projectData = await verifyResponse.json();
+        console.log("✅ Project verified:", {
+          id: projectData.project?.id,
+          hasPreview: !!projectData.project?.preview_url,
+          userId: projectData.project?.user_id
+        });
+        
+        if (!projectData.project?.preview_url) {
+          throw new Error("Project preview not found. Please generate a preview first.");
+        }
+      } catch (verifyError) {
+        console.error("❌ Project verification error:", verifyError);
+        if (verifyError instanceof Error) {
+          throw verifyError;
+        }
+        throw new Error("Failed to verify project. Please try again.");
+      }
+
       console.log("📤 Sending final render request:", {
-        url: `${config.remotionServerUrl}/api/projects/story/render`,
+        url: `${config.remotionServerUrl}/api/projects/${projectId}/render/final`,
+        projectId,
         hasSrtText: !!requestBody.srtText,
         srtTextLength: requestBody.srtText?.length || 0,
         scriptLines: narrationLines.length,
@@ -515,7 +658,7 @@ export default function StoryPreviewPage() {
       });
       
       const response = await fetch(
-        `${config.remotionServerUrl}/api/projects/story/render`,
+        `${config.remotionServerUrl}/api/projects/${projectId}/render/final`,
         {
           method: "POST",
           headers: {
@@ -534,29 +677,79 @@ export default function StoryPreviewPage() {
         throw new Error(errorData.error || `Server error: ${response.status}`);
       }
 
-      const data = await response.json();
+      const queueData = await response.json();
+      console.log("✅ Queue response:", queueData);
       
-      // Complete progress
-      clearInterval(progressInterval);
-      setRenderProgress(100);
+      if (!queueData.success || !queueData.render_job_id) {
+        throw new Error(queueData.error || "Failed to queue final render job");
+      }
       
-      // Small delay to show 100%
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const renderJobId = queueData.render_job_id;
       
-      // Construct full video URL (handle Supabase URLs)
-      const finalVideoUrl = data.videoUrl.startsWith('http') 
-        ? data.videoUrl 
-        : `${config.remotionServerUrl}${data.videoUrl}`;
-      
+      // Update draft with queue status
       updateDraft({
-        finalUrl: finalVideoUrl,
-        status: "READY",
-        renderProgress: 100,
+        status: "QUEUED" as const,
+        queuePosition: queueData.queue_position,
+        estimatedWaitTime: queueData.estimated_wait_time,
       });
       
-      setIsRenderingFinal(false);
-      setRenderProgress(0);
-      toast.success("Final video rendered successfully! 🎬");
+      // Stop the progress interval (we'll use Realtime for updates)
+      clearInterval(progressInterval);
+      
+      // Set up Supabase Realtime subscription for final render updates
+      if (renderJobId) {
+        console.log("🔔 Setting up realtime subscription for final render job:", renderJobId, "project:", projectId);
+        subscribeToRenderJob(renderJobId, projectId);
+        
+        // Also get initial status immediately
+        try {
+          const { getRenderJobStatus } = await import('@/lib/api/projects');
+          const initialStatus = await getRenderJobStatus(projectId, renderJobId);
+          if (initialStatus.render_job) {
+            const job = initialStatus.render_job;
+            const jobStatus = (job.status || '').toLowerCase() as 'pending' | 'processing' | 'completed' | 'failed';
+            
+            // Map backend status to frontend status
+            let frontendStatus: 'QUEUED' | 'RENDERING' | 'READY' | 'FAILED';
+            if (jobStatus === 'completed') {
+              frontendStatus = 'READY';
+            } else if (jobStatus === 'failed') {
+              frontendStatus = 'FAILED';
+            } else if (jobStatus === 'processing') {
+              frontendStatus = 'RENDERING';
+            } else {
+              frontendStatus = 'QUEUED';
+            }
+            
+            updateDraft({
+              status: frontendStatus,
+              renderProgress: job.progress || 0,
+            });
+            
+            // If already completed, handle completion
+            if (jobStatus === 'completed' && job.result_url) {
+              const fullVideoUrl = job.result_url.startsWith('http') 
+                ? job.result_url 
+                : `${config.remotionServerUrl}${job.result_url}`;
+              
+              updateDraft({
+                finalUrl: fullVideoUrl,
+                status: "READY" as const,
+                renderProgress: 100,
+              });
+              
+              setIsRenderingFinal(false);
+              setRenderProgress(0);
+              toast.success("Final video rendered successfully! 🎬");
+            }
+          }
+        } catch (statusError) {
+          console.warn("⚠️ Failed to get initial status:", statusError);
+          // Continue with Realtime subscription
+        }
+      } else {
+        console.warn("⚠️ No render_job_id returned, cannot set up Realtime subscription");
+      }
     } catch (error) {
       console.error("Final render error:", error);
       setIsRenderingFinal(false);
@@ -894,6 +1087,24 @@ export default function StoryPreviewPage() {
               </Button>
             )}
           </div>
+          
+          {/* Queue Status */}
+          {status === "QUEUED" && (
+            <div className="space-y-2 rounded-2xl border border-blue-200 bg-blue-50 p-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-blue-800">⏳ Video in Queue</span>
+                <span className="text-sm text-blue-600">
+                  Position #{draft?.queuePosition || '?'}
+                </span>
+              </div>
+              <Progress value={20} className="h-2 w-full" />
+              <p className="text-xs text-blue-700">
+                {draft?.estimatedWaitTime 
+                  ? `Estimated wait time: ${Math.round(draft.estimatedWaitTime / 60)} minutes`
+                  : "Waiting in queue..."}
+              </p>
+            </div>
+          )}
           
           {/* Progress Bar for Final Rendering */}
           {(status === "RENDERING" || isRenderingFinal) && (
