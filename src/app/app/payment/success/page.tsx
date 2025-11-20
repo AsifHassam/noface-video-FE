@@ -59,25 +59,60 @@ export default function PaymentSuccessPage() {
 
     try {
       setLoading(true);
-      // Get authentication token (required)
-      const { data: { session } } = await supabase.auth.getSession();
+      
+      // Try to get or refresh the session
+      let { data: { session } } = await supabase.auth.getSession();
+      
+      // If no session, try to refresh it
+      if (!session) {
+        try {
+          const { data: { session: refreshedSession } } = await supabase.auth.refreshSession();
+          session = refreshedSession;
+        } catch (refreshError) {
+          console.warn('Failed to refresh session:', refreshError);
+        }
+      }
+      
       const userToken = session?.access_token;
 
-      if (!userToken) {
-        throw new Error("User not authenticated. Please sign in first.");
-      }
-
       // Call backend verification endpoint
+      // Backend can work without auth token (identifies user by email from Paystack)
       const verificationUrl = `${config.remotionServerUrl}/api/subscription/verify-payment`;
+
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+      };
+      
+      // Add auth token if available (optional - backend can work without it)
+      if (userToken) {
+        headers['Authorization'] = `Bearer ${userToken}`;
+      }
 
       const response = await fetch(verificationUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${userToken}`,
-        },
+        headers,
         body: JSON.stringify({ reference: transactionReference })
       });
+
+      // Check if response is ok before trying to parse JSON
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = `Payment verification failed: ${response.status}`;
+        
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.error || errorMessage;
+          
+          // If it's an auth error, provide helpful message
+          if (errorJson.code === 'AUTH_REQUIRED' || errorJson.code === 'USER_NOT_FOUND') {
+            errorMessage = errorJson.suggestion || errorMessage;
+          }
+        } catch {
+          errorMessage = errorText || errorMessage;
+        }
+        
+        throw new Error(errorMessage);
+      }
 
       const verificationResult = await response.json();
 
@@ -103,8 +138,22 @@ export default function PaymentSuccessPage() {
         toast.error(verificationResult.error || "Payment verification failed");
       }
     } catch (err: any) {
-      setVerificationError(err?.message || "Failed to verify payment. Please contact support.");
-      toast.error("Failed to verify payment. Please contact support.");
+      console.error("Payment verification error:", err);
+      const errorMessage = err?.message || "Failed to verify payment. Please contact support.";
+      setVerificationError(errorMessage);
+      
+      // If it's an auth-related error, show specific message
+      if (errorMessage.includes('sign in') || errorMessage.includes('session')) {
+        toast.error(errorMessage, {
+          duration: 5000,
+          action: {
+            label: "Sign In",
+            onClick: () => router.push("/")
+          }
+        });
+      } else {
+        toast.error(errorMessage);
+      }
     } finally {
       setLoading(false);
     }
