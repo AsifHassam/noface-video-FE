@@ -344,6 +344,7 @@ export const renderApi = {
       status: 'pending' | 'processing' | 'completed' | 'failed';
       progress: number;
       video_url: string | null;
+      result_url: string | null;
       error_message: string | null;
       metadata?: {
         durationSec?: number;
