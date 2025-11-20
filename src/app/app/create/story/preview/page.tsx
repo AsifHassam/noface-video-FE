@@ -294,8 +294,10 @@ export default function StoryPreviewPage() {
       const storyProjectId = queueData.projectId;
       const renderJobId = queueData.render_job_id;
       
-      // Update draft with queue status immediately
+      // Update draft with queue status immediately and set the correct project ID
+      // The worker will create the project with this ID, so we need to use it
       updateDraft({
+        id: storyProjectId, // Use the project ID returned from the API
         status: "QUEUED" as const,
         queuePosition: queueData.queue_position,
         estimatedWaitTime: queueData.estimated_wait_time,
@@ -306,107 +308,13 @@ export default function StoryPreviewPage() {
         console.log("🔔 Setting up realtime subscription for job:", renderJobId, "project:", storyProjectId);
         subscribeToRenderJob(renderJobId, storyProjectId);
         
-        // Also get initial status immediately
-        try {
-          const { getRenderJobStatus } = await import('@/lib/api/projects');
-          const initialStatus = await getRenderJobStatus(storyProjectId, renderJobId);
-          if (initialStatus.render_job) {
-            const job = initialStatus.render_job;
-            const jobStatus = (job.status || '').toLowerCase() as 'pending' | 'processing' | 'completed' | 'failed';
-            
-            // Map backend status to frontend status
-            let frontendStatus: 'QUEUED' | 'RENDERING' | 'READY' | 'FAILED';
-            if (jobStatus === 'completed') {
-              frontendStatus = 'READY';
-            } else if (jobStatus === 'failed') {
-              frontendStatus = 'FAILED';
-            } else if (jobStatus === 'processing') {
-              frontendStatus = 'RENDERING';
-            } else {
-              frontendStatus = 'QUEUED';
-            }
-            
-            updateDraft({
-              status: frontendStatus,
-              renderProgress: job.progress || 0,
-            });
-            
-            // If already completed, handle completion
-            if (jobStatus === 'completed' && job.result_url && job.metadata) {
-              const metadata = job.metadata as any;
-              const fullVideoUrl = job.result_url.startsWith('http') 
-                ? job.result_url 
-                : `${config.remotionServerUrl}${job.result_url}`;
-              
-              const srtText = metadata.srtText || '';
-              
-              updateDraft({
-                previewUrl: fullVideoUrl,
-                status: "READY" as const,
-                durationSec: metadata.durationSec || 0,
-                srtText: srtText,
-                originalSrtText: srtText,
-                subtitleEnabled: true,
-              });
-              
-              // Create project in database if needed
-              try {
-                const currentDraft = useProjectStore.getState().draft;
-                const existingProject = currentDraft.id 
-                  ? useProjectStore.getState().projects.find(p => p.id === currentDraft.id)
-                  : null;
-                
-                if (!existingProject && !currentDraft.id?.startsWith('mock-')) {
-                  console.log("📝 Creating project in database for Story Narration...");
-                  
-                  if (!currentDraft.title || currentDraft.title === "Untitled Conversation") {
-                    const firstLine = draft?.scriptInput?.split('\n')?.[0]?.trim() || "Untitled Story";
-                    updateDraft({ title: firstLine.substring(0, 50) });
-                  }
-                  
-                  const session = await supabase.auth.getSession();
-                  const userId = session.data.session?.user?.id || "mock-user";
-                  
-                  const newProject = await createProjectFromDraft(userId);
-                  
-                  if (newProject) {
-                    console.log("✅ Project created in database:", newProject.id);
-                    
-                    updateDraft({
-                      id: newProject.id,
-                      previewUrl: fullVideoUrl,
-                      status: "READY" as const,
-                      durationSec: metadata.durationSec || 0,
-                    });
-                    
-                    await updateProject(newProject.id, {
-                      previewUrl: fullVideoUrl,
-                      durationSec: metadata.durationSec || 0,
-                      srtText: srtText,
-                      textOverlays: draft?.textOverlays || [],
-                      imageOverlays: draft?.imageOverlays || [],
-                      subtitleStyle: draft?.subtitleStyle,
-                      subtitlePosition: draft?.subtitlePosition,
-                      subtitleFontSize: draft?.subtitleFontSize,
-                      subtitleEnabled: true,
-                      playbackRate: draft?.playbackRate || 1,
-                    } as any);
-                    
-                    console.log("✅ Project updated with preview URL and all settings");
-                  }
-                }
-              } catch (createError) {
-                console.error("⚠️ Failed to create project in database:", createError);
-              }
-              
-              setIsGenerating(false);
-              toast.success("Story narration video generated successfully! 🎉");
-            }
-          }
-        } catch (statusError) {
-          console.warn("⚠️ Failed to get initial status:", statusError);
-          // Continue with Realtime subscription
-        }
+        // Skip initial status check for story narrations - project doesn't exist yet
+        // The Realtime subscription will handle all status updates
+        // Note: For story narrations, we skip the initial status check because:
+        // 1. The project doesn't exist yet (created by worker after render)
+        // 2. The API endpoint requires the project to exist
+        // 3. Realtime subscription will handle all status updates anyway
+        console.log("📡 Realtime subscription set up - status updates will come via Realtime");
       } else {
         console.warn("⚠️ No render_job_id returned, cannot set up Realtime subscription");
       }
@@ -418,8 +326,6 @@ export default function StoryPreviewPage() {
         ? error.message 
         : "Failed to generate video. Make sure the video server is running.";
       toast.error(errorMessage);
-      setIsGenerating(false);
-    } finally {
       setIsGenerating(false);
     }
   };

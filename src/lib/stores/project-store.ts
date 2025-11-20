@@ -1255,60 +1255,32 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
             currentDraftStatus: get().draft.status
           });
 
-          // Handle project creation for story narrations (async, outside of set callback)
+          // Handle story narrations - project is created by worker, just need to load it
           const isStoryPreview = renderJob.type === 'STORY_PREVIEW';
           let actualProjectId = projectId;
           const metadata = renderJob.metadata || {};
           
-          // If this is a completed story preview and project doesn't exist, create it first
-          if (isStoryPreview && jobStatus === 'completed' && renderJob.result_url) {
-            const currentDraft = get().draft;
-            const existingProject = projectId 
-              ? get().projects.find(p => p.id === projectId)
-              : null;
+          // For story narrations, the worker creates the project, so we need to refresh projects list
+          if (isStoryPreview && jobStatus === 'completed' && renderJob.result_url && projectId) {
+            const existingProject = get().projects.find(p => p.id === projectId);
             
             if (!existingProject) {
-              console.log("📝 Story narration: Project doesn't exist, creating it...");
+              console.log("📝 Story narration: Refreshing projects list to include project created by worker...");
               try {
-                // Ensure draft has a title
-                if (!currentDraft.title || currentDraft.title === "Untitled Conversation") {
-                  const firstLine = currentDraft.scriptInput?.split('\n')?.[0]?.trim() || "Untitled Story";
-                  get().updateDraft({ title: firstLine.substring(0, 50) });
-                }
-                
-                // Get user ID
-                const session = await supabase.auth.getSession();
-                const userId = session.data.session?.user?.id || "mock-user";
-                
-                // Create project
-                const newProject = await get().createProjectFromDraft(userId);
-                if (newProject) {
-                  actualProjectId = newProject.id;
-                  console.log("✅ Story narration project created:", actualProjectId);
-                  
-                  // Update draft with new project ID
-                  get().updateDraft({ id: actualProjectId });
-                  
-                  // Update projects list
-                  set((state) => ({
-                    projects: [newProject, ...state.projects]
-                  }));
-                  
-                  // Now update the project with preview URL
-                  await get().updateProject(actualProjectId, {
-                    previewUrl: renderJob.result_url!,
-                    durationSec: metadata.durationSec || 0,
-                    srtText: metadata.srtText || '',
-                    status: "READY" as RenderStatus,
-                  });
-                  
-                  console.log("✅ Project updated with preview URL");
-                } else {
-                  console.error("❌ Failed to create story narration project");
-                }
-              } catch (createError) {
-                console.error("❌ Error creating story narration project:", createError);
+                // Refresh projects list to include the project created by the worker
+                await get().loadProjects();
+                console.log("✅ Projects list refreshed, story narration project should now be available");
+              } catch (loadError) {
+                console.warn("⚠️ Failed to refresh projects list (will use draft only):", loadError);
+                // Continue - we can still update the draft
               }
+            }
+            
+            // Ensure draft ID matches the project ID created by worker
+            const currentDraft = get().draft;
+            if (currentDraft.id !== projectId) {
+              console.log(`📝 Updating draft ID from ${currentDraft.id} to ${projectId} to match project created by worker`);
+              get().updateDraft({ id: projectId });
             }
           }
 
@@ -1371,21 +1343,31 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
                 });
               } else {
                 // Preview render - update previewUrl
-                draftUpdate.previewUrl = renderJob.result_url;
+                // Transform URL to full URL if needed (for story narrations, result_url might be relative)
+                const fullVideoUrl = renderJob.result_url.startsWith('http') 
+                  ? renderJob.result_url 
+                  : `${config.remotionServerUrl}${renderJob.result_url}`;
+                
+                draftUpdate.previewUrl = fullVideoUrl;
                 draftUpdate.durationSec = metadata.durationSec || 0;
                 draftUpdate.srtText = metadata.srtText || '';
                 draftUpdate.originalSrtText = metadata.srtText || '';
                 draftUpdate.subtitleEnabled = true;
 
                 // Update projects list if project exists
-                // Note: For story narrations, project creation happens above (before this set callback)
+                // Note: For story narrations, project is created by worker and loaded above
                 if (finalProjectId) {
+                  // Transform URL for projects list too
+                  const fullVideoUrl = renderJob.result_url.startsWith('http') 
+                    ? renderJob.result_url 
+                    : `${config.remotionServerUrl}${renderJob.result_url}`;
+                  
                   const updatedProjects = state.projects.map((p) =>
                     p.id === finalProjectId
                       ? {
                           ...p,
                           status: "READY" as RenderStatus,
-                          previewUrl: renderJob.result_url!,
+                          previewUrl: fullVideoUrl,
                           durationSec: metadata.durationSec || 0,
                           srtText: metadata.srtText || '',
                         }
@@ -1444,10 +1426,15 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
                       finalUrl: renderJob.result_url!,
                     };
                   } else {
+                    // Transform URL for projects list
+                    const fullVideoUrl = renderJob.result_url.startsWith('http') 
+                      ? renderJob.result_url 
+                      : `${config.remotionServerUrl}${renderJob.result_url}`;
+                    
                     return {
                       ...p,
                       status: "READY" as RenderStatus,
-                      previewUrl: renderJob.result_url!,
+                      previewUrl: fullVideoUrl,
                       durationSec: metadata.durationSec || 0,
                       srtText: metadata.srtText || '',
                     };
