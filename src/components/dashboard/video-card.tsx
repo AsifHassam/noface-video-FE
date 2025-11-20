@@ -64,7 +64,7 @@ export const VideoCard = ({ project, onDelete }: { project: Project; onDelete: (
       // Check project type from metadata or draft type
       const projectType = project.type || (draft?.type as any);
       const metadataType = (project as any).metadata?.type;
-      const effectiveType = projectType || metadataType || (draft?.type as any);
+      const effectiveType = (projectType || metadataType || (draft?.type as any)) as any;
       
       console.log("🔀 Edit routing check:", {
         projectType: project.type,
@@ -85,11 +85,11 @@ export const VideoCard = ({ project, onDelete }: { project: Project; onDelete: (
       // Note: Story narration type can be stored as "STORY_NARRATION", "story", "NORMAL_STORY", or "REDDIT_STORY" in metadata.type
       else if (
         String(effectiveType) === "story" || 
-        effectiveType === "STORY_NARRATION" ||
-        effectiveType === "NORMAL_STORY" || 
-        effectiveType === "REDDIT_STORY" ||
-        metadataType === "story" ||
-        metadataType === "STORY_NARRATION"
+        String(effectiveType) === "STORY_NARRATION" ||
+        String(effectiveType) === "NORMAL_STORY" || 
+        String(effectiveType) === "REDDIT_STORY" ||
+        String(metadataType) === "story" ||
+        String(metadataType) === "STORY_NARRATION"
       ) {
         previewRoute = "/app/create/story/preview?editing=true";
       }
