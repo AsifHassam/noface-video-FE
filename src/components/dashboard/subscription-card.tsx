@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,21 +11,12 @@ import { Loader2 } from "lucide-react";
 import { useAuthStore } from "@/lib/stores/auth-store";
 
 export const SubscriptionCard = () => {
-  const { user } = useAuthStore();
+  const { user, loading: authLoading } = useAuthStore();
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
 
-  useEffect(() => {
-    if (user) {
-      loadSubscriptionInfo();
-    } else {
-      // If no user, stop loading
-      setLoading(false);
-    }
-  }, [user]);
-
-  const loadSubscriptionInfo = async () => {
+  const loadSubscriptionInfo = useCallback(async () => {
     try {
       setLoading(true);
       const result = await subscriptionApi.getSubscriptionInfo();
@@ -57,7 +48,21 @@ export const SubscriptionCard = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    // Wait for auth to finish loading before attempting to load subscription
+    if (authLoading) {
+      return;
+    }
+    
+    if (user?.id) {
+      loadSubscriptionInfo();
+    } else {
+      // If no user, stop loading
+      setLoading(false);
+    }
+  }, [user?.id, authLoading, loadSubscriptionInfo]);
 
   const handleUpgrade = () => {
     if (!user?.email) {

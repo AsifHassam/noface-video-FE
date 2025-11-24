@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Stepper } from "@/components/create/stepper";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,14 +44,13 @@ const cards = [
 
 export default function CreatePage() {
   const router = useRouter();
-  const { user } = useAuthStore();
+  const { user, loading: authLoading } = useAuthStore();
   const [canCreateVideo, setCanCreateVideo] = useState(true);
   const [checkingLimit, setCheckingLimit] = useState(false);
   const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'paid' | null>(null);
 
   // Check subscription limits
-  useEffect(() => {
-    const checkSubscription = async () => {
+  const checkSubscription = useCallback(async () => {
       if (!user?.id) {
         setCanCreateVideo(true); // Allow if not authenticated (for dev/testing)
         return;
@@ -70,10 +69,16 @@ export default function CreatePage() {
       } finally {
         setCheckingLimit(false);
       }
-    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    // Wait for auth to finish loading before attempting to check subscription
+    if (authLoading) {
+      return;
+    }
 
     checkSubscription();
-  }, [user?.id]);
+  }, [user?.id, authLoading, checkSubscription]);
 
   const handleCardClick = async (card: typeof cards[0]) => {
     if (card.disabled) {

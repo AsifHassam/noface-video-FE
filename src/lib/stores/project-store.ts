@@ -1308,7 +1308,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
 
             // If completed, update with video URL and metadata
             if (jobStatus === 'completed' && renderJob.result_url) {
-              const isFinalRender = renderJob.type === 'FINAL';
+              const isFinalRender = renderJob.type === 'FINAL' || renderJob.type === 'STORY_FINAL';
               
               if (isFinalRender) {
                 // Final render - update finalUrl
@@ -1418,7 +1418,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
                 projects: state.projects.map((p) => {
                   if (p.id !== finalProjectId) return p;
                   
-                  const isFinalRender = renderJob.type === 'FINAL';
+                  const isFinalRender = renderJob.type === 'FINAL' || renderJob.type === 'STORY_FINAL';
                   const metadata = renderJob.metadata || {};
                   
                   if (isFinalRender) {

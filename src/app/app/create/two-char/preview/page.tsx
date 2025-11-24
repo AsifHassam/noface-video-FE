@@ -16,8 +16,9 @@ import { useAuthStore } from "@/lib/stores/auth-store";
 import { parseSrtText, generateMockFromScript } from "@/lib/utils/srt";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
-import { Download, ChevronDown, ChevronUp } from "lucide-react";
+import { Download, ChevronDown, ChevronUp, Info } from "lucide-react";
 import { RenderWaitGame } from "@/components/create/RenderWaitGame";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const steps = [
   { label: "Step 1", description: "Pick two characters" },
@@ -564,6 +565,17 @@ export default function PreviewPage() {
             />
           ) : null}
           
+          {/* Beta Notice for Subtitles */}
+          {captionsGenerated && (
+            <Alert className="rounded-2xl border-blue-200 bg-blue-50/50">
+              <Info className="h-4 w-4 text-blue-600" />
+              <AlertTitle className="text-blue-900 font-semibold">Subtitles Feature (Beta)</AlertTitle>
+              <AlertDescription className="text-blue-800 mt-1">
+                Our subtitles feature is currently in beta mode. If you want to render your video without subtitles, keep the subtitles toggle OFF and use TikTok or Reels to generate subtitles instead.
+              </AlertDescription>
+            </Alert>
+          )}
+          
           {/* Subtitle Toggle */}
           {captionsGenerated && (
           <div className="flex items-center justify-center gap-4 rounded-2xl border border-border/40 bg-white/70 p-4">
@@ -665,7 +677,7 @@ export default function PreviewPage() {
       <RenderWaitGame
         open={
           (isGeneratingPreview && (status === "QUEUED" || status === "RENDERING" || status === null)) ||
-          (isRenderingFinal && (status === "RENDERING" || status === null))
+          (isRenderingFinal && (status === "QUEUED" || status === "RENDERING" || status === null))
         }
         title={
           isRenderingFinal

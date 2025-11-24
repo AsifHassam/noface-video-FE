@@ -13,10 +13,11 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Download, ChevronDown, ChevronUp } from "lucide-react";
+import { Download, ChevronDown, ChevronUp, Info } from "lucide-react";
 import { config } from "@/lib/config";
 import { supabase } from "@/lib/supabase";
 import { RenderWaitGame } from "@/components/create/RenderWaitGame";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const steps = [
   { label: "Step 1", description: "Write narration" },
@@ -648,11 +649,17 @@ export default function StoryPreviewPage() {
             });
             
             // If already completed, handle completion
+            // Check if this is a final render (FINAL or STORY_FINAL)
+            const jobType = (job as any).type;
+            const isFinalRender = (jobType === 'FINAL' || jobType === 'STORY_FINAL');
+            
             if (jobStatus === 'completed' && job.result_url) {
               const fullVideoUrl = job.result_url.startsWith('http') 
                 ? job.result_url 
                 : `${config.remotionServerUrl}${job.result_url}`;
               
+              if (isFinalRender) {
+                // Final render - update finalUrl
               updateDraft({
                 finalUrl: fullVideoUrl,
                 status: "READY" as const,
@@ -662,6 +669,14 @@ export default function StoryPreviewPage() {
               setIsRenderingFinal(false);
               setRenderProgress(0);
               toast.success("Final video rendered successfully! 🎬");
+              } else {
+                // Preview render - update previewUrl
+                updateDraft({
+                  previewUrl: fullVideoUrl,
+                  status: "READY" as const,
+                  renderProgress: 100,
+                });
+              }
             }
           }
         } catch (statusError) {
@@ -837,6 +852,15 @@ export default function StoryPreviewPage() {
             subtitleSingleLine={draft?.subtitleSingleLine ?? false}
             subtitleSingleWord={draft?.subtitleSingleWord ?? false}
           />
+          
+          {/* Beta Notice for Subtitles */}
+          <Alert className="rounded-2xl border-blue-200 bg-blue-50/50">
+            <Info className="h-4 w-4 text-blue-600" />
+            <AlertTitle className="text-blue-900 font-semibold">Subtitles Feature (Beta)</AlertTitle>
+            <AlertDescription className="text-blue-800 mt-1">
+              Our subtitles feature is currently in beta mode. If you want to render your video without subtitles, keep the subtitles toggle OFF and use TikTok or Reels to generate subtitles instead.
+            </AlertDescription>
+          </Alert>
           
           {/* Subtitle Toggle */}
           <div className="flex items-center justify-center gap-4 rounded-2xl border border-border/40 bg-white/70 p-4">
@@ -1088,7 +1112,7 @@ export default function StoryPreviewPage() {
       <RenderWaitGame
         open={
           (isGenerating && (status === "QUEUED" || status === "RENDERING" || status === null)) ||
-          (isRenderingFinal && (status === "RENDERING" || status === null))
+          (isRenderingFinal && (status === "QUEUED" || status === "RENDERING" || status === null))
         }
         title={
           isRenderingFinal
