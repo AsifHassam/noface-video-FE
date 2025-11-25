@@ -15,7 +15,6 @@ type ScriptEditorProps = {
   errors: ScriptValidationError[];
   onUseSample: () => void;
   onClear: () => void;
-  onSplit: () => void;
   characterNames: { A: string; B: string };
 };
 
@@ -26,13 +25,24 @@ export const ScriptEditor = ({
   errors,
   onUseSample,
   onClear,
-  onSplit,
   characterNames,
 }: ScriptEditorProps) => {
+  // Character limits: 1200 chars ≈ 50 seconds, max 60 seconds = 1440 chars
+  const CHARS_PER_50_SEC = 1200;
+  const MAX_VIDEO_SECONDS = 60;
+  const MAX_CHARS = Math.round((CHARS_PER_50_SEC / 50) * MAX_VIDEO_SECONDS); // 1440 chars for 60s max
   const charCount = value.length;
   const tokenCount = Math.ceil(charCount / 4);
+  const estimatedSeconds = Math.round((charCount / CHARS_PER_50_SEC) * 50);
   const [showAll, setShowAll] = useState(false);
   const visibleLines = parsedLines.length > 5 && !showAll ? parsedLines.slice(0, 5) : parsedLines;
+  
+  const handleChange = (newValue: string) => {
+    // Prevent exceeding max characters (60 seconds max)
+    if (newValue.length <= MAX_CHARS) {
+      onChange(newValue);
+    }
+  };
 
   return (
     <div className="grid gap-6 md:grid-cols-[2fr_1fr]">
@@ -41,8 +51,17 @@ export const ScriptEditor = ({
           <Badge variant="secondary" className="rounded-full px-3 py-1">
             Tokens ~{tokenCount}
           </Badge>
-          <Badge variant="outline" className="rounded-full px-3 py-1">
-            Characters {charCount}
+          <Badge 
+            variant={charCount >= MAX_CHARS ? "destructive" : estimatedSeconds >= MAX_VIDEO_SECONDS ? "destructive" : "outline"} 
+            className="rounded-full px-3 py-1"
+          >
+            Characters {charCount} / {MAX_CHARS}
+          </Badge>
+          <Badge 
+            variant={estimatedSeconds >= MAX_VIDEO_SECONDS ? "destructive" : estimatedSeconds >= MAX_VIDEO_SECONDS * 0.9 ? "secondary" : "secondary"} 
+            className="rounded-full px-3 py-1"
+          >
+            Est. {estimatedSeconds}s / {MAX_VIDEO_SECONDS}s max
           </Badge>
           <span className="text-sm text-muted-foreground">
             Alternate lines between {characterNames.A} and {characterNames.B}
@@ -50,10 +69,13 @@ export const ScriptEditor = ({
         </div>
         <Textarea
           value={value}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(event) => handleChange(event.target.value)}
+          maxLength={MAX_CHARS}
           className={cn(
             "min-h-[320px] rounded-3xl border border-border/60 bg-white p-4 text-base shadow-inner",
             errors.length > 0 && "border-destructive/60",
+            (charCount >= MAX_CHARS || estimatedSeconds >= MAX_VIDEO_SECONDS) && "border-orange-300",
+            estimatedSeconds >= MAX_VIDEO_SECONDS * 0.9 && estimatedSeconds < MAX_VIDEO_SECONDS && "border-yellow-300",
           )}
           placeholder={`[${characterNames.A}]: Hello!\n[${characterNames.B}]: Hi there!`}
         />
@@ -63,9 +85,6 @@ export const ScriptEditor = ({
           </Button>
           <Button variant="ghost" className="rounded-2xl" onClick={onClear}>
             Clear
-          </Button>
-          <Button variant="ghost" className="rounded-2xl" onClick={onSplit}>
-            Split into lines
           </Button>
         </div>
       </div>

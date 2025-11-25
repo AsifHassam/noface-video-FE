@@ -107,7 +107,7 @@ const initialDraft = (): DraftProject => ({
   subtitleStyle: "classic",
   subtitlePosition: { x: 50, y: 60 },
   subtitleFontSize: 100,
-  subtitleSingleLine: false,
+  subtitleSingleLine: true,  // Default to 3-word subtitle mode
   subtitleSingleWord: false,
   characterSizes: {
     Peter: { width: 400, height: 500 },
@@ -657,7 +657,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       const subtitleStyle = metadata.subtitleStyle || "classic";
       const subtitlePosition = metadata.subtitlePosition || { x: 50, y: 85 };
       const subtitleFontSize = metadata.subtitleFontSize || 100;
-      const subtitleSingleLine = metadata.subtitleSingleLine || false;
+      const subtitleSingleLine = metadata.subtitleSingleLine !== undefined ? metadata.subtitleSingleLine : true;  // Default to 3-word mode
       const subtitleSingleWord = metadata.subtitleSingleWord || false;
       const subtitleEnabled = metadata.subtitleEnabled !== undefined ? metadata.subtitleEnabled : true;
       const playbackRate = metadata.playbackRate || 1;
@@ -1042,7 +1042,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           style: draft.subtitleStyle,
           position: draft.subtitlePosition,
           fontSize: draft.subtitleFontSize,
-          singleLine: draft.subtitleSingleLine ?? false,
+          singleLine: draft.subtitleSingleLine ?? true,  // Default to 3-word mode
           singleWord: draft.subtitleSingleWord ?? false,
         },
         srtText: draft.srtText,

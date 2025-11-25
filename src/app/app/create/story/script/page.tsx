@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { toast } from "sonner";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
 const steps = [
   { label: "Step 1", description: "Write narration" },
@@ -32,6 +33,7 @@ export default function StoryScriptPage() {
     return "Once upon a time, in a world of endless possibilities...\n\nThis is where your story begins.\n\nLet your imagination run wild.";
   }, [draft?.scriptInput]);
 
+  const MAX_CHARS = 1800; // Max characters for story narration
   const [text, setText] = useState(initialValue);
 
   const lines = useMemo(() => {
@@ -44,8 +46,11 @@ export default function StoryScriptPage() {
   const isValid = lines.length > 0;
 
   const handleChange = (value: string) => {
+    // Prevent exceeding max characters
+    if (value.length <= MAX_CHARS) {
     setText(value);
     updateDraft({ scriptInput: value });
+    }
   };
 
   const handleSample = () => {
@@ -88,13 +93,21 @@ Your story is waiting to be told.`;
             id="narration"
             value={text}
             onChange={(e) => handleChange(e.target.value)}
+            maxLength={MAX_CHARS}
             placeholder="Enter your narration lines, one per line..."
-            className="min-h-[300px] font-mono text-sm"
+            className={cn(
+              "min-h-[300px] font-mono text-sm",
+              text.length >= MAX_CHARS && "border-orange-300"
+            )}
             rows={12}
           />
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>{lines.length} line{lines.length !== 1 ? "s" : ""}</span>
-            <span>{text.length} characters</span>
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground">
+              {lines.length} line{lines.length !== 1 ? "s" : ""}
+            </span>
+            <span className={text.length >= MAX_CHARS ? "text-orange-600 font-medium" : "text-muted-foreground"}>
+              {text.length} / {MAX_CHARS} characters
+            </span>
           </div>
         </div>
 

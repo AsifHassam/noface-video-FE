@@ -15,6 +15,8 @@ interface CharacterSizeControlsProps {
   characterPositions: CharacterPositions;
   onCharacterPositionsChange: (positions: CharacterPositions) => void;
   selectedCharacters: string[]; // Names of selected characters
+  defaultExpanded?: boolean; // Whether to start expanded (default: true)
+  disabled?: boolean; // Whether controls are disabled
 }
 
 const defaultSizes: CharacterSizes = {
@@ -39,12 +41,15 @@ export function CharacterSizeControls({
   characterPositions,
   onCharacterPositionsChange,
   selectedCharacters,
+  defaultExpanded = true,
+  disabled = false,
 }: CharacterSizeControlsProps) {
   const [localSizes, setLocalSizes] = useState<CharacterSizes>(characterSizes);
   const [localPositions, setLocalPositions] = useState<CharacterPositions>(characterPositions);
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(defaultExpanded);
 
   const updateSize = (character: keyof CharacterSizes, dimension: 'width' | 'height', value: number) => {
+    if (disabled) return;
     const newSizes = {
       ...localSizes,
       [character]: {
@@ -57,6 +62,7 @@ export function CharacterSizeControls({
   };
 
   const updatePosition = (character: keyof CharacterPositions, position: CharacterPosition) => {
+    if (disabled) return;
     const newPositions = {
       ...localPositions,
       [character]: position,
@@ -113,10 +119,10 @@ export function CharacterSizeControls({
   }
 
   return (
-    <Card>
+    <Card className={disabled ? "opacity-50" : ""}>
       <CardHeader 
-        className="cursor-pointer hover:bg-muted/50 transition-colors"
-        onClick={() => setIsOpen(!isOpen)}
+        className={disabled ? "cursor-not-allowed" : "cursor-pointer hover:bg-muted/50 transition-colors"}
+        onClick={() => !disabled && setIsOpen(!isOpen)}
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -175,6 +181,7 @@ export function CharacterSizeControls({
                     value={localPositions[character] || defaultPositions[character] || 'left'}
                     onValueChange={(value) => updatePosition(character, value as CharacterPosition)}
                     className="flex gap-4"
+                    disabled={disabled}
                   >
                     <div className="flex items-center space-x-2">
                       <RadioGroupItem value="left" id={`${character}-left`} />
@@ -213,6 +220,7 @@ export function CharacterSizeControls({
                       max={800}
                       step={10}
                       className="w-full"
+                      disabled={disabled}
                     />
                   </div>
                   
@@ -230,6 +238,7 @@ export function CharacterSizeControls({
                       max={800}
                       step={10}
                       className="w-full"
+                      disabled={disabled}
                     />
                   </div>
                 </div>

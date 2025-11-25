@@ -17,20 +17,32 @@ const VIDEOS_PER_PAGE = 10;
 
 export const DashboardView = () => {
   const { projects, deleteProject, loadProjects, loading, clearDraft } = useProjectStore();
-  const { user } = useAuthStore();
+  const { user, loading: authLoading, initialize } = useAuthStore();
   const router = useRouter();
   const [currentPage, setCurrentPage] = useState(1);
   const [canCreateVideo, setCanCreateVideo] = useState(true);
   const [checkingLimit, setCheckingLimit] = useState(false);
   const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'paid' | null>(null);
 
+  // Ensure auth is initialized on mount
+  useEffect(() => {
+    if (authLoading) {
+      initialize();
+    }
+  }, [authLoading, initialize]);
+
   // Load projects from API on mount
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
 
-  // Check subscription limits
+  // Check subscription limits - only after auth has finished loading
   useEffect(() => {
+    // Don't check subscription until auth has finished loading
+    if (authLoading) {
+      return;
+    }
+
     const checkSubscription = async () => {
       if (!user?.id) {
         setCanCreateVideo(true); // Allow if not authenticated (for dev/testing)
@@ -53,7 +65,7 @@ export const DashboardView = () => {
     };
 
     checkSubscription();
-  }, [user?.id]);
+  }, [user?.id, authLoading]);
 
   const userProjects = useMemo(
     () =>
@@ -164,9 +176,9 @@ export const DashboardView = () => {
         <Button 
           className="rounded-2xl"
           onClick={handleCreateNewVideo}
-          disabled={checkingLimit || (!canCreateVideo && !!user?.id)}
+          disabled={authLoading || checkingLimit || (!canCreateVideo && !!user?.id && !authLoading)}
         >
-          {checkingLimit ? "Checking..." : "Create new video"}
+          {authLoading ? "Loading..." : checkingLimit ? "Checking..." : "Create new video"}
         </Button>
       </div>
       

@@ -813,12 +813,134 @@ export default function StoryPreviewPage() {
           </p>
         </header>
 
-        {isGenerating && (
-          <div className="space-y-2">
-            <Progress value={renderProgress} className="w-full" />
-            <p className="text-xs text-muted-foreground">Generating video...</p>
+        {/* Action Buttons & Progress - Moved to top like 2-char preview */}
+        <div className="flex flex-wrap items-center gap-4 rounded-3xl border border-border/40 bg-white/70 p-5">
+          <Button
+            variant="ghost"
+            className="rounded-2xl"
+            onClick={() => router.push("/app/create/story/background")}
+          >
+            Back
+          </Button>
+          {!videoUrl && (
+            <Button
+              className="rounded-2xl"
+              onClick={async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log("🔘 Generate Preview button clicked", {
+                  hasDraft: !!draft,
+                  scriptInput: draft?.scriptInput?.substring(0, 30),
+                  backgroundId: draft?.backgroundId,
+                  isGenerating,
+                });
+                
+                if (!draft) {
+                  console.error("❌ Draft is null when button clicked");
+                  toast.error("Draft not loaded. Please refresh the page.");
+                  return;
+                }
+                
+                if (!draft.scriptInput?.trim()) {
+                  console.error("❌ No script input when button clicked");
+                  toast.error("Please write narration first");
+                  router.push("/app/create/story/script");
+                  return;
+                }
+                
+                await handleGeneratePreview();
+              }}
+              disabled={isGenerating || status === "RENDERING" || status === "QUEUED" || !draft?.scriptInput?.trim() || !draft?.backgroundId}
+            >
+              {isGenerating || status === "RENDERING" || status === "QUEUED"
+                ? "Generating..." 
+                : status === "FAILED"
+                ? "Retry Preview"
+                : "Generate Preview"}
+            </Button>
+          )}
+          {/* Show Render Final button if preview exists (in edit mode) or status is READY */}
+          {((isEditing && (draft?.previewUrl || videoUrl)) || (videoUrl && status !== "RENDERING")) && !isRenderingFinal && (
+            <Button
+              variant="outline"
+              className="rounded-2xl"
+              onClick={async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log("🔘 Render Final button clicked", { 
+                  status, 
+                  videoUrl, 
+                  previewUrl: draft?.previewUrl,
+                  hasDraft: !!draft,
+                  scriptInput: draft?.scriptInput?.substring(0, 30),
+                  subtitleText: subtitleText?.substring(0, 30),
+                });
+                
+                if (!draft) {
+                  console.error("❌ Draft is null when button clicked");
+                  toast.error("Draft not loaded. Please refresh the page.");
+                  return;
+                }
+                
+                if (!draft.scriptInput?.trim()) {
+                  console.error("❌ No script input when button clicked");
+                  toast.error("No narration script found");
+                  router.push("/app/create/story/script");
+                  return;
+                }
+                
+                if (!subtitleText?.trim()) {
+                  console.warn("⚠️ No subtitle text - will generate from narrations");
+                }
+                
+                await handleRenderFinal();
+              }}
+              disabled={isRenderingFinal || status === "RENDERING" || status === "QUEUED" || !draft?.scriptInput?.trim()}
+            >
+              {status === "RENDERING" 
+                ? "Rendering..." 
+                : draft?.finalUrl
+                ? "Re-render Final"
+                : "Render Final Video"}
+            </Button>
+          )}
+          {status === "READY" && draft?.finalUrl && (
+            <Button
+              variant="default"
+              className="rounded-2xl"
+              onClick={() => {
+                const link = document.createElement('a');
+                link.href = draft.finalUrl || "";
+                link.download = `story-narration-${draft.id || 'video'}.mp4`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                toast.success("Download started!");
+              }}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Download
+            </Button>
+          )}
+          <div className="flex flex-1 flex-col gap-2">
+            <Progress value={progressValue} className="h-2 rounded-full bg-muted" />
+            <span className={`text-xs ${
+              status === "FAILED" ? "text-destructive font-medium" 
+              : status === "READY" ? "text-green-600 font-medium"
+              : "text-muted-foreground"
+            }`}>
+              {status === "RENDERING" && renderProgress > 0
+                ? `Rendering... ${Math.round(progressValue)}%`
+                : status === "QUEUED"
+                ? `Queued (Position #${draft?.queuePosition || '?'}) - Est. wait: ${draft?.estimatedWaitTime ? Math.round(draft.estimatedWaitTime / 60) : '?'} min`
+                : status === "FAILED" 
+                ? "Failed - Try again" 
+                : status === "READY" && draft?.finalUrl
+                ? "Ready - Click Download"
+                : status ?? "IDLE"}
+            </span>
           </div>
-        )}
+        </div>
 
         {/* TikTok-Style Editor with Video Player */}
         <div className="space-y-4">
@@ -937,175 +1059,6 @@ export default function StoryPreviewPage() {
           )}
         </div>
 
-        {/* Action Buttons & Progress */}
-        <div className="space-y-4">
-          <div className="flex gap-3">
-            <Button
-              variant="ghost"
-              className="rounded-2xl"
-              onClick={() => router.push("/app/create/story/background")}
-            >
-              Back
-            </Button>
-            {!videoUrl && (
-              <Button
-                className="rounded-2xl flex-1"
-                onClick={async (e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  console.log("🔘 Generate Preview button clicked", {
-                    hasDraft: !!draft,
-                    scriptInput: draft?.scriptInput?.substring(0, 30),
-                    backgroundId: draft?.backgroundId,
-                    isGenerating,
-                  });
-                  
-                  // Double-check conditions before calling
-                  if (!draft) {
-                    console.error("❌ Draft is null when button clicked");
-                    toast.error("Draft not loaded. Please refresh the page.");
-                    return;
-                  }
-                  
-                  if (!draft.scriptInput?.trim()) {
-                    console.error("❌ No script input when button clicked");
-                    toast.error("Please write narration first");
-                    router.push("/app/create/story/script");
-                    return;
-                  }
-                  
-                  await handleGeneratePreview();
-                }}
-                disabled={isGenerating || !draft?.scriptInput?.trim() || !draft?.backgroundId}
-                type="button"
-              >
-                {isGenerating ? "Generating..." : "Generate Preview"}
-              </Button>
-            )}
-            {/* Show Render Final button if preview exists (in edit mode) or status is READY */}
-            {((isEditing && (draft?.previewUrl || videoUrl)) || (videoUrl && status !== "RENDERING")) && !isRenderingFinal && (
-              <Button
-                className="rounded-2xl flex-1"
-                onClick={async (e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  console.log("🔘 Render Final button clicked", { 
-                    status, 
-                    videoUrl, 
-                    previewUrl: draft?.previewUrl,
-                    hasDraft: !!draft,
-                    scriptInput: draft?.scriptInput?.substring(0, 30),
-                    subtitleText: subtitleText?.substring(0, 30),
-                  });
-                  
-                  // Double-check conditions before calling
-                  if (!draft) {
-                    console.error("❌ Draft is null when button clicked");
-                    toast.error("Draft not loaded. Please refresh the page.");
-                    return;
-                  }
-                  
-                  if (!draft.scriptInput?.trim()) {
-                    console.error("❌ No script input when button clicked");
-                    toast.error("No narration script found");
-                    router.push("/app/create/story/script");
-                    return;
-                  }
-                  
-                  if (!subtitleText?.trim()) {
-                    console.warn("⚠️ No subtitle text - will generate from narrations");
-                  }
-                  
-                  await handleRenderFinal();
-                }}
-                disabled={isRenderingFinal || !draft?.scriptInput?.trim()}
-                type="button"
-              >
-                {draft?.finalUrl ? "Re-render Final Video" : "Render Final Video"}
-              </Button>
-            )}
-            {videoUrl && status !== "RENDERING" && !isRenderingFinal && (
-              <Button
-                variant="outline"
-                className="rounded-2xl"
-                onClick={handleSaveDraft}
-              >
-                Save Draft
-              </Button>
-            )}
-            {status === "READY" && draft?.finalUrl && (
-              <Button
-                variant="default"
-                className="rounded-2xl"
-                onClick={() => {
-                  const link = document.createElement('a');
-                  link.href = draft.finalUrl || "";
-                  link.download = `story-narration-${draft.id || 'video'}.mp4`;
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                  toast.success("Download started!");
-                }}
-              >
-                <Download className="mr-2 h-4 w-4" />
-                Download
-              </Button>
-            )}
-          </div>
-          
-          {/* Queue Status */}
-          {status === "QUEUED" && (
-            <div className="space-y-2 rounded-2xl border border-blue-200 bg-blue-50 p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-blue-800">⏳ Video in Queue</span>
-                <span className="text-sm text-blue-600">
-                  Position #{draft?.queuePosition || '?'}
-                </span>
-              </div>
-              <Progress value={20} className="h-2 w-full" />
-              <p className="text-xs text-blue-700">
-                {draft?.estimatedWaitTime 
-                  ? `Estimated wait time: ${Math.round(draft.estimatedWaitTime / 60)} minutes`
-                  : "Waiting in queue..."}
-              </p>
-            </div>
-          )}
-          
-          {/* Progress Bar for Final Rendering */}
-          {(status === "RENDERING" || isRenderingFinal) && (
-            <div className="space-y-2 rounded-2xl border bg-card p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Rendering Final Video</span>
-                <span className="text-sm text-muted-foreground">
-                  {Math.round(progressValue)}%
-                </span>
-              </div>
-              <Progress value={progressValue} className="h-2 w-full" />
-              <p className="text-xs text-muted-foreground">
-                {progressValue < 100 
-                  ? "Processing video with subtitles and customizations..." 
-                  : "Finalizing video..."}
-              </p>
-            </div>
-          )}
-          
-          {/* Status Message */}
-          {status === "READY" && draft?.finalUrl && (
-            <div className="rounded-2xl border border-green-200 bg-green-50 p-4">
-              <p className="text-sm font-medium text-green-800">
-                ✅ Final video ready! Click Download to save.
-              </p>
-            </div>
-          )}
-          
-          {status === "FAILED" && (
-            <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
-              <p className="text-sm font-medium text-red-800">
-                ❌ Rendering failed. Please try again.
-              </p>
-            </div>
-          )}
-        </div>
       </div>
 
       {/* Render Wait Game - Show during preview or final rendering */}

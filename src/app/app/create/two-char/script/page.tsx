@@ -63,20 +63,6 @@ export default function ScriptPage() {
     };
   }, [text, nameA, nameB]);
 
-  // Estimate total duration based on server heuristic (~15 chars/sec, min 2s per line) + 0.1s gap
-  const { estimatedSeconds, overLimit } = useMemo(() => {
-    const GAP_SECONDS = 0.1;
-    const perLineSecs = parsedLines.map((l) => {
-      const clean = (l.text || "").replace(/<[^>]+>/g, "").trim();
-      const est = Math.max(2, Math.ceil(clean.length / 15));
-      return est;
-    });
-    const sum = perLineSecs.reduce((a, b) => a + b, 0) + Math.max(0, perLineSecs.length - 1) * GAP_SECONDS;
-    return {
-      estimatedSeconds: sum,
-      overLimit: sum > 60,
-    };
-  }, [parsedLines]);
 
   const handleChange = (value: string) => {
     setText(value);
@@ -90,30 +76,9 @@ export default function ScriptPage() {
 
   const handleClear = () => handleChange("");
 
-  const handleSplit = () => {
-    if (!text.trim()) return;
-    const sentences = text
-      .replace(/\n+/g, " ")
-      .split(/(?<=[.!?])\s+/)
-      .filter(Boolean);
-    if (sentences.length === 0) return;
-    const formatted = sentences
-      .map((sentence, index) => {
-        const speaker = index % 2 === 0 ? nameA : nameB;
-        return `[${speaker}]: ${sentence.trim()}`;
-      })
-      .join("\n");
-    handleChange(formatted);
-    toast.success("Split into alternating lines");
-  };
-
   const handleNext = () => {
     if (!isValid) {
       toast.error("Fix script validation errors before continuing");
-      return;
-    }
-    if (overLimit) {
-      toast.error("Limit 60s max. Please shorten your script.");
       return;
     }
     updateDraft({ script: parsedLines });
@@ -130,16 +95,6 @@ export default function ScriptPage() {
             Use the pattern <code>[{nameA}]: Hello!</code> to keep things tidy.
           </p>
         </header>
-        <div className="flex items-center justify-between rounded-2xl border border-border/40 bg-white/70 px-4 py-3">
-          <p className={`text-sm ${overLimit ? "text-destructive font-medium" : "text-muted-foreground"}`}>
-            Estimated duration: {Math.ceil(estimatedSeconds)}s {overLimit ? "(exceeds 60s limit)" : "(max 60s)"}
-          </p>
-          {overLimit && (
-            <span className="text-xs text-destructive">
-              Shorten lines or split into multiple videos.
-            </span>
-          )}
-        </div>
         <ScriptEditor
           value={text}
           onChange={handleChange}
@@ -147,14 +102,13 @@ export default function ScriptPage() {
           errors={errors}
           onUseSample={handleSample}
           onClear={handleClear}
-          onSplit={handleSplit}
           characterNames={{ A: nameA, B: nameB }}
         />
         <div className="flex justify-end gap-3">
           <Button variant="ghost" className="rounded-2xl" onClick={() => router.push("/app/create/two-char/characters")}>
             Back
           </Button>
-          <Button className="rounded-2xl px-6" disabled={!isValid || overLimit} onClick={handleNext}>
+          <Button className="rounded-2xl px-6" disabled={!isValid} onClick={handleNext}>
             Next: Choose Background
           </Button>
         </div>

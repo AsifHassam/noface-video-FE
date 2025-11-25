@@ -64,6 +64,11 @@ export default function PreviewPage() {
   const [isSubtitlesExpanded, setIsSubtitlesExpanded] = useState(false); // Initially closed
   const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
   const [isRenderingFinal, setIsRenderingFinal] = useState(false);
+  const [isCharacterSettingsExpanded, setIsCharacterSettingsExpanded] = useState(false); // Initially collapsed
+  
+  // Check if preview has been generated (user can interact with controls)
+  const hasPreview = !!draft?.previewUrl;
+  const isInitialState = !hasPreview && !isGeneratingPreview; // Disable everything except preview button
   
   // Initialize captionsGenerated based on whether srtText exists
   // In edit mode, if srtText exists, captions were already generated
@@ -436,7 +441,7 @@ export default function PreviewPage() {
             variant="outline"
             className="rounded-2xl"
             onClick={handleRenderFinal}
-            disabled={status === "RENDERING" || status === "QUEUED"}
+            disabled={isInitialState || status === "RENDERING" || status === "QUEUED"}
           >
             {status === "RENDERING" 
               ? "Rendering..." 
@@ -484,7 +489,7 @@ export default function PreviewPage() {
             <Button 
               className="rounded-2xl" 
               onClick={handleGenerateCaptions}
-              disabled={status === "RENDERING"}
+              disabled={isInitialState || status === "RENDERING"}
             >
               {captionsGenerated ? "Regenerate Captions" : "Generate Captions"}
             </Button>
@@ -499,28 +504,38 @@ export default function PreviewPage() {
             textOverlays={draft?.textOverlays ?? []}
             onTextOverlaysChange={(overlays) => {
               // Only update draft, don't auto-save to database
+              if (!isInitialState) {
               updateDraft({ textOverlays: overlays });
+              }
             }}
             imageOverlays={draft?.imageOverlays ?? []}
             onImageOverlaysChange={(overlays) => {
               // Only update draft, don't auto-save to database
+              if (!isInitialState) {
               updateDraft({ imageOverlays: overlays });
+              }
             }}
             subtitles={subtitleSegments}
             showSubtitles={showSubtitles}
             subtitleStyle={draft?.subtitleStyle}
             subtitlePosition={draft?.subtitlePosition ?? { x: 50, y: 85 }}
             onSubtitlePositionChange={(position) => {
+              if (!isInitialState) {
               updateDraft({ subtitlePosition: position });
+              }
             }}
             subtitleFontSize={draft?.subtitleFontSize ?? 100}
             onSubtitleFontSizeChange={(size) => {
+              if (!isInitialState) {
               updateDraft({ subtitleFontSize: size });
+              }
             }}
             playbackRate={draft?.playbackRate ?? 1}
             onPlaybackRateChange={(rate) => {
+              if (!isInitialState) {
               console.log("🎬 Playback rate changed:", rate);
               updateDraft({ playbackRate: rate });
+              }
             }}
             subtitleSingleLine={draft?.subtitleSingleLine ?? false}
             subtitleSingleWord={draft?.subtitleSingleWord ?? false}
@@ -562,6 +577,8 @@ export default function PreviewPage() {
                 draft?.characters?.A?.name,
                 draft?.characters?.B?.name,
               ].filter(Boolean) as string[]}
+              defaultExpanded={isCharacterSettingsExpanded}
+              disabled={isInitialState}
             />
           ) : null}
           
@@ -583,9 +600,12 @@ export default function PreviewPage() {
               <Switch 
                 id="toggle-subtitles" 
                 checked={showSubtitles} 
+                disabled={isInitialState}
                 onCheckedChange={(checked) => {
+                  if (!isInitialState) {
                   setShowSubtitles(checked);
                   updateDraft({ subtitleEnabled: checked });
+                  }
                 }} 
               />
               <Label htmlFor="toggle-subtitles" className="text-sm font-medium cursor-pointer">
@@ -606,6 +626,7 @@ export default function PreviewPage() {
           <Button
             variant="outline"
             onClick={() => setIsSubtitlesExpanded(!isSubtitlesExpanded)}
+            disabled={isInitialState}
             className="w-full justify-between rounded-2xl"
           >
             <span className="font-medium">Subtitles & Styling</span>
@@ -623,7 +644,9 @@ export default function PreviewPage() {
                 <SubtitlesEditor
                   value={subtitleText}
                   onChange={(value) => {
+                    if (!isInitialState) {
                     updateDraft({ srtText: value });
+                    }
                   }}
                   onReset={handleResetSubtitles}
                   segments={subtitleSegments}
@@ -634,20 +657,28 @@ export default function PreviewPage() {
                 <SubtitleStyleSelector
                   value={draft?.subtitleStyle || "classic"}
                   onChange={(style) => {
+                    if (!isInitialState) {
                     updateDraft({ subtitleStyle: style });
                     toast.success(`Subtitle style: ${style.replace("-", " ")}`);
+                    }
                   }}
                   fontSize={draft?.subtitleFontSize ?? 100}
                   onFontSizeChange={(size) => {
+                    if (!isInitialState) {
                     updateDraft({ subtitleFontSize: size });
+                    }
                   }}
                   singleLine={draft?.subtitleSingleLine ?? false}
                   onSingleLineChange={(v) => {
+                    if (!isInitialState) {
                     updateDraft({ subtitleSingleLine: v });
+                    }
                   }}
                   singleWord={draft?.subtitleSingleWord ?? false}
                   onSingleWordChange={(v) => {
+                    if (!isInitialState) {
                     updateDraft({ subtitleSingleWord: v });
+                    }
                   }}
                 />
               </div>
@@ -658,7 +689,7 @@ export default function PreviewPage() {
           <Button variant="ghost" className="rounded-2xl" onClick={() => router.push("/app/create/two-char/background")}>
             Back
           </Button>
-          <Button variant="outline" className="rounded-2xl" onClick={handleSaveDraft}>
+          <Button variant="outline" className="rounded-2xl" onClick={handleSaveDraft} disabled={isInitialState}>
             Save draft
           </Button>
           <Button 
@@ -667,6 +698,7 @@ export default function PreviewPage() {
               console.log("🔴 FINISH BUTTON CLICKED!");
               handleFinish();
             }}
+            disabled={isInitialState}
           >
             Finish
           </Button>
