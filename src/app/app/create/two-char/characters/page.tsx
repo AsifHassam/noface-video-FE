@@ -73,16 +73,14 @@ export default function CharacterSelectionPage() {
           </p>
         </header>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {characters
-            .filter((character) => character.enabled)
-            .map((character) => (
-              <CharacterCard
-                key={character.id}
-                character={character}
-                selected={selected.some((item) => item.id === character.id)}
-                onSelect={toggleCharacter}
-              />
-            ))}
+          {characters.map((character) => (
+            <CharacterCard
+              key={character.id}
+              character={character}
+              selected={selected.some((item) => item.id === character.id)}
+              onSelect={toggleCharacter}
+            />
+          ))}
         </div>
         <div className="flex justify-end">
           <Button className="rounded-2xl px-6" disabled={selected.length !== 2} onClick={handleNext}>

@@ -97,8 +97,9 @@ export const CharacterCard = ({ character, selected, onSelect }: CharacterCardPr
           className="object-contain p-2"
         />
         {!character.enabled ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/30 text-white">
-            <Lock className="h-6 w-6" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm text-white">
+            <Lock className="h-6 w-6 mb-2" />
+            <span className="text-xs font-semibold">Coming Soon</span>
           </div>
         ) : null}
         {voiceSampleUrl && (
@@ -125,8 +126,13 @@ export const CharacterCard = ({ character, selected, onSelect }: CharacterCardPr
       </div>
       <div className="space-y-1">
         <div className="flex items-center justify-between">
-          <p className="text-lg font-semibold text-foreground">{character.name}</p>
-          {voiceSampleUrl && (
+          <p className={cn(
+            "text-lg font-semibold",
+            character.enabled ? "text-foreground" : "text-muted-foreground"
+          )}>
+            {character.name}
+          </p>
+          {voiceSampleUrl && character.enabled && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Volume2 className="h-4 w-4 text-muted-foreground" />
@@ -135,21 +141,16 @@ export const CharacterCard = ({ character, selected, onSelect }: CharacterCardPr
             </Tooltip>
           )}
         </div>
-        <p className="text-xs text-muted-foreground">
-          {character.isPlaceholder ? "Placeholder voice" : "Premium voice"}
-        </p>
+        {character.enabled ? (
+          <p className="text-xs text-muted-foreground">
+            {character.isPlaceholder ? "Placeholder voice" : "Premium voice"}
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground italic">Coming Soon</p>
+        )}
       </div>
     </motion.div>
   );
-
-  if (!character.enabled) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>{content}</TooltipTrigger>
-        <TooltipContent>Unavailable in MVP</TooltipContent>
-      </Tooltip>
-    );
-  }
 
   return content;
 };

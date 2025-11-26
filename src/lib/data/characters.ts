@@ -20,27 +20,11 @@ export const CHARACTERS: Character[] = [
     isPlaceholder: true,
   },
   {
-    id: "stewie-like",
-    slug: "stewie-like",
-    name: "Stewie-like",
-    avatarUrl: avatar("stewie"),
-    enabled: false,
-    isPlaceholder: false,
-  },
-  {
-    id: "peter-like",
-    slug: "peter-like",
-    name: "Peter-like",
-    avatarUrl: avatar("peter"),
-    enabled: false,
-    isPlaceholder: false,
-  },
-  {
     id: "rick-like",
     slug: "rick-like",
     name: "Rick",
     avatarUrl: "/avatars/rick.png",
-    enabled: true,
+    enabled: false,
     isPlaceholder: false,
   },
   {
@@ -48,7 +32,7 @@ export const CHARACTERS: Character[] = [
     slug: "brian-like",
     name: "Brian",
     avatarUrl: "/avatars/brian.png",
-    enabled: true,
+    enabled: false,
     isPlaceholder: false,
   },
   {
@@ -56,7 +40,7 @@ export const CHARACTERS: Character[] = [
     slug: "morty-like",
     name: "Morty",
     avatarUrl: "/avatars/morty.png",
-    enabled: true,
+    enabled: false,
     isPlaceholder: false,
   },
 ];

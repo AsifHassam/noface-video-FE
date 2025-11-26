@@ -291,6 +291,44 @@ export const scriptApi = {
  */
 export const renderApi = {
   /**
+   * Generate audio files only (for browser preview) - no video render
+   */
+  async generateAudio(projectId: string): Promise<{
+    success: boolean;
+    projectId: string;
+    audioFiles: Array<{
+      speaker: string;
+      text: string;
+      fileName: string;
+      storagePath: string;
+      publicUrl: string | null;
+      startMs: number;
+      endMs: number;
+      durationMs: number;
+      durationSec: number;
+      reused: boolean;
+    }>;
+    mergedAudioUrl?: string | null;
+    mergedDurationMs?: number;
+    totalDurationMs: number;
+    totalDurationSec: number;
+    ttsProvider: string;
+    audioReusedCount: number;
+    conversations: Array<{
+      speaker: string;
+      text: string;
+      audioUrl: string | null;
+      startMs: number;
+      endMs: number;
+    }>;
+  }> {
+    console.log("🎤 renderApi.generateAudio called for project:", projectId);
+    return apiRequest(`/api/projects/${projectId}/generate-audio`, {
+      method: 'POST',
+    });
+  },
+
+  /**
    * Generate preview video with free TTS (queued)
    */
   async generatePreview(projectId: string): Promise<{
@@ -318,6 +356,7 @@ export const renderApi = {
     playbackRate?: number;
     characterSizes?: any;
     characterPositions?: any;
+    characterCustomPositions?: any;
   }): Promise<{
     success: boolean;
     message?: string;
@@ -328,6 +367,14 @@ export const renderApi = {
     videoUrl?: string; // For backward compatibility
   }> {
     console.log("🎬 renderApi.generateFinal called for project:", projectId);
+    console.log("📤 renderApi.generateFinal data payload:", {
+      hasCharacterSizes: !!data?.characterSizes,
+      hasCharacterPositions: !!data?.characterPositions,
+      hasCharacterCustomPositions: !!data?.characterCustomPositions,
+      characterCustomPositions: data?.characterCustomPositions,
+      characterCustomPositionsKeys: data?.characterCustomPositions ? Object.keys(data.characterCustomPositions) : [],
+      fullDataKeys: data ? Object.keys(data) : [],
+    });
     return apiRequest(`/api/projects/${projectId}/render/final`, {
       method: 'POST',
       body: data ? JSON.stringify(data) : undefined,

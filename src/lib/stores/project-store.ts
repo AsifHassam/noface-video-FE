@@ -19,7 +19,7 @@ import type {
   CharacterPositions,
 } from "@/types";
 import { CHARACTERS } from "@/lib/data/characters";
-import { generateMockFromScript, parseSrtText } from "@/lib/utils/srt";
+import { generateMockFromScript, parseSrtText, serializeSrt } from "@/lib/utils/srt";
 import { config } from "@/lib/config";
 import { supabase } from "@/lib/supabase";
 import type { RealtimeChannel } from "@supabase/supabase-js";
@@ -49,10 +49,22 @@ type DraftProject = {
   subtitleSingleWord?: boolean;
   characterSizes?: CharacterSizes;
   characterPositions?: CharacterPositions;
+  characterCustomPositions?: Record<string, { x: number; y: number }>;
   renderProgress?: number;
   playbackRate?: number;
   queuePosition?: number;
   estimatedWaitTime?: number;
+  audioFiles?: Array<{
+    speaker: string;
+    text: string;
+    publicUrl: string | null;
+    startMs: number;
+    endMs: number;
+    durationMs: number;
+  }>;
+  mergedAudioUrl?: string | null;
+  mergedDurationMs?: number;
+  audioTotalDurationMs?: number;
   updatedAt: string;
 };
 
@@ -105,16 +117,16 @@ const initialDraft = (): DraftProject => ({
   durationSec: null,
   subtitleEnabled: true,
   subtitleStyle: "classic",
-  subtitlePosition: { x: 50, y: 60 },
+  subtitlePosition: { x: 50, y: 85 }, // Lower position to avoid cutting off
   subtitleFontSize: 100,
   subtitleSingleLine: true,  // Default to 3-word subtitle mode
   subtitleSingleWord: false,
   characterSizes: {
-    Peter: { width: 400, height: 500 },
-    Stewie: { width: 350, height: 450 },
-    Rick: { width: 800, height: 1000 }, // 2x default size
-    Brian: { width: 350, height: 450 },
-    Morty: { width: 560, height: 720 }, // 2x default size, reduced by 20%
+    Peter: { width: 320, height: 400 },
+    Stewie: { width: 280, height: 360 },
+    Rick: { width: 480, height: 600 }, // Reduced for better fit
+    Brian: { width: 280, height: 360 },
+    Morty: { width: 400, height: 520 }, // Reduced for better fit
   },
   characterPositions: {
     Peter: 'left',
@@ -174,7 +186,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       
       set({ projects: formattedProjects, loading: false });
     } catch (error) {
-      console.error("Failed to load projects:", error);
       set({ error: "Failed to load projects", loading: false });
     }
   },
@@ -183,12 +194,9 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
    * Create a new project from draft
    */
   createProjectFromDraft: async (userId: string) => {
-    console.log("🟡 createProjectFromDraft called with userId:", userId);
     const currentDraft = get().draft;
-    console.log("🟡 Current draft:", currentDraft);
 
     if (!currentDraft.title.trim()) {
-      console.error("❌ Project title is required");
       return null;
     }
 
@@ -198,13 +206,11 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       // Generate mock subtitles if they don't exist
       let draftToSave = currentDraft;
       if (!currentDraft.srtText && currentDraft.script.length > 0) {
-        console.log("📝 Generating mock subtitles from script...");
         const mockSrt = generateMockFromScript(currentDraft.script);
         get().updateDraft({ srtText: mockSrt });
         draftToSave = { ...currentDraft, srtText: mockSrt };
       }
 
-      console.log("🟡 Calling projectsApi.create...");
       // 1. Create project in API
       const { project } = await projectsApi.create({
         title: draftToSave.title,
@@ -212,8 +218,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         type: draftToSave.type,
         backgroundId: draftToSave.backgroundId || "minecraft",
       });
-
-      console.log("✅ Project created:", project.id);
 
       // 2. Add characters if they exist
       const characters: { A: any; B: any } = { A: null, B: null };
@@ -231,7 +235,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           ...charA,
           id: (result as any).character.id,
         };
-        console.log("✅ Character A created:", (result as any).character.id);
       }
 
       if (currentDraft.characters.B) {
@@ -247,7 +250,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           ...charB,
           id: (result as any).character.id,
         };
-        console.log("✅ Character B created:", (result as any).character.id);
       }
 
       // 3. Add script segments if they exist
@@ -259,7 +261,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         }));
 
         await scriptApi.bulkUpsert(project.id, segments);
-        console.log(`✅ Script created: ${segments.length} segments`);
       }
 
       // 4. Save subtitles, text overlays, and settings
@@ -272,13 +273,11 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       // Save text overlays if they exist
       if (draftToSave.textOverlays && draftToSave.textOverlays.length > 0) {
         updates.text_overlays = draftToSave.textOverlays;
-        console.log(`💾 Saving ${draftToSave.textOverlays.length} text overlay(s) to project...`);
       }
       
       // Save image overlays if they exist
       if (draftToSave.imageOverlays && draftToSave.imageOverlays.length > 0) {
         updates.image_overlays = draftToSave.imageOverlays;
-        console.log(`🖼️ Saving ${draftToSave.imageOverlays.length} image overlay(s) to project...`);
       }
       
       // Store subtitle settings and character sizes in metadata
@@ -310,12 +309,13 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       if (draftToSave.characterPositions) {
         metadata.characterPositions = draftToSave.characterPositions;
       }
+      if (draftToSave.characterCustomPositions) {
+        metadata.characterCustomPositions = draftToSave.characterCustomPositions;
+      }
       
       if (Object.keys(updates).length > 0 || Object.keys(metadata).length > 1) {
         updates.metadata = metadata;
-        console.log("💬 Saving subtitle and overlay data to project...");
         await projectsApi.update(project.id, updates);
-        console.log(`✅ Subtitles and overlays saved to project`);
       }
 
       // 5. Create local project object
@@ -349,7 +349,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       
       return newProject;
     } catch (error) {
-      console.error("Failed to create project:", error);
       set({ error: "Failed to create project", loading: false });
       return null;
     }
@@ -367,10 +366,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         projects: state.projects.filter((p) => p.id !== id),
         loading: false,
       }));
-      
-      console.log("✅ Project deleted:", id);
     } catch (error) {
-      console.error("Failed to delete project:", error);
       set({ error: "Failed to delete project", loading: false });
       throw error;
     }
@@ -392,21 +388,15 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       if (updates.srtText) apiUpdates.srt_text = updates.srtText;
       if (updates.textOverlays) {
         apiUpdates.text_overlays = updates.textOverlays;
-        console.log('💾 Sending text_overlays to API:', {
-          count: updates.textOverlays.length,
-          overlays: updates.textOverlays
-        });
       }
       if (updates.imageOverlays) {
         apiUpdates.image_overlays = updates.imageOverlays;
-        console.log('🖼️ Sending image_overlays to API:', {
-          count: updates.imageOverlays.length,
-          overlays: updates.imageOverlays
-        });
       }
       
-      // Handle subtitle settings, character sizes, positions, and playback rate - need to merge with existing metadata
-      if (updates.subtitleStyle || updates.subtitlePosition || updates.subtitleFontSize !== undefined || updates.subtitleEnabled !== undefined || (updates as any).characterSizes || (updates as any).characterPositions || (updates as any).playbackRate !== undefined) {
+      // Handle subtitle settings, character sizes, positions, playback rate, and merged audio - need to merge with existing metadata
+      const hasMetadataUpdates = updates.subtitleStyle || updates.subtitlePosition || updates.subtitleFontSize !== undefined || updates.subtitleEnabled !== undefined || (updates as any).characterSizes || (updates as any).characterPositions || (updates as any).playbackRate !== undefined || (updates as any).mergedAudioUrl !== undefined || (updates as any).mergedDurationMs !== undefined || (updates as any).audioFiles !== undefined;
+      
+      if (hasMetadataUpdates) {
         // Fetch current project to get existing metadata
         try {
           const { project: currentProject } = await projectsApi.get(id);
@@ -427,11 +417,13 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           if ((updates as any).playbackRate !== undefined) metadata.playbackRate = (updates as any).playbackRate;
           if ((updates as any).characterSizes) metadata.characterSizes = (updates as any).characterSizes;
           if ((updates as any).characterPositions) metadata.characterPositions = (updates as any).characterPositions;
+          if ((updates as any).characterCustomPositions) metadata.characterCustomPositions = (updates as any).characterCustomPositions;
+          if ((updates as any).mergedAudioUrl !== undefined) metadata.mergedAudioUrl = (updates as any).mergedAudioUrl;
+          if ((updates as any).mergedDurationMs !== undefined) metadata.mergedDurationMs = (updates as any).mergedDurationMs;
+          if ((updates as any).audioFiles !== undefined) metadata.audioFiles = (updates as any).audioFiles;
           
           apiUpdates.metadata = metadata;
-          console.log('💾 Sending subtitle settings, character sizes, and positions in metadata:', metadata);
         } catch (error) {
-          console.error('⚠️ Failed to fetch current project for metadata merge:', error);
           // Create new metadata if we can't fetch
           const metadata: any = {};
           if (updates.subtitleStyle !== undefined) metadata.subtitleStyle = updates.subtitleStyle;
@@ -443,11 +435,14 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           if ((updates as any).playbackRate !== undefined) metadata.playbackRate = (updates as any).playbackRate;
           if ((updates as any).characterSizes) metadata.characterSizes = (updates as any).characterSizes;
           if ((updates as any).characterPositions) metadata.characterPositions = (updates as any).characterPositions;
+          if ((updates as any).characterCustomPositions) metadata.characterCustomPositions = (updates as any).characterCustomPositions;
+          if ((updates as any).mergedAudioUrl !== undefined) metadata.mergedAudioUrl = (updates as any).mergedAudioUrl;
+          if ((updates as any).mergedDurationMs !== undefined) metadata.mergedDurationMs = (updates as any).mergedDurationMs;
+          if ((updates as any).audioFiles !== undefined) metadata.audioFiles = (updates as any).audioFiles;
           apiUpdates.metadata = metadata;
         }
       }
       
-      console.log('💾 API updates being sent:', JSON.stringify(apiUpdates, null, 2));
       await projectsApi.update(id, apiUpdates);
       
       // Update local state (also update draft if it's the same project)
@@ -486,10 +481,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           loading: false,
         };
       });
-      
-      console.log("✅ Project updated:", id);
     } catch (error) {
-      console.error("Failed to update project:", error);
       set({ error: "Failed to update project", loading: false });
       throw error;
     }
@@ -547,21 +539,11 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
    */
   loadProjectIntoDraft: async (projectId: string) => {
     try {
-      console.log("📝 Loading project into draft, ID:", projectId);
-      
       // Fetch full project details from API (includes script segments, characters, etc.)
       const { project } = await projectsApi.get(projectId);
-      
-      console.log("📝 Project fetched from API:", project);
-      console.log("📝 Full project object:", JSON.stringify(project, null, 2));
-      console.log("📝 Project script_segments:", (project as any).script_segments);
-      console.log("📝 Project characters:", (project as any).characters);
-      console.log("📝 Project characters length:", (project as any).characters?.length);
 
       // Convert text overlays from database format to frontend format
       const rawTextOverlays = (project as any).text_overlays || [];
-      console.log("📝 Raw text overlays from API:", rawTextOverlays);
-      console.log("📝 Raw text overlays count:", rawTextOverlays.length);
       const formattedTextOverlays = rawTextOverlays.map((overlay: any) => {
         // Parse position if it's stored as "x,y" string
         let x = 50, y = 50;
@@ -599,8 +581,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
 
       // Convert image overlays from database format to frontend format
       const rawImageOverlays = (project as any).image_overlays || [];
-      console.log("🖼️ Raw image overlays from API:", rawImageOverlays);
-      console.log("🖼️ Raw image overlays count:", rawImageOverlays.length);
       const formattedImageOverlays = rawImageOverlays.map((overlay: any) => {
         // Calculate endMs from startMs + duration_ms
         const startMs = overlay.start_time_ms || 0;
@@ -626,12 +606,88 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       const projectMetadata = (project as any).metadata || {};
       const projectType = projectMetadata.type || 'TWO_CHAR_CONVO'; // Default to TWO_CHAR_CONVO if not set
       
+      // Format characters from API response
+      // API returns characters as an array, we need to convert to { A: Character | null, B: Character | null }
+      const rawCharacters = (project as any).characters || [];
+      const formattedCharacters: { A: Character | null; B: Character | null } = { A: null, B: null };
+      
+      // Helper function to construct avatar URL from character name if not provided
+      const getAvatarUrl = (char: any): string => {
+        // First try to use the avatar_url from database
+        if (char.avatar_url && char.avatar_url.trim() !== '') {
+          return char.avatar_url;
+        }
+        // Try avatar field
+        if ((char as any).avatar && (char as any).avatar.trim() !== '') {
+          return (char as any).avatar;
+        }
+        // If no avatar URL, construct it from character name (matching CHARACTERS data format)
+        if (char.name) {
+          const slug = char.name.toLowerCase().replace(/\s+/g, "-");
+          return `/avatars/${slug}.png`;
+        }
+        // Fallback to placeholder
+        return "/avatars/placeholder.svg";
+      };
+
+      if (Array.isArray(rawCharacters)) {
+        // Characters are returned as an array with position field (0 = A, 1 = B)
+        rawCharacters.forEach((char: any) => {
+          const position = char.position !== undefined ? char.position : (char.id ? 0 : 1); // Default to 0 if not specified
+          const avatarUrl = getAvatarUrl(char);
+          const slug = char.slug || char.name?.toLowerCase().replace(/\s+/g, "-") || `character-${char.id}`;
+          
+          const formattedChar: Character = {
+            id: char.id,
+            slug: slug,
+            name: char.name,
+            avatarUrl: avatarUrl,
+            enabled: char.enabled !== undefined ? char.enabled : true,
+            isPlaceholder: false,
+            voiceId: char.voice_id || null,
+          };
+          
+          if (position === 0 || position === 'A' || position === 'a') {
+            formattedCharacters.A = formattedChar;
+          } else if (position === 1 || position === 'B' || position === 'b') {
+            formattedCharacters.B = formattedChar;
+          }
+        });
+      } else if (rawCharacters && typeof rawCharacters === 'object' && !Array.isArray(rawCharacters)) {
+        // Characters might already be in { A: ..., B: ... } format
+        // But we still need to ensure they have proper avatarUrl and slug
+        if (rawCharacters.A) {
+          const charA = rawCharacters.A as any;
+          formattedCharacters.A = {
+            id: charA.id,
+            slug: charA.slug || charA.name?.toLowerCase().replace(/\s+/g, "-") || `character-a-${charA.id}`,
+            name: charA.name,
+            avatarUrl: getAvatarUrl(charA),
+            enabled: charA.enabled !== undefined ? charA.enabled : true,
+            isPlaceholder: false,
+            voiceId: charA.voiceId || charA.voice_id || null,
+          } as Character;
+        }
+        if (rawCharacters.B) {
+          const charB = rawCharacters.B as any;
+          formattedCharacters.B = {
+            id: charB.id,
+            slug: charB.slug || charB.name?.toLowerCase().replace(/\s+/g, "-") || `character-b-${charB.id}`,
+            name: charB.name,
+            avatarUrl: getAvatarUrl(charB),
+            enabled: charB.enabled !== undefined ? charB.enabled : true,
+            isPlaceholder: false,
+            voiceId: charB.voiceId || charB.voice_id || null,
+          } as Character;
+        }
+      }
+      
       // Convert API format to local format
       const formattedProject = {
         ...project,
         userId: (project as any).user_id,
         type: projectType as ProjectType, // Set type from metadata
-        characters: (project as any).characters || { A: null, B: null },
+        characters: formattedCharacters,
         script: (project as any).script_segments || [],
         overlays: formattedTextOverlays,
         textOverlays: formattedTextOverlays,
@@ -643,14 +699,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         createdAt: (project as any).created_at,
         updatedAt: (project as any).updated_at,
       };
-
-      console.log("📝 Formatted project text overlays count:", formattedProject.textOverlays.length);
-      console.log("📝 Formatted project image overlays count:", formattedProject.imageOverlays.length);
-
-      console.log("📝 Formatted project script:", formattedProject.script);
-      console.log("📝 Formatted project script length:", formattedProject.script?.length);
-      console.log("🎥 Formatted project previewUrl:", formattedProject.previewUrl);
-      console.log("🎥 Formatted project finalUrl:", formattedProject.finalUrl);
 
       // Extract subtitle settings from metadata (reusing projectMetadata)
       const metadata = projectMetadata;
@@ -675,16 +723,14 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         Brian: 'right',
         Morty: 'right',
       };
-
-      console.log("📝 Subtitle settings from metadata:", {
-        style: subtitleStyle,
-        position: subtitlePosition,
-        fontSize: subtitleFontSize,
-        enabled: subtitleEnabled,
-      });
-      console.log("🎬 Playback rate from metadata:", playbackRate);
-      console.log("📏 Character sizes from metadata:", characterSizes);
-      console.log("📍 Character positions from metadata:", characterPositions);
+      const characterCustomPositions = metadata.characterCustomPositions || undefined;
+      
+      // Extract merged audio URL and duration from metadata
+      const mergedAudioUrl = metadata.mergedAudioUrl || null;
+      const mergedDurationMs = metadata.mergedDurationMs || null;
+      
+      // Extract audioFiles from metadata if available (for browser preview mode in edit)
+      const audioFilesMetadata = metadata.audioFiles || null;
 
       // Convert project to draft format
       // For story narration projects, we need to preserve scriptInput from metadata or reconstruct it
@@ -702,9 +748,8 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
             const segments = parseSrtText(formattedProject.srtText);
             // Extract text from each segment and join with newlines
             scriptInput = segments.map(seg => seg.text).join('\n');
-            console.log("📝 Reconstructed scriptInput from SRT text:", scriptInput.substring(0, 100));
           } catch (e) {
-            console.warn("⚠️ Failed to reconstruct scriptInput from SRT:", e);
+            // Failed to reconstruct scriptInput from SRT
           }
         }
       } else {
@@ -712,6 +757,9 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         scriptInput = formattedProject.script?.map((line: ScriptLine) => `${line.speaker}: ${line.text}`).join('\n') || "";
       }
       
+      // Extract background_id from project (it's stored as background_id in the database)
+      const backgroundId = (project as any).background_id || null;
+
       const draft: DraftProject = {
         id: formattedProject.id,
         type: formattedProject.type,
@@ -720,6 +768,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         characters: formattedProject.characters || { A: null, B: null },
         script: formattedProject.script || [],
         scriptInput: scriptInput,
+        backgroundId: backgroundId as BackgroundId | null,
         overlays: formattedProject.overlays || [],
         textOverlays: formattedProject.textOverlays || [],
         imageOverlays: formattedProject.imageOverlays || [],
@@ -737,22 +786,15 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         playbackRate: playbackRate,
         characterSizes: characterSizes,
         characterPositions: characterPositions,
+        characterCustomPositions: characterCustomPositions,
+        mergedAudioUrl: mergedAudioUrl,
+        mergedDurationMs: mergedDurationMs || null,
+        audioFiles: audioFilesMetadata || undefined,
         updatedAt: new Date().toISOString(),
       };
 
       set({ draft });
-      console.log("✅ Project loaded into draft successfully");
-      console.log("✅ Draft script length:", draft.script.length);
-      console.log("✅ Draft script:", draft.script);
-      console.log("✅ Draft text overlays count:", draft.textOverlays.length);
-      console.log("✅ Draft text overlays:", draft.textOverlays);
-      console.log("✅ Draft image overlays count:", draft.imageOverlays.length);
-      console.log("✅ Draft image overlays:", draft.imageOverlays);
-      console.log("🎥 Draft previewUrl:", draft.previewUrl);
-      console.log("🎥 Draft finalUrl:", draft.finalUrl);
-      console.log("🎥 Draft durationSec:", draft.durationSec);
     } catch (error) {
-      console.error("❌ Failed to load project into draft:", error);
       throw error;
     }
   },
@@ -761,8 +803,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
    * Generate preview video
    */
   enqueuePreview: async (projectId?: string, userId?: string) => {
-    console.log("🎬 enqueuePreview called with projectId:", projectId, "userId:", userId);
-    
     try {
       const draft = get().draft;
       
@@ -773,7 +813,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       
       // If no valid projectId or project doesn't exist in database, create project first
       if (!targetProjectId || !existingProject) {
-        console.log("📝 No valid projectId provided, need to create project first");
         
         // Check if we have a draft with script
         if (!draft?.script?.length) {
@@ -783,7 +822,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         // Create project from draft first
         // Use provided userId or fallback to null (for dev mode)
         const finalUserId = userId || null;
-        console.log("📝 Creating project with userId:", finalUserId);
         const newProject = await get().createProjectFromDraft(finalUserId || "mock-user");
         
         if (!newProject) {
@@ -791,19 +829,10 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         }
         
         if (!newProject.id) {
-          console.error("❌ CRITICAL: Project created but ID is missing!", newProject);
           throw new Error("Project created but ID is missing");
         }
         
         targetProjectId = newProject.id;
-        console.log("✅ Project created with ID:", targetProjectId);
-        console.log("🔍 Verifying targetProjectId:", {
-          targetProjectId,
-          type: typeof targetProjectId,
-          isUndefined: targetProjectId === undefined,
-          isNull: targetProjectId === null,
-          isEmpty: targetProjectId === ''
-        });
         
         // IMPORTANT: Update draft ID to match the new project ID
         // This ensures the status update works correctly
@@ -815,11 +844,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
             id: projectIdForDraft,
           }
         }));
-        console.log("🔄 Updated draft ID to match project ID:", projectIdForDraft);
       } else {
-        console.log("📝 Using existing project ID:", targetProjectId);
-        console.log("📝 Draft has characters:", draft?.characters);
-        
         // When editing existing project, characters and script should already exist
         // But let's verify the project has what it needs
         if (!draft?.script?.length) {
@@ -829,174 +854,100 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       
       // Validate targetProjectId before calling API
       if (!targetProjectId) {
-        console.error("❌ CRITICAL: targetProjectId is undefined/null before calling render API!");
-        throw new Error("Project ID is missing - cannot queue render job");
+        throw new Error("Project ID is missing - cannot generate audio");
       }
       
-      // Call render API (now returns queue info)
-      console.log("🎬 Calling renderApi.generatePreview for project:", targetProjectId);
-      console.log("🔍 Final targetProjectId validation:", {
-        targetProjectId,
-        type: typeof targetProjectId,
-        length: targetProjectId?.length
-      });
-      
-      let queueResult;
+      // Generate audio files only (no video render for preview)
+      let audioResult;
       try {
-        console.log("⏳ Waiting for render API response...");
-        queueResult = await renderApi.generatePreview(targetProjectId);
-        console.log("✅ Preview job queued:", queueResult);
-        console.log("🔍 Queue result details:", {
-          hasRenderJobId: !!queueResult.render_job_id,
-          renderJobId: queueResult.render_job_id,
-          status: queueResult.status,
-          queuePosition: queueResult.queue_position,
-          estimatedWaitTime: queueResult.estimated_wait_time,
-          success: queueResult.success
-        });
+        audioResult = await renderApi.generateAudio(targetProjectId);
       } catch (apiError) {
-        console.error("❌ Failed to queue render job:", apiError);
         throw apiError;
       }
       
-      if (!queueResult || !queueResult.render_job_id) {
-        console.error("❌ Invalid queue result:", queueResult);
-        throw new Error("Failed to queue render job - no job ID returned");
+      if (!audioResult || !audioResult.success || !audioResult.audioFiles) {
+        throw new Error("Failed to generate audio - invalid response");
       }
       
-      // Update status to QUEUED in draft immediately - CRITICAL: This must happen synchronously
-      console.log("🔄 About to update draft status to QUEUED...", {
-        currentStatus: get().draft.status,
-        queuePosition: queueResult.queue_position,
-        estimatedWaitTime: queueResult.estimated_wait_time,
-        targetProjectId
+      // Generate subtitles from audio timing
+      // Map conversations to subtitle segments with speaker info
+      // Note: 'draft' is already declared at the top of this function (line 776)
+      const subtitleSegments = audioResult.conversations.map((conv, index) => {
+        // Determine speaker: check if this matches character A or B from draft
+        const speakerName = conv.speaker.toLowerCase();
+        const charAName = draft.characters.A?.name?.toLowerCase() || '';
+        const charBName = draft.characters.B?.name?.toLowerCase() || '';
+        
+        // Match speaker name to character
+        let speaker: "A" | "B" = "A"; // Default to A
+        if (charAName && speakerName === charAName) {
+          speaker = "A";
+        } else if (charBName && speakerName === charBName) {
+          speaker = "B";
+        } else {
+          // Fallback: alternate based on index if names don't match
+          speaker = index % 2 === 0 ? "A" : "B";
+        }
+        
+        return {
+          startMs: conv.startMs,
+          endMs: conv.endMs,
+          speaker: speaker,
+          text: conv.text
+        };
       });
       
-      // Use a synchronous update to ensure React sees the change immediately
+      // Generate SRT text in comma-separated format (startMs,endMs,speaker,text)
+      // This matches the parseSrtText function's expected format
+      const srtText = serializeSrt(subtitleSegments);
+      
+      // Update draft with audio files and enable browser preview mode
       set((state) => {
         const updatedDraft: DraftProject = {
           ...state.draft,
           id: targetProjectId,
-          status: "QUEUED" as const,
-          queuePosition: queueResult.queue_position,
-          estimatedWaitTime: queueResult.estimated_wait_time,
+          status: "READY" as const, // Ready for browser preview
+          audioFiles: audioResult.audioFiles.map(af => ({
+            speaker: af.speaker,
+            text: af.text,
+            publicUrl: af.publicUrl,
+            startMs: af.startMs,
+            endMs: af.endMs,
+            durationMs: af.durationMs,
+          })),
+          mergedAudioUrl: audioResult.mergedAudioUrl || null,
+          mergedDurationMs: audioResult.mergedDurationMs || audioResult.totalDurationMs,
+          audioTotalDurationMs: audioResult.totalDurationMs,
+          durationSec: audioResult.totalDurationSec,
+          srtText: srtText,
+          originalSrtText: srtText,
+          subtitleEnabled: true,
         };
-        console.log("📝 Updated draft status to QUEUED:", {
-          status: updatedDraft.status,
-          queuePosition: updatedDraft.queuePosition,
-          estimatedWaitTime: updatedDraft.estimatedWaitTime,
-          draftId: updatedDraft.id,
-          fullDraft: updatedDraft
-        });
         return { draft: updatedDraft };
       });
       
-      // Verify the update happened immediately
-      const verifyStatus = get().draft.status;
-      const verifyQueuePosition = get().draft.queuePosition;
-      console.log("✅ Verified draft status after update:", {
-        status: verifyStatus,
-        queuePosition: verifyQueuePosition,
-        draftId: get().draft.id
-      });
-      
-      if (verifyStatus !== "QUEUED") {
-        console.error("❌ CRITICAL: Status update failed! Expected QUEUED, got:", verifyStatus);
-        // Force update again
-        set((state) => ({
-          draft: {
-            ...state.draft,
-            status: "QUEUED" as const,
-            queuePosition: queueResult.queue_position,
-            estimatedWaitTime: queueResult.estimated_wait_time,
-          }
-        }));
-      }
-      
-      // CRITICAL: Capture targetProjectId and render_job_id for realtime subscription
-      const capturedProjectId = targetProjectId;
-      const capturedJobId = queueResult.render_job_id!;
-      
-      console.log("🔒 Captured values for realtime subscription:", {
-        capturedProjectId,
-        capturedJobId,
-        currentTargetProjectId: targetProjectId,
-        currentDraftId: get().draft.id
-      });
-      
-      // Do one initial status check to get current state (not polling, just one check)
+      // Save audio files info and merged audio URL to database
       try {
-        const initialStatus = await renderApi.getRenderJobStatus(capturedProjectId, capturedJobId);
-        const job = initialStatus.render_job;
-        const jobStatus = job.status.toLowerCase() as 'pending' | 'processing' | 'completed' | 'failed';
-        
-        console.log("📊 Initial status check:", jobStatus, "Progress:", job.progress);
-        
-        // Map backend status to frontend status
-        let frontendStatus: 'QUEUED' | 'RENDERING' | 'READY' | 'FAILED';
-        if (jobStatus === 'completed') {
-          frontendStatus = 'READY';
-        } else if (jobStatus === 'failed') {
-          frontendStatus = 'FAILED';
-        } else if (jobStatus === 'processing') {
-          frontendStatus = 'RENDERING';
-        } else {
-          frontendStatus = 'QUEUED';
-        }
-        
-        // Update status if it's different from what we set
-        if (get().draft.status !== frontendStatus) {
-          set((state) => ({
-            draft: {
-              ...state.draft,
-              renderProgress: job.progress || 0,
-              status: frontendStatus,
-            }
-          }));
-        }
-        
-        // If already completed, handle it immediately
-        if (jobStatus === 'completed' && job.video_url && job.metadata) {
-          const metadata = job.metadata;
-          set((state) => ({
-            draft: {
-              ...state.draft,
-              status: "READY" as const,
-              previewUrl: job.video_url!,
-              durationSec: metadata.durationSec || 0,
-              srtText: metadata.srtText || '',
-              originalSrtText: metadata.srtText || '',
-              subtitleEnabled: true,
-            }
-          }));
-          
-          // Save to database
-          await get().updateProject(capturedProjectId, {
-            previewUrl: job.video_url!,
-            durationSec: metadata.durationSec || 0,
-            srtText: metadata.srtText || '',
-            status: "READY" as RenderStatus,
-          }).catch(err => {
-            console.error("⚠️ Failed to save preview URL to database:", err);
-          });
-          
-          import('sonner').then(({ toast }) => {
-            toast.success("Preview generated successfully! 🎉");
-          }).catch(() => {});
-        }
+        const currentDraft = get().draft;
+        await get().updateProject(targetProjectId, {
+          status: "READY" as RenderStatus,
+          srtText: srtText,
+          durationSec: audioResult.totalDurationSec,
+          // Store merged audio URL and audio files in metadata for edit mode
+          mergedAudioUrl: currentDraft.mergedAudioUrl || audioResult.mergedAudioUrl || null,
+          mergedDurationMs: currentDraft.mergedDurationMs || audioResult.mergedDurationMs || null,
+          audioFiles: currentDraft.audioFiles || audioResult.audioFiles || null,
+        } as any).catch(() => {});
       } catch (error) {
-        console.warn("⚠️ Initial status check failed (realtime will handle updates):", error);
+        // Failed to save to database
       }
       
-      // Set up Supabase Realtime subscription for real-time updates
-      // This will listen for status changes in the render_jobs table
-      // Use captured values to ensure we're subscribing to the correct job
-      console.log("🔔 Setting up realtime subscription for job:", capturedJobId, "project:", capturedProjectId);
-      get().subscribeToRenderJob(capturedJobId, capturedProjectId);
+      // Show success message
+      import('sonner').then(({ toast }) => {
+        toast.success("Audio generated! Preview is ready 🎉");
+      }).catch(() => {});
       
     } catch (error) {
-      console.error("❌ Preview generation failed:", error);
-      
       // Update status to FAILED
       if (!projectId) {
         set((state) => ({
@@ -1012,8 +963,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
    * Generate final video with Supabase Realtime updates
    */
   simulateRender: async (projectId?: string) => {
-    console.log("🎬 simulateRender called with projectId:", projectId);
-    
     try {
       const draft = get().draft;
       
@@ -1035,7 +984,11 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       }
       
       // Call render API with customizations
-      console.log("🎬 Calling renderApi.generateFinal...");
+      console.log("📤 Sending character sizes and positions to backend:", {
+        characterSizes: draft.characterSizes,
+        characterPositions: draft.characterPositions,
+        characterCustomPositions: draft.characterCustomPositions,
+      });
       const result = await renderApi.generateFinal(targetProjectId, {
         textOverlays: draft.textOverlays,
         subtitleCustomizations: {
@@ -1050,9 +1003,8 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         playbackRate: draft.playbackRate || 1, // Include playback rate
         characterSizes: draft.characterSizes, // Include character sizes
         characterPositions: draft.characterPositions, // Include character positions
+        characterCustomPositions: draft.characterCustomPositions, // Include custom character positions
       });
-      
-      console.log("✅ Final render result:", result);
       
       // Update draft with queue status immediately
       if (!projectId && (result.queue_position !== undefined || result.estimated_wait_time !== undefined)) {
@@ -1068,7 +1020,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       
       // If we have a render job ID, set up Realtime subscription
       if (result.render_job_id) {
-        console.log("🔔 Setting up realtime subscription for final render job:", result.render_job_id, "project:", targetProjectId);
         get().subscribeToRenderJob(result.render_job_id, targetProjectId);
         
         // Also get initial status immediately
@@ -1135,7 +1086,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
                   finalUrl: fullVideoUrl,
                 });
               } catch (dbError) {
-                console.error("⚠️ Failed to save final URL to database:", dbError);
+                // Failed to save final URL to database
               }
               
               // Unsubscribe when completed
@@ -1143,7 +1094,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
             }
           }
         } catch (statusError) {
-          console.warn("⚠️ Failed to get initial status:", statusError);
           // Continue with Realtime subscription
         }
       } else {
@@ -1170,21 +1120,15 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         
         // IMPORTANT: Save final URL to database so it persists
         try {
-          console.log("💾 Saving final URL to database...");
           await get().updateProject(targetProjectId, {
             finalUrl: result.videoUrl,
           });
-          console.log("✅ Final URL saved to database");
         } catch (dbError) {
-          console.error("⚠️ Failed to save final URL to database:", dbError);
           // Don't throw - final video still works locally
         }
       }
       
-      console.log("✅ Final render queued!");
-      
     } catch (error) {
-      console.error("❌ Final render failed:", error);
       
       // Update status to FAILED
       if (!projectId) {
@@ -1207,11 +1151,8 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
     // Unsubscribe from any existing subscription
     const existingSub = get().renderJobSubscription;
     if (existingSub) {
-      console.log("🔄 Unsubscribing from existing render job subscription");
       supabase.removeChannel(existingSub);
     }
-
-    console.log("📡 Setting up Supabase Realtime subscription for render job:", jobId);
     
     const channel = supabase
       .channel(`render-job-${jobId}`)
@@ -1224,11 +1165,9 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           filter: `id=eq.${jobId}`,
         },
         async (payload) => {
-          console.log("📨 Realtime update received:", payload);
           const renderJob = payload.new as any;
           
           if (!renderJob) {
-            console.warn("⚠️ Realtime update missing render job data");
             return;
           }
 
@@ -1247,16 +1186,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
             frontendStatus = 'QUEUED';
           }
 
-          console.log("🔄 Realtime status update:", {
-            jobId,
-            jobStatus,
-            frontendStatus,
-            progress: renderJob.progress,
-            hasVideoUrl: !!renderJob.result_url,
-            hasMetadata: !!renderJob.metadata,
-            currentDraftStatus: get().draft.status
-          });
-
           // Handle story narrations - project is created by worker, just need to load it
           const isStoryPreview = renderJob.type === 'STORY_PREVIEW';
           let actualProjectId = projectId;
@@ -1267,13 +1196,10 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
             const existingProject = get().projects.find(p => p.id === projectId);
             
             if (!existingProject) {
-              console.log("📝 Story narration: Refreshing projects list to include project created by worker...");
               try {
                 // Refresh projects list to include the project created by the worker
                 await get().loadProjects();
-                console.log("✅ Projects list refreshed, story narration project should now be available");
               } catch (loadError) {
-                console.warn("⚠️ Failed to refresh projects list (will use draft only):", loadError);
                 // Continue - we can still update the draft
               }
             }
@@ -1281,7 +1207,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
             // Ensure draft ID matches the project ID created by worker
             const currentDraft = get().draft;
             if (currentDraft.id !== projectId) {
-              console.log(`📝 Updating draft ID from ${currentDraft.id} to ${projectId} to match project created by worker`);
               get().updateDraft({ id: projectId });
             }
           }
@@ -1294,7 +1219,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
               status: frontendStatus,
             };
             
-            console.log("💾 Realtime: Updating draft status from", state.draft.status, "to", frontendStatus);
 
             // Preserve queue info if status is QUEUED
             if (frontendStatus === 'QUEUED') {
@@ -1332,17 +1256,13 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
                   get().updateProject(finalProjectId, {
                     finalUrl: renderJob.result_url!,
                     status: "READY" as RenderStatus,
-                  }).catch(err => {
-                    console.error("⚠️ Failed to save final URL to database:", err);
-                  });
+                  }).catch(() => {});
                 }
 
                 // Show success toast
                 import('sonner').then(({ toast }) => {
                   toast.success("Final video rendered successfully! 🎬");
-                }).catch(err => {
-                  console.warn("Failed to show success toast:", err);
-                });
+                }).catch(() => {});
               } else {
                 // Preview render - update previewUrl
                 // Transform URL to full URL if needed (for story narrations, result_url might be relative)
@@ -1384,17 +1304,13 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
                       durationSec: metadata.durationSec || 0,
                       srtText: metadata.srtText || '',
                       status: "READY" as RenderStatus,
-                    }).catch(err => {
-                      console.error("⚠️ Failed to save preview URL to database:", err);
-                    });
+                    }).catch(() => {});
                   }
 
                   // Show success toast
                   import('sonner').then(({ toast }) => {
                     toast.success("Preview generated successfully! 🎉");
-                  }).catch(err => {
-                    console.warn("Failed to show success toast:", err);
-                  });
+                  }).catch(() => {});
                 }
               }
 
@@ -1404,7 +1320,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
 
             // If failed, update status
             if (jobStatus === 'failed') {
-              console.error("❌ Render job failed:", renderJob.error_message);
               draftUpdate.status = 'FAILED' as const;
               get().unsubscribeFromRenderJob();
             }
@@ -1449,20 +1364,14 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       )
       .subscribe((status, err) => {
         if (status === 'SUBSCRIBED') {
-          console.log("✅ Successfully subscribed to render job realtime updates for job:", jobId);
           set({ realtimeConnected: true });
         } else if (status === 'CHANNEL_ERROR') {
-          console.error("❌ Realtime subscription error:", err);
-          console.warn("⚠️ Realtime subscription failed - will use polling fallback");
           set({ realtimeConnected: false });
         } else if (status === 'TIMED_OUT') {
-          console.warn("⏱️ Realtime subscription timed out - will use polling fallback");
           set({ realtimeConnected: false });
         } else if (status === 'CLOSED') {
-          console.log("🔌 Realtime subscription closed");
           set({ realtimeConnected: false });
         } else {
-          console.log("📡 Realtime subscription status:", status, err ? `Error: ${err}` : '');
           if (status !== 'SUBSCRIBED') {
             set({ realtimeConnected: false });
           }
@@ -1478,7 +1387,6 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
   unsubscribeFromRenderJob: () => {
     const subscription = get().renderJobSubscription;
     if (subscription) {
-      console.log("🔌 Unsubscribing from render job realtime updates");
       supabase.removeChannel(subscription);
       set({ renderJobSubscription: null });
     }

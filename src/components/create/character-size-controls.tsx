@@ -6,14 +6,13 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { RotateCcw, ChevronDown, ChevronUp } from "lucide-react";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import type { CharacterSizes, CharacterPositions, CharacterPosition } from "@/types";
+import type { CharacterSizes, CharacterPositions } from "@/types";
 
 interface CharacterSizeControlsProps {
   characterSizes: CharacterSizes;
   onCharacterSizesChange: (sizes: CharacterSizes) => void;
-  characterPositions: CharacterPositions;
-  onCharacterPositionsChange: (positions: CharacterPositions) => void;
+  characterPositions?: CharacterPositions; // Optional, kept for backwards compatibility but not used
+  onCharacterPositionsChange?: (positions: CharacterPositions) => void; // Optional, kept for backwards compatibility but not used
   selectedCharacters: string[]; // Names of selected characters
   defaultExpanded?: boolean; // Whether to start expanded (default: true)
   disabled?: boolean; // Whether controls are disabled
@@ -27,12 +26,13 @@ const defaultSizes: CharacterSizes = {
   Morty: { width: 560, height: 720 }, // 2x default size, reduced by 20%
 };
 
-const defaultPositions: CharacterPositions = {
-  Peter: 'left',
-  Stewie: 'right',
-  Rick: 'left',
-  Brian: 'right',
-  Morty: 'right',
+// Calculate aspect ratios from default sizes (width/height)
+const aspectRatios: Record<keyof CharacterSizes, number> = {
+  Peter: (defaultSizes.Peter?.width ?? 400) / (defaultSizes.Peter?.height ?? 500), // 0.8
+  Stewie: (defaultSizes.Stewie?.width ?? 350) / (defaultSizes.Stewie?.height ?? 450), // ~0.778
+  Rick: (defaultSizes.Rick?.width ?? 800) / (defaultSizes.Rick?.height ?? 1000), // 0.8
+  Brian: (defaultSizes.Brian?.width ?? 350) / (defaultSizes.Brian?.height ?? 450), // ~0.778
+  Morty: (defaultSizes.Morty?.width ?? 560) / (defaultSizes.Morty?.height ?? 720), // ~0.778
 };
 
 export function CharacterSizeControls({
@@ -45,56 +45,52 @@ export function CharacterSizeControls({
   disabled = false,
 }: CharacterSizeControlsProps) {
   const [localSizes, setLocalSizes] = useState<CharacterSizes>(characterSizes);
-  const [localPositions, setLocalPositions] = useState<CharacterPositions>(characterPositions);
   const [isOpen, setIsOpen] = useState(defaultExpanded);
 
   const updateSize = (character: keyof CharacterSizes, dimension: 'width' | 'height', value: number) => {
     if (disabled) return;
+    
+    const currentSize = localSizes[character] || defaultSizes[character]!;
+    
+    // Calculate aspect ratio from current size (if it exists and is valid), otherwise use default
+    // This ensures we preserve the aspect ratio that the user has already set (which may differ from defaults)
+    const currentAspectRatio = currentSize.width > 0 && currentSize.height > 0
+      ? currentSize.width / currentSize.height
+      : aspectRatios[character];
+    
+    // Maintain aspect ratio: when width changes, adjust height; when height changes, adjust width
     const newSizes = {
       ...localSizes,
-      [character]: {
-        ...(localSizes[character] || defaultSizes[character]!),
-        [dimension]: value,
-      },
+      [character]: dimension === 'width'
+        ? {
+            width: value,
+            height: Math.round(value / currentAspectRatio), // Maintain aspect ratio
+          }
+        : {
+            width: Math.round(value * currentAspectRatio), // Maintain aspect ratio
+            height: value,
+          },
     };
+    
     setLocalSizes(newSizes);
     onCharacterSizesChange(newSizes);
   };
 
-  const updatePosition = (character: keyof CharacterPositions, position: CharacterPosition) => {
-    if (disabled) return;
-    const newPositions = {
-      ...localPositions,
-      [character]: position,
-    };
-    setLocalPositions(newPositions);
-    onCharacterPositionsChange(newPositions);
-  };
-
   const resetCharacter = (character: keyof CharacterSizes) => {
     const defaultSize = defaultSizes[character];
-    const defaultPosition = defaultPositions[character];
-    if (!defaultSize || !defaultPosition) return;
+    if (!defaultSize) return;
     
     const newSizes = {
       ...localSizes,
       [character]: defaultSize,
     };
-    const newPositions = {
-      ...localPositions,
-      [character]: defaultPosition,
-    };
     setLocalSizes(newSizes);
-    setLocalPositions(newPositions);
     onCharacterSizesChange(newSizes);
-    onCharacterPositionsChange(newPositions);
   };
 
   const resetAll = () => {
     setLocalSizes(defaultSizes);
-    setLocalPositions(defaultPositions);
     onCharacterSizesChange(defaultSizes);
-    onCharacterPositionsChange(defaultPositions);
   };
 
   // Only show controls for selected characters
@@ -111,7 +107,7 @@ export function CharacterSizeControls({
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Select characters to adjust their size and position
+            Select characters to adjust their size
           </p>
         </CardContent>
       </Card>
@@ -174,36 +170,6 @@ export function CharacterSizeControls({
               </div>
               
               <div className="space-y-4">
-                {/* Position Selection */}
-                <div className="space-y-2">
-                  <Label className="text-sm">Position</Label>
-                  <RadioGroup
-                    value={localPositions[character] || defaultPositions[character] || 'left'}
-                    onValueChange={(value) => updatePosition(character, value as CharacterPosition)}
-                    className="flex gap-4"
-                    disabled={disabled}
-                  >
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="left" id={`${character}-left`} />
-                      <Label htmlFor={`${character}-left`} className="cursor-pointer text-sm">
-                        Left
-                      </Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="center" id={`${character}-center`} />
-                      <Label htmlFor={`${character}-center`} className="cursor-pointer text-sm">
-                        Center
-                      </Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="right" id={`${character}-right`} />
-                      <Label htmlFor={`${character}-right`} className="cursor-pointer text-sm">
-                        Right
-                      </Label>
-                    </div>
-                  </RadioGroup>
-                </div>
-
                 {/* Size Controls */}
                 <div className="space-y-3">
                   <div className="space-y-2">
@@ -217,7 +183,7 @@ export function CharacterSizeControls({
                       value={[currentSize.width]}
                       onValueChange={([value]) => updateSize(character, 'width', value)}
                       min={200}
-                      max={800}
+                      max={1200}
                       step={10}
                       className="w-full"
                       disabled={disabled}
@@ -235,7 +201,7 @@ export function CharacterSizeControls({
                       value={[currentSize.height]}
                       onValueChange={([value]) => updateSize(character, 'height', value)}
                       min={200}
-                      max={800}
+                      max={1200}
                       step={10}
                       className="w-full"
                       disabled={disabled}

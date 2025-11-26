@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { Download, ChevronDown, ChevronUp, Info } from "lucide-react";
 import { RenderWaitGame } from "@/components/create/RenderWaitGame";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { config } from "@/lib/config";
 
 const steps = [
   { label: "Step 1", description: "Pick two characters" },
@@ -33,6 +34,7 @@ export default function PreviewPage() {
   const isEditing = searchParams.get("editing") === "true";
   const { user } = useAuthStore();
   const draft = useProjectStore((state) => state.draft);
+  const projects = useProjectStore((state) => state.projects);
   const {
     updateDraft,
     enqueuePreview,
@@ -40,7 +42,33 @@ export default function PreviewPage() {
     createProjectFromDraft,
     updateProject,
     unsubscribeFromRenderJob,
+    loadProjectIntoDraft,
   } = useProjectStore();
+
+  // Load project data when in edit mode
+  const [isLoadingProject, setIsLoadingProject] = useState(false);
+  useEffect(() => {
+    if (isEditing && draft?.id && !isLoadingProject) {
+      // Check if we need to load project data (missing script, merged audio, background, or other critical data)
+      const needsLoad = !draft?.script?.length || 
+                        (!draft?.mergedAudioUrl && !draft?.previewUrl && !draft?.audioFiles?.length) || 
+                        !draft?.srtText ||
+                        !draft?.backgroundId;
+      
+      if (needsLoad) {
+        // If we're editing but don't have complete project data loaded, load it
+        setIsLoadingProject(true);
+        loadProjectIntoDraft(draft.id)
+          .then(() => {
+            setIsLoadingProject(false);
+          })
+          .catch((error) => {
+            toast.error("Failed to load project data");
+            setIsLoadingProject(false);
+          });
+      }
+    }
+  }, [isEditing, draft?.id, draft?.script?.length, draft?.mergedAudioUrl, draft?.previewUrl, draft?.audioFiles?.length, draft?.srtText, draft?.backgroundId, isLoadingProject, loadProjectIntoDraft]);
 
   useEffect(() => {
     // Skip redirect check if we're editing an existing project
@@ -67,8 +95,32 @@ export default function PreviewPage() {
   const [isCharacterSettingsExpanded, setIsCharacterSettingsExpanded] = useState(false); // Initially collapsed
   
   // Check if preview has been generated (user can interact with controls)
-  const hasPreview = !!draft?.previewUrl;
+  // Preview is ready if we have audioFiles (browser preview) OR previewUrl (rendered video)
+  const hasPreview = !!draft?.previewUrl || (!!draft?.audioFiles && draft.audioFiles.length > 0);
   const isInitialState = !hasPreview && !isGeneratingPreview; // Disable everything except preview button
+  
+  // Status: READY if we have audioFiles (browser preview) or previewUrl (rendered video)
+  // If status is FAILED but there's no previewUrl, treat it as IDLE (not a real failure - just need to generate preview first)
+  let effectiveStatus: "QUEUED" | "RENDERING" | "READY" | "FAILED" | null = 
+    draft?.status === "READY" || (hasPreview && !draft?.status) ? "READY" : (draft?.status as "QUEUED" | "RENDERING" | "READY" | "FAILED" | null) ?? null;
+  if (effectiveStatus === "FAILED" && !draft?.previewUrl) {
+    // Clear FAILED status if there's no preview - this isn't a real failure, just need to generate preview first
+    effectiveStatus = null;
+  }
+  const status = effectiveStatus;
+  
+  // Helper function to get background video URL
+  const getBackgroundVideoUrl = (backgroundId: string | null | undefined): string | null => {
+    if (!backgroundId) return null;
+    const serverUrl = config.remotionServerUrl || "https://nofacevideo-0f67ae173a97.herokuapp.com";
+    const backgroundMap: Record<string, string> = {
+      minecraft: "mine_converted.mp4",
+      subway: "Subway.mp4",
+      mine_2_cfr: "mine_2_cfr.mp4",
+    };
+    const fileName = backgroundMap[backgroundId] || backgroundMap.mine_2_cfr;
+    return `${serverUrl}/backgrounds/${fileName}`;
+  };
   
   // Initialize captionsGenerated based on whether srtText exists
   // In edit mode, if srtText exists, captions were already generated
@@ -86,16 +138,8 @@ export default function PreviewPage() {
 
   const subtitleSegments = useMemo(() => {
     const segments = parseSrtText(subtitleText);
-    console.log("📝 Subtitle segments parsed:", {
-      srtTextLength: subtitleText.length,
-      segmentsCount: segments.length,
-      firstSegment: segments[0],
-      showSubtitles
-    });
     return segments;
   }, [subtitleText, showSubtitles]);
-  
-  const status = draft?.status ?? null;
 
   // Reset generating state when render completes or fails
   useEffect(() => {
@@ -109,44 +153,15 @@ export default function PreviewPage() {
     }
   }, [status, isGeneratingPreview, isRenderingFinal]);
 
-  // Debug: log status changes
-  useEffect(() => {
-    console.log("🔍 Draft status changed:", {
-      status,
-      queuePosition: draft?.queuePosition,
-      estimatedWaitTime: draft?.estimatedWaitTime,
-      renderProgress: draft?.renderProgress,
-      draftId: draft?.id
-    });
-  }, [status, draft?.queuePosition, draft?.estimatedWaitTime, draft?.renderProgress, draft?.id]);
-
   // Cleanup: Unsubscribe from realtime updates when component unmounts
   useEffect(() => {
     return () => {
-      console.log("🧹 Cleaning up render job subscription on unmount");
       unsubscribeFromRenderJob();
     };
   }, [unsubscribeFromRenderJob]);
 
-  // Debug: log duration value
-  useEffect(() => {
-    console.log("🎥 Preview page - Draft duration:", {
-      durationSec: draft?.durationSec,
-      durationMs: (draft?.durationSec || 0) * 1000,
-      previewUrl: draft?.previewUrl,
-    });
-  }, [draft?.durationSec, draft?.previewUrl]);
-
   const handleGeneratePreview = async () => {
-    console.log("🎬 Generate Preview clicked");
-    console.log("🎬 Draft:", draft);
-    console.log("🎬 Draft script:", draft?.script);
-    console.log("🎬 Draft script length:", draft?.script?.length);
-    console.log("🎬 Is editing:", isEditing);
-    console.log("🎬 Draft ID:", draft?.id);
-    
     if (!draft?.script?.length) {
-      console.error("❌ No script found in draft!");
       toast.error("Add at least two lines to preview the conversation.");
       return;
     }
@@ -160,13 +175,11 @@ export default function PreviewPage() {
       const projectId = (isEditing && draft?.id && draft?.previewUrl) ? draft.id : undefined;
       const userId = user?.id || undefined;
       
-      console.log("🎬 Calling enqueuePreview with:", { projectId, userId });
       await enqueuePreview(projectId, userId);
       // Don't show success here - it will be shown when the job actually completes
       // Don't set isGeneratingPreview to false here - let it stay true so the game shows
       // The useEffect will reset it when status becomes READY or FAILED
     } catch (error) {
-      console.error("Preview generation error:", error);
       setIsGeneratingPreview(false);
       toast.error(
         error instanceof Error 
@@ -192,19 +205,14 @@ export default function PreviewPage() {
         toast.error("Failed to generate captions.");
       }
     } catch (error) {
-      console.error("Failed to generate captions:", error);
       toast.error("Failed to generate captions.");
     }
   };
 
   const handleRenderFinal = async () => {
-    // In edit mode, allow final render if previewUrl exists, even if status isn't READY
-    // For new projects, still require READY status
-    const hasPreview = !!draft?.previewUrl;
-    const canRender = isEditing ? hasPreview : (status === "READY");
-    
-    if (!canRender) {
-      toast.info("Generate a preview first.");
+    // Check if project exists in edit mode
+    if (isEditing && !draft?.id) {
+      toast.error("Project not found. Please reload the page.");
       return;
     }
     
@@ -215,7 +223,6 @@ export default function PreviewPage() {
       // Don't set isRenderingFinal to false here - let it stay true so the game shows
       // The useEffect will reset it when status becomes READY or FAILED
     } catch (error) {
-      console.error("Final render error:", error);
       setIsRenderingFinal(false);
       toast.error(
         error instanceof Error 
@@ -231,15 +238,6 @@ export default function PreviewPage() {
       subtitleEnabled: showSubtitles,
     });
     
-    console.log("💾 Save draft clicked");
-    console.log("💾 Draft ID:", draft?.id);
-    console.log("💾 Is editing:", isEditing);
-    console.log("💾 Preview URL:", draft?.previewUrl);
-    console.log("💾 Text overlays:", draft?.textOverlays);
-    console.log("💾 Text overlays count:", draft?.textOverlays?.length || 0);
-    console.log("💾 Subtitle style:", draft?.subtitleStyle);
-    console.log("💾 Subtitle position:", draft?.subtitlePosition);
-    
     // Check if project exists in database
     // Project exists if: 1) isEditing is true, OR 2) previewUrl exists (project was created during preview generation)
     const projectExists = isEditing || !!draft?.previewUrl;
@@ -252,7 +250,6 @@ export default function PreviewPage() {
     // Save to database if project exists (either editing or created during preview)
     if (draft?.id && hasDatabaseProject) {
       try {
-        console.log("💾 Attempting to save to database...");
         await updateProject(draft.id, {
           status: 'DRAFT', // Set status to DRAFT so backend knows to preserve audio
           srtText: subtitleText,
@@ -266,32 +263,21 @@ export default function PreviewPage() {
           subtitleSingleWord: draft.subtitleSingleWord ?? false,
           characterSizes: draft.characterSizes,
           characterPositions: draft.characterPositions,
+          characterCustomPositions: draft.characterCustomPositions,
           playbackRate: draft.playbackRate || 1,
         } as any);
-        console.log("✅ Draft saved to database successfully");
         toast.success("Draft saved to database");
       } catch (error) {
-        console.error("❌ Failed to save draft:", error);
         // Project might not exist or have permission issues - that's okay
         // Text overlays are in draft and will be saved on preview/finish
         toast.success("Draft saved locally");
       }
     } else {
-      console.log("ℹ️ Not saving to database - draft.id:", draft?.id, "isEditing:", isEditing, "hasPreviewUrl:", !!draft?.previewUrl, "projectInList:", !!projectInList);
       toast.success("Draft saved locally");
     }
   };
 
   const handleFinish = async () => {
-    console.log("🔵 handleFinish called");
-    console.log("🔵 Draft state:", { 
-      hasPreviewUrl: !!draft?.previewUrl, 
-      title: draft?.title,
-      hasCharacters: { A: !!draft?.characters?.A, B: !!draft?.characters?.B },
-      scriptLength: draft?.script?.length 
-    });
-    console.log("🔵 User:", user);
-    
     // Check if project already exists (created during preview generation)
     const existingProject = useProjectStore.getState().projects.find(
       p => p.title === draft?.title && 
@@ -300,7 +286,6 @@ export default function PreviewPage() {
     
     if (existingProject) {
       // Project already exists, update it with latest text overlays before clearing
-      console.log("✅ Project already saved during preview generation");
       try {
         await updateProject(existingProject.id, {
           textOverlays: draft.textOverlays || [],
@@ -308,11 +293,10 @@ export default function PreviewPage() {
           srtText: subtitleText,
           characterSizes: draft.characterSizes,
           characterPositions: draft.characterPositions,
+          characterCustomPositions: draft.characterCustomPositions,
           playbackRate: draft.playbackRate || 1,
         } as any);
-        console.log("✅ Updated existing project with text overlays");
       } catch (error) {
-        console.error("⚠️ Failed to update existing project:", error);
         // Continue anyway - project exists
       }
       toast.success("Project saved to dashboard");
@@ -323,24 +307,17 @@ export default function PreviewPage() {
     
     // Optional: Warn if no preview, but still allow saving
     if (!draft?.previewUrl) {
-      console.log("⚠️ No preview URL, but proceeding anyway");
       toast.info("Saving project without preview video...");
     }
     
     try {
-      console.log("🟢 Calling createProjectFromDraft...");
-      console.log("🟢 Current draft text overlays:", draft?.textOverlays);
-      console.log("🟢 Current draft subtitle text length:", subtitleText.length);
       toast.info("Saving project...");
       const created = await createProjectFromDraft(user?.id ?? "mock-user");
-      
-      console.log("🟢 createProjectFromDraft result:", created);
       
       if (created) {
         // Update the project with latest text overlays and subtitles
         // (in case they were modified after project creation)
         try {
-          console.log("💾 Updating project with latest overlays and subtitles...");
           await updateProject(created.id, {
             textOverlays: draft.textOverlays || [],
             imageOverlays: draft.imageOverlays || [],
@@ -351,11 +328,10 @@ export default function PreviewPage() {
             subtitleEnabled: draft.subtitleEnabled,
             characterSizes: draft.characterSizes,
             characterPositions: draft.characterPositions,
+            characterCustomPositions: draft.characterCustomPositions,
             playbackRate: draft.playbackRate || 1,
           } as any);
-          console.log("✅ Project updated with latest overlays and subtitles");
         } catch (updateError) {
-          console.error("⚠️ Failed to update project with overlays:", updateError);
           // Continue anyway - project was created successfully
         }
         
@@ -363,11 +339,9 @@ export default function PreviewPage() {
         useProjectStore.getState().clearDraft();
         router.push("/app/dashboard");
       } else {
-        console.error("❌ createProjectFromDraft returned null");
         toast.error("Failed to save project");
       }
     } catch (error) {
-      console.error("❌ Error saving project:", error);
       toast.error("Failed to save project");
     }
   };
@@ -429,19 +403,21 @@ export default function PreviewPage() {
           <Button
             className="rounded-2xl"
             onClick={handleGeneratePreview}
-            disabled={status === "RENDERING" || status === "QUEUED"}
+            disabled={isGeneratingPreview || status === "RENDERING" || status === "QUEUED"}
           >
-            {status === "RENDERING" || status === "QUEUED" 
-              ? "Generating TikTok/Reels..." 
+            {isGeneratingPreview
+              ? "Generating Audio..."
+              : status === "RENDERING" || status === "QUEUED" 
+              ? "Generating..." 
               : status === "FAILED"
               ? "Retry Preview"
-              : "Generate TikTok/Reels Preview"}
+              : "Generate Preview"}
           </Button>
           <Button
             variant="outline"
             className="rounded-2xl"
             onClick={handleRenderFinal}
-            disabled={isInitialState || status === "RENDERING" || status === "QUEUED"}
+            disabled={status === "RENDERING" || status === "QUEUED"}
           >
             {status === "RENDERING" 
               ? "Rendering..." 
@@ -496,11 +472,16 @@ export default function PreviewPage() {
           </div>
         )}
         {/* TikTok-Style Editor with Video Player */}
+        {isLoadingProject ? (
+          <div className="rounded-3xl border border-border/40 bg-muted/20 p-8 text-center">
+            <p className="text-sm text-muted-foreground">Loading project data...</p>
+          </div>
+        ) : (
         <div className="space-y-4">
           <TikTokVideoEditor
             videoUrl={draft?.previewUrl}
             status={status}
-            durationMs={(draft?.durationSec || 0) * 1000}
+            durationMs={draft?.audioTotalDurationMs || (draft?.durationSec || 0) * 1000}
             textOverlays={draft?.textOverlays ?? []}
             onTextOverlaysChange={(overlays) => {
               // Only update draft, don't auto-save to database
@@ -533,12 +514,40 @@ export default function PreviewPage() {
             playbackRate={draft?.playbackRate ?? 1}
             onPlaybackRateChange={(rate) => {
               if (!isInitialState) {
-              console.log("🎬 Playback rate changed:", rate);
               updateDraft({ playbackRate: rate });
               }
             }}
             subtitleSingleLine={draft?.subtitleSingleLine ?? false}
+            browserPreviewMode={!!(draft?.mergedAudioUrl || (draft?.audioFiles && draft.audioFiles.length > 0))}
+            audioFiles={draft?.audioFiles || []}
+            mergedAudioUrl={draft?.mergedAudioUrl || null}
+            mergedDurationMs={draft?.mergedDurationMs}
+            backgroundVideoUrl={draft?.backgroundId ? getBackgroundVideoUrl(draft.backgroundId) : null}
             subtitleSingleWord={draft?.subtitleSingleWord ?? false}
+            characters={draft?.characters}
+            characterSizes={draft?.characterSizes}
+            characterPositions={draft?.characterPositions}
+            onCharacterPositionsChange={(positions) => {
+              if (!isInitialState) {
+                updateDraft({ characterPositions: positions });
+                // Auto-save to project if it exists
+                const projectId = draft?.id;
+                if (projectId && isEditing) {
+                  updateProject(projectId, { characterPositions: positions } as any).catch(() => {});
+                }
+              }
+            }}
+            characterCustomPositions={draft?.characterCustomPositions}
+            onCharacterCustomPositionsChange={(positions) => {
+              if (!isInitialState) {
+                updateDraft({ characterCustomPositions: positions });
+                // Auto-save to project if it exists
+                const projectId = draft?.id;
+                if (projectId && isEditing) {
+                  updateProject(projectId, { characterCustomPositions: positions } as any).catch(() => {});
+                }
+              }
+            }}
           />
           {/* Character Size Controls */}
           {draft?.characters?.A || draft?.characters?.B ? (
@@ -555,7 +564,7 @@ export default function PreviewPage() {
                 // Auto-save to project if it exists
                 const projectId = draft?.id;
                 if (projectId && isEditing) {
-                  updateProject(projectId, { characterSizes: sizes } as any).catch(console.error);
+                  updateProject(projectId, { characterSizes: sizes } as any).catch(() => {});
                 }
               }}
               characterPositions={draft?.characterPositions || {
@@ -570,7 +579,7 @@ export default function PreviewPage() {
                 // Auto-save to project if it exists
                 const projectId = draft?.id;
                 if (projectId && isEditing) {
-                  updateProject(projectId, { characterPositions: positions } as any).catch(console.error);
+                  updateProject(projectId, { characterPositions: positions } as any).catch(() => {});
                 }
               }}
               selectedCharacters={[
@@ -620,6 +629,7 @@ export default function PreviewPage() {
           </div>
           )}
         </div>
+        )}
 
         {/* Collapsible Subtitles Section */}
         <div className="space-y-4">
@@ -694,10 +704,7 @@ export default function PreviewPage() {
           </Button>
           <Button 
             className="rounded-2xl px-6" 
-            onClick={() => {
-              console.log("🔴 FINISH BUTTON CLICKED!");
-              handleFinish();
-            }}
+            onClick={handleFinish}
             disabled={isInitialState}
           >
             Finish

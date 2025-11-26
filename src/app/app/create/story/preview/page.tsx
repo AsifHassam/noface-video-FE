@@ -150,6 +150,19 @@ export default function StoryPreviewPage() {
     updateDraft({ playbackRate: rate });
   }, [updateDraft]);
 
+  // Helper function to get background video URL (for browser preview mode)
+  const getBackgroundVideoUrl = (backgroundId: string | null | undefined): string | null => {
+    if (!backgroundId) return null;
+    const serverUrl = config.remotionServerUrl || "https://nofacevideo-0f67ae173a97.herokuapp.com";
+    const backgroundMap: Record<string, string> = {
+      minecraft: "mine_converted.mp4",
+      subway: "Subway.mp4",
+      mine_2_cfr: "mine_2_cfr.mp4",
+    };
+    const fileName = backgroundMap[backgroundId] || backgroundMap.mine_2_cfr;
+    return `${serverUrl}/backgrounds/${fileName}`;
+  };
+
   const handleGeneratePreview = async () => {
     console.log("🎬 handleGeneratePreview called", { 
       hasDraft: !!draft,
@@ -256,32 +269,20 @@ export default function StoryPreviewPage() {
       console.log("🎥 Background ID:", draft.backgroundId || "mine_2_cfr");
       console.log("🌐 Server URL:", config.remotionServerUrl);
       
-      const requestBody = {
-        script: narrationLines.join("\n"),
-        backgroundId: draft.backgroundId || "mine_2_cfr",
-        subtitleCustomizations: {
-          style: draft.subtitleStyle || "classic",
-          position: draft.subtitlePosition || { x: 50, y: 85 },
-          fontSize: draft.subtitleFontSize || 100,
-          singleLine: draft.subtitleSingleLine ?? false,
-          singleWord: draft.subtitleSingleWord ?? false,
-        },
-        textOverlays: draft.textOverlays || [], // Send text overlays
-        imageOverlays: draft.imageOverlays || [], // Send image overlays
-      };
-      
-      console.log("📤 Sending request:", requestBody);
-      
-      // Call the story narration endpoint
+      // Call the new audio generation endpoint (browser preview - no video rendering)
+      console.log("📤 Generating audio files for browser preview...");
       const response = await fetch(
-        `${config.remotionServerUrl}/api/projects/story/render`,
+        `${config.remotionServerUrl}/api/projects/story/generate-audio`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "Authorization": `Bearer ${token}`,
           },
-          body: JSON.stringify(requestBody),
+          body: JSON.stringify({
+            script: narrationLines.join("\n"),
+            backgroundId: draft.backgroundId || "mine_2_cfr",
+          }),
         }
       );
 
@@ -299,43 +300,52 @@ export default function StoryPreviewPage() {
         throw new Error(errorData.error || `Server error: ${response.status}`);
       }
 
-      const queueData = await response.json();
-      console.log("✅ Queue response:", queueData);
+      const audioResult = await response.json();
+      console.log("✅ Audio generation response:", audioResult);
       
-      if (!queueData.success || !queueData.projectId) {
-        throw new Error(queueData.error || "Failed to queue render job");
+      if (!audioResult.success || !audioResult.audioFiles) {
+        throw new Error(audioResult.error || "Failed to generate audio files");
       }
       
-      const storyProjectId = queueData.projectId;
-      const renderJobId = queueData.render_job_id;
+      // Format audio files for story narration (all have "Narrator" as speaker)
+      const formattedAudioFiles = audioResult.audioFiles.map((file: any, index: number) => ({
+        speaker: "Narrator",
+        text: narrationLines[index] || "",
+        publicUrl: file.publicUrl || file.url,
+        startMs: file.startMs || 0,
+        endMs: file.endMs || 0,
+        durationMs: file.durationMs || ((file.endMs || 0) - (file.startMs || 0)),
+      }));
       
-      // Update draft with queue status immediately and set the correct project ID
-      // The worker will create the project with this ID, so we need to use it
+      // Generate subtitle segments from audio files
+      const subtitleSegments = formattedAudioFiles.map((file: typeof formattedAudioFiles[0]) => ({
+        startMs: file.startMs,
+        endMs: file.endMs,
+        speaker: "Narrator" as const,
+        text: file.text,
+      }));
+      
+      // Generate SRT text in comma-separated format (startMs,endMs,speaker,text)
+      const srtText = subtitleSegments
+        .map((seg: typeof subtitleSegments[0]) => `${seg.startMs},${seg.endMs},Narrator,${seg.text}`)
+        .join("\n");
+      
+      // Update draft with audio files and enable browser preview mode
       updateDraft({
-        id: storyProjectId, // Use the project ID returned from the API
-        status: "QUEUED" as const,
-        queuePosition: queueData.queue_position,
-        estimatedWaitTime: queueData.estimated_wait_time,
+        id: audioResult.projectId || draft?.id,
+        audioFiles: formattedAudioFiles,
+        mergedAudioUrl: audioResult.mergedAudioUrl || null,
+        mergedDurationMs: audioResult.mergedDurationMs || audioResult.totalDurationMs || 0,
+        audioTotalDurationMs: audioResult.totalDurationMs || audioResult.mergedDurationMs || 0,
+        srtText: srtText,
+        originalSrtText: srtText,
+        durationSec: (audioResult.totalDurationMs || audioResult.mergedDurationMs || 0) / 1000,
+        status: "READY" as const, // Browser preview is immediately ready
+        subtitleEnabled: true,
       });
       
-      // Set up Supabase Realtime subscription for real-time updates
-      if (renderJobId) {
-        console.log("🔔 Setting up realtime subscription for job:", renderJobId, "project:", storyProjectId);
-        subscribeToRenderJob(renderJobId, storyProjectId);
-        
-        // Skip initial status check for story narrations - project doesn't exist yet
-        // The Realtime subscription will handle all status updates
-        // Note: For story narrations, we skip the initial status check because:
-        // 1. The project doesn't exist yet (created by worker after render)
-        // 2. The API endpoint requires the project to exist
-        // 3. Realtime subscription will handle all status updates anyway
-        console.log("📡 Realtime subscription set up - status updates will come via Realtime");
-      } else {
-        console.warn("⚠️ No render_job_id returned, cannot set up Realtime subscription");
-      }
-      
-      // Don't set isGenerating to false here - let it stay true so the game shows
-      // The useEffect will reset it when status becomes READY or FAILED
+      setIsGenerating(false);
+      toast.success("Audio generated! Preview is ready.");
     } catch (error) {
       console.error("❌ Preview generation error:", error);
       const errorMessage = error instanceof Error 
@@ -349,13 +359,23 @@ export default function StoryPreviewPage() {
   const handleRenderFinal = async () => {
     console.log("🔘 handleRenderFinal called", { status, videoUrl, draft, isEditing });
     
-    // In edit mode, allow final render if previewUrl exists, even if status isn't READY
-    // For new projects, still require READY status or videoUrl
-    const hasPreview = !!videoUrl || !!draft?.previewUrl;
+    // Check for preview - either video URL (rendered preview) or audio files (browser preview)
+    const hasVideoPreview = !!videoUrl || !!draft?.previewUrl;
+    const hasBrowserPreview = !!(draft?.mergedAudioUrl || (draft?.audioFiles && draft.audioFiles.length > 0));
+    const hasPreview = hasVideoPreview || hasBrowserPreview;
+    
+    // In edit mode, allow final render if preview exists (video or browser), even if status isn't READY
+    // For new projects, still require READY status or preview
     const canRender = isEditing ? hasPreview : (hasPreview || status === "READY");
     
     if (!canRender) {
-      console.warn("⚠️ No preview URL available:", { videoUrl, previewUrl: draft?.previewUrl, status });
+      console.warn("⚠️ No preview available:", { 
+        videoUrl, 
+        previewUrl: draft?.previewUrl, 
+        hasBrowserPreview,
+        audioFilesCount: draft?.audioFiles?.length || 0,
+        status 
+      });
       toast.info("Generate a preview first.");
       return;
     }
@@ -556,10 +576,17 @@ export default function StoryPreviewPage() {
         console.log("✅ Project verified:", {
           id: projectData.project?.id,
           hasPreview: !!projectData.project?.preview_url,
+          hasAudioFiles: !!(projectData.project?.metadata?.audioFiles && projectData.project.metadata.audioFiles.length > 0),
+          browserPreviewMode: projectData.project?.metadata?.browserPreviewMode,
           userId: projectData.project?.user_id
         });
         
-        if (!projectData.project?.preview_url) {
+        // In browser preview mode, we don't have preview_url - we have audio files instead
+        const hasVideoPreview = !!projectData.project?.preview_url;
+        const hasBrowserPreview = !!(projectData.project?.metadata?.audioFiles && projectData.project.metadata.audioFiles.length > 0) 
+          || projectData.project?.metadata?.browserPreviewMode;
+        
+        if (!hasVideoPreview && !hasBrowserPreview) {
           throw new Error("Project preview not found. Please generate a preview first.");
         }
       } catch (verifyError) {
@@ -788,8 +815,10 @@ export default function StoryPreviewPage() {
   };
 
   const videoUrl = draft?.finalUrl || draft?.previewUrl;
+  // Check if we have a preview (either video URL or audio files for browser preview)
+  const hasPreview = !!videoUrl || !!(draft?.mergedAudioUrl || (draft?.audioFiles && draft.audioFiles.length > 0));
   
-  // Debug: log video URL
+  // Debug: log video URL and preview status
   useEffect(() => {
     if (videoUrl) {
       console.log("🎥 Story Preview - Video URL:", {
@@ -799,7 +828,15 @@ export default function StoryPreviewPage() {
         status,
       });
     }
-  }, [videoUrl, draft?.previewUrl, draft?.finalUrl, status]);
+    if (hasPreview && !videoUrl) {
+      console.log("🎵 Story Preview - Browser Preview Mode:", {
+        hasAudioFiles: !!(draft?.audioFiles && draft.audioFiles.length > 0),
+        hasMergedAudio: !!draft?.mergedAudioUrl,
+        audioFilesCount: draft?.audioFiles?.length || 0,
+        mergedDurationMs: draft?.mergedDurationMs,
+      });
+    }
+  }, [videoUrl, draft?.previewUrl, draft?.finalUrl, status, hasPreview, draft?.audioFiles, draft?.mergedAudioUrl]);
 
   return (
     <div className="flex flex-col gap-8">
@@ -822,7 +859,7 @@ export default function StoryPreviewPage() {
           >
             Back
           </Button>
-          {!videoUrl && (
+          {!hasPreview && (
             <Button
               className="rounded-2xl"
               onClick={async (e) => {
@@ -859,8 +896,8 @@ export default function StoryPreviewPage() {
                 : "Generate Preview"}
             </Button>
           )}
-          {/* Show Render Final button if preview exists (in edit mode) or status is READY */}
-          {((isEditing && (draft?.previewUrl || videoUrl)) || (videoUrl && status !== "RENDERING")) && !isRenderingFinal && (
+          {/* Show Render Final button if preview exists (video or browser preview with audio files) */}
+          {((isEditing && hasPreview) || (hasPreview && status !== "RENDERING")) && !isRenderingFinal && (
             <Button
               variant="outline"
               className="rounded-2xl"
@@ -945,9 +982,13 @@ export default function StoryPreviewPage() {
         {/* TikTok-Style Editor with Video Player */}
         <div className="space-y-4">
           <TikTokVideoEditor
-            videoUrl={videoUrl}
+            videoUrl={draft?.previewUrl || draft?.finalUrl || null}
             status={status}
-            durationMs={(draft?.durationSec || 0) * 1000}
+            durationMs={
+              draft?.audioTotalDurationMs || 
+              draft?.mergedDurationMs || 
+              (draft?.durationSec || 0) * 1000
+            }
             textOverlays={draft?.textOverlays ?? []}
             onTextOverlaysChange={(overlays) => {
               // Only update draft, don't auto-save to database
@@ -973,6 +1014,12 @@ export default function StoryPreviewPage() {
             onPlaybackRateChange={handlePlaybackRateChange}
             subtitleSingleLine={draft?.subtitleSingleLine ?? false}
             subtitleSingleWord={draft?.subtitleSingleWord ?? false}
+            // Enable browser preview mode when audio files are available
+            browserPreviewMode={!!(draft?.mergedAudioUrl || (draft?.audioFiles && draft.audioFiles.length > 0))}
+            audioFiles={draft?.audioFiles || []}
+            mergedAudioUrl={draft?.mergedAudioUrl || null}
+            mergedDurationMs={draft?.mergedDurationMs || draft?.audioTotalDurationMs}
+            backgroundVideoUrl={draft?.backgroundId ? getBackgroundVideoUrl(draft.backgroundId) : null}
           />
           
           {/* Beta Notice for Subtitles */}
