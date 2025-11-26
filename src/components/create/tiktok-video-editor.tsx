@@ -995,6 +995,8 @@ export const TikTokVideoEditor = ({
 
     // Sync play/pause
     const handleVideoPlay = () => {
+      const video = videoRef.current;
+      const audio = audioRef.current;
       if (!video || !audio) return;
       const videoTimeMs = video.currentTime * 1000;
       loadAudioForTime(videoTimeMs);
@@ -1008,6 +1010,7 @@ export const TikTokVideoEditor = ({
     };
     
     const handleVideoPause = () => {
+      const audio = audioRef.current;
       if (audio) {
         audio.pause();
       }
@@ -1017,13 +1020,15 @@ export const TikTokVideoEditor = ({
 
     // Sync seek (when user scrubs timeline)
     const handleVideoSeeked = () => {
+      const video = videoRef.current;
+      const audio = audioRef.current;
       if (!video) return;
       const videoTimeMs = video.currentTime * 1000;
       
       if (totalAudioDurationMs > 0 && videoTimeMs >= totalAudioDurationMs) {
         video.currentTime = totalAudioDurationMs / 1000;
         video.pause();
-        audio.pause();
+        if (audio) audio.pause();
         setIsPlaying(false);
         setCurrentTimeMs(totalAudioDurationMs);
         return;
@@ -1039,6 +1044,8 @@ export const TikTokVideoEditor = ({
 
     // Handle audio ended event to transition to next file (backup - should rarely fire due to early switching)
     const handleAudioEnded = () => {
+      const video = videoRef.current;
+      const audio = audioRef.current;
       if (!audio || currentAudioIndexRef.current < 0 || isSwitchingAudio) return;
       
       const nextIndex = currentAudioIndexRef.current + 1;
@@ -1053,9 +1060,9 @@ export const TikTokVideoEditor = ({
           audio.load();
           audio.currentTime = 0;
           
-          if (!video.paused) {
+          if (video && !video.paused) {
             requestAnimationFrame(() => {
-              audio.play().catch(err => console.error("❌ Audio play error:", err));
+              audio.play().catch((err: unknown) => console.error("❌ Audio play error:", err));
             });
           }
         } else {
@@ -1093,6 +1100,8 @@ export const TikTokVideoEditor = ({
     const MAX_ADJUSTMENT = 0.05; // Maximum adjustment per frame (50ms) for smooth correction
     
     const updateSync = () => {
+      const video = videoRef.current;
+      const audio = audioRef.current;
       if (!video || !audio || video.paused) {
         animationFrameId = null;
         return;
@@ -1300,6 +1309,7 @@ export const TikTokVideoEditor = ({
     };
     
     const startSyncLoop = () => {
+      const video = videoRef.current;
       if (animationFrameId === null && video && !video.paused) {
         animationFrameId = requestAnimationFrame(updateSync);
       }
@@ -1314,6 +1324,8 @@ export const TikTokVideoEditor = ({
 
     // Initialize audio when video is ready
     const handleVideoCanPlay = () => {
+      const video = videoRef.current;
+      const audio = audioRef.current;
       if (!video || !audio || audioFiles.length === 0) return;
       
       if (audioFiles.length > 0 && audioFiles[0].publicUrl) {
@@ -1324,27 +1336,41 @@ export const TikTokVideoEditor = ({
       }
     };
 
-    if (video.readyState >= 3) {
+    const video = videoRef.current;
+    const audio = audioRef.current;
+    
+    if (video && video.readyState >= 3) {
       handleVideoCanPlay();
     }
 
-    video.addEventListener("play", handleVideoPlay);
-    video.addEventListener("pause", handleVideoPause);
-    video.addEventListener("seeked", handleVideoSeeked);
-    video.addEventListener("canplay", handleVideoCanPlay);
-    audio.addEventListener("ended", handleAudioEnded);
+    if (video) {
+      video.addEventListener("play", handleVideoPlay);
+      video.addEventListener("pause", handleVideoPause);
+      video.addEventListener("seeked", handleVideoSeeked);
+      video.addEventListener("canplay", handleVideoCanPlay);
+    }
     
-    if (!video.paused) {
+    if (audio) {
+      audio.addEventListener("ended", handleAudioEnded);
+    }
+    
+    if (video && !video.paused) {
       startSyncLoop();
     }
     
     return () => {
       stopSyncLoop();
-      video.removeEventListener("play", handleVideoPlay);
-      video.removeEventListener("pause", handleVideoPause);
-      video.removeEventListener("seeked", handleVideoSeeked);
-      video.removeEventListener("canplay", handleVideoCanPlay);
-      audio.removeEventListener("ended", handleAudioEnded);
+      const video = videoRef.current;
+      const audio = audioRef.current;
+      if (video) {
+        video.removeEventListener("play", handleVideoPlay);
+        video.removeEventListener("pause", handleVideoPause);
+        video.removeEventListener("seeked", handleVideoSeeked);
+        video.removeEventListener("canplay", handleVideoCanPlay);
+      }
+      if (audio) {
+        audio.removeEventListener("ended", handleAudioEnded);
+      }
     };
   }, [browserPreviewMode, audioFiles, backgroundVideoUrl, isAudioPreloading]);
 
