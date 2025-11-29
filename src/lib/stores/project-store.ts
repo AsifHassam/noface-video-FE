@@ -116,7 +116,7 @@ const initialDraft = (): DraftProject => ({
   finalUrl: null,
   durationSec: null,
   subtitleEnabled: true,
-  subtitleStyle: "classic",
+  subtitleStyle: "karaoke",
   subtitlePosition: { x: 50, y: 85 }, // Lower position to avoid cutting off
   subtitleFontSize: 100,
   subtitleSingleLine: true,  // Default to 3-word subtitle mode
@@ -161,10 +161,21 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         // Extract type from metadata (projects table doesn't have a type column, it's in metadata)
         const projectType = metadata.type || 'TWO_CHAR_CONVO'; // Default to TWO_CHAR_CONVO if not set
         
+        // Normalize status: if status is READY but no final_url, it should be DRAFT
+        let normalizedStatus = p.status;
+        if (normalizedStatus === 'READY' && !p.final_url) {
+          normalizedStatus = 'DRAFT';
+        }
+        // Also ensure DRAFT status if no final_url and status is null/undefined
+        if (!normalizedStatus && !p.final_url) {
+          normalizedStatus = 'DRAFT';
+        }
+        
         return {
           ...p,
           userId: p.user_id,
           type: projectType as ProjectType, // Set type from metadata
+          status: normalizedStatus as RenderStatus,
           characters: p.characters || { A: null, B: null },
           script: p.script_segments || [],
           overlays: p.text_overlays || [],
@@ -682,11 +693,22 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         }
       }
       
+      // Normalize status: if status is READY but no final_url, it should be DRAFT
+      let normalizedStatus = (project as any).status;
+      if (normalizedStatus === 'READY' && !(project as any).final_url) {
+        normalizedStatus = 'DRAFT';
+      }
+      // Also ensure DRAFT status if no final_url and status is null/undefined
+      if (!normalizedStatus && !(project as any).final_url) {
+        normalizedStatus = 'DRAFT';
+      }
+      
       // Convert API format to local format
       const formattedProject = {
         ...project,
         userId: (project as any).user_id,
         type: projectType as ProjectType, // Set type from metadata
+        status: normalizedStatus as RenderStatus,
         characters: formattedCharacters,
         script: (project as any).script_segments || [],
         overlays: formattedTextOverlays,
@@ -702,7 +724,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
 
       // Extract subtitle settings from metadata (reusing projectMetadata)
       const metadata = projectMetadata;
-      const subtitleStyle = metadata.subtitleStyle || "classic";
+      const subtitleStyle = metadata.subtitleStyle || "karaoke";
       const subtitlePosition = metadata.subtitlePosition || { x: 50, y: 85 };
       const subtitleFontSize = metadata.subtitleFontSize || 100;
       const subtitleSingleLine = metadata.subtitleSingleLine !== undefined ? metadata.subtitleSingleLine : true;  // Default to 3-word mode

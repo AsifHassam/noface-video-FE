@@ -186,7 +186,7 @@ export const TikTokVideoEditor = ({
   onImageOverlaysChange,
   subtitles = [],
   showSubtitles = true,
-  subtitleStyle = "classic",
+  subtitleStyle = "karaoke",
   subtitlePosition = { x: 50, y: 85 },
   onSubtitlePositionChange,
   subtitleFontSize = 100,
@@ -1344,14 +1344,14 @@ export const TikTokVideoEditor = ({
     }
 
     if (video) {
-      video.addEventListener("play", handleVideoPlay);
-      video.addEventListener("pause", handleVideoPause);
-      video.addEventListener("seeked", handleVideoSeeked);
-      video.addEventListener("canplay", handleVideoCanPlay);
+    video.addEventListener("play", handleVideoPlay);
+    video.addEventListener("pause", handleVideoPause);
+    video.addEventListener("seeked", handleVideoSeeked);
+    video.addEventListener("canplay", handleVideoCanPlay);
     }
     
     if (audio) {
-      audio.addEventListener("ended", handleAudioEnded);
+    audio.addEventListener("ended", handleAudioEnded);
     }
     
     if (video && !video.paused) {
@@ -1363,13 +1363,13 @@ export const TikTokVideoEditor = ({
       const video = videoRef.current;
       const audio = audioRef.current;
       if (video) {
-        video.removeEventListener("play", handleVideoPlay);
-        video.removeEventListener("pause", handleVideoPause);
-        video.removeEventListener("seeked", handleVideoSeeked);
-        video.removeEventListener("canplay", handleVideoCanPlay);
+      video.removeEventListener("play", handleVideoPlay);
+      video.removeEventListener("pause", handleVideoPause);
+      video.removeEventListener("seeked", handleVideoSeeked);
+      video.removeEventListener("canplay", handleVideoCanPlay);
       }
       if (audio) {
-        audio.removeEventListener("ended", handleAudioEnded);
+      audio.removeEventListener("ended", handleAudioEnded);
       }
     };
   }, [browserPreviewMode, audioFiles, backgroundVideoUrl, isAudioPreloading]);

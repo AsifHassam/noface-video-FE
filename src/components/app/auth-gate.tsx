@@ -9,9 +9,13 @@ export const AuthGate = ({ children }: { children: React.ReactNode }) => {
   const router = useRouter();
   const { user, loading, initialize } = useAuthStore();
 
+  // Initialize auth if not already initialized (redundant but safe - 
+  // main initialization happens in Providers, this is a fallback)
   useEffect(() => {
-    initialize();
-  }, [initialize]);
+    if (loading) {
+      initialize();
+    }
+  }, [initialize, loading]);
 
   useEffect(() => {
     if (!loading && !user) {

@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Stepper } from "@/components/create/stepper";
 import { BackgroundCard } from "@/components/create/background-card";
 import { useProjectStore } from "@/lib/stores/project-store";
-import { BACKGROUNDS } from "@/lib/data/backgrounds";
+import { BACKGROUNDS, getBackgroundDuration } from "@/lib/data/backgrounds";
+import { estimateDurationFromScriptLines } from "@/lib/utils/duration-estimator";
 import type { Background } from "@/types";
 import { toast } from "sonner";
 
@@ -37,6 +38,23 @@ export default function BackgroundPage() {
       toast.error("Please select a gameplay background");
       return;
     }
+
+    // Check video duration - must be less than background video length (with 10% buffer)
+    // Use the same calculation as the script editor (uses scriptInput to match exactly)
+    const estimatedDuration = estimateDurationFromScriptLines(draft?.script, draft?.scriptInput);
+    const backgroundDuration = getBackgroundDuration(draft.backgroundId);
+    
+    if (backgroundDuration) {
+      const maxAllowedDuration = backgroundDuration * 0.9; // 10% buffer
+      if (estimatedDuration > maxAllowedDuration) {
+        toast.error(
+          `Your script is estimated at ${estimatedDuration}s (shown on script page), but the selected background video is only ${backgroundDuration}s long (max allowed: ${maxAllowedDuration.toFixed(1)}s with 10% buffer). Please choose a longer background video or shorten your script.`,
+          { duration: 6000 }
+        );
+        return;
+      }
+    }
+
     router.push("/app/create/two-char/preview");
   };
 

@@ -156,11 +156,14 @@ export const subscriptionApi = {
 
       try {
         if (tier === 'free') {
-          // Count all videos including drafts for free tier
+          // Count only videos with final render (must have final_url)
+          // Don't count drafts that haven't been rendered
           const { count, error: countError } = await supabase
             .from('projects')
             .select('*', { count: 'exact', head: true })
-            .eq('user_id', session.user.id);
+            .eq('user_id', session.user.id)
+            .not('final_url', 'is', null)
+            .not('final_url', 'eq', '');
 
           if (countError) {
             console.warn('⚠️ Error counting videos:', countError);
@@ -170,12 +173,13 @@ export const subscriptionApi = {
           }
           usage.weekly = usage.total;
         } else {
-          // Paid tier - count weekly (completed videos only)
+          // Paid tier - count weekly (must have final_url)
           const { count: weeklyCount, error: weeklyError } = await supabase
             .from('projects')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', session.user.id)
-            .eq('status', 'READY')
+            .not('final_url', 'is', null)
+            .not('final_url', 'eq', '')
             .gte('created_at', weekStart.toISOString());
 
           if (weeklyError) {
@@ -190,7 +194,8 @@ export const subscriptionApi = {
             .from('projects')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', session.user.id)
-            .eq('status', 'READY');
+            .not('final_url', 'is', null)
+            .not('final_url', 'eq', '');
 
           if (totalError) {
             console.warn('⚠️ Error counting total videos:', totalError);

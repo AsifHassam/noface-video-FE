@@ -10,19 +10,23 @@ import { useProjectStore } from "@/lib/stores/project-store";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { subscriptionApi } from "@/lib/api/subscription";
 import { toast } from "sonner";
-import { Loader2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Loader2, ChevronLeft, ChevronRight, FileText } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { TemplateSelector } from "@/components/create/template-selector";
+import type { VideoTemplate } from "@/types";
 
 const VIDEOS_PER_PAGE = 10;
 
 export const DashboardView = () => {
-  const { projects, deleteProject, loadProjects, loading, clearDraft } = useProjectStore();
+  const { projects, deleteProject, loadProjects, loading, clearDraft, updateDraft } = useProjectStore();
   const { user, loading: authLoading, initialize } = useAuthStore();
   const router = useRouter();
   const [currentPage, setCurrentPage] = useState(1);
   const [canCreateVideo, setCanCreateVideo] = useState(true);
   const [checkingLimit, setCheckingLimit] = useState(false);
   const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'paid' | null>(null);
+  const [isTemplateSelectorOpen, setIsTemplateSelectorOpen] = useState(false);
+  const [selectedProjectType, setSelectedProjectType] = useState<"story" | "TWO_CHAR_CONVO">("TWO_CHAR_CONVO");
 
   // Ensure auth is initialized on mount
   useEffect(() => {
@@ -37,6 +41,7 @@ export const DashboardView = () => {
   }, [loadProjects]);
 
   // Check subscription limits - only after auth has finished loading
+  // Also refresh when projects change (in case a new video was rendered)
   useEffect(() => {
     // Don't check subscription until auth has finished loading
     if (authLoading) {
@@ -65,7 +70,7 @@ export const DashboardView = () => {
     };
 
     checkSubscription();
-  }, [user?.id, authLoading]);
+  }, [user?.id, authLoading, projects.length]); // Refresh when projects change
 
   const userProjects = useMemo(
     () =>
@@ -153,6 +158,29 @@ export const DashboardView = () => {
     router.push("/app/create");
   };
 
+  const handleTemplateSelected = (template: VideoTemplate) => {
+    // Template settings (including characters) are already loaded into draft by TemplateSelector
+    // Navigate based on project type
+    if (template.projectType === "story" || template.projectType === "NORMAL_STORY") {
+      // For story templates: go directly to script page (skip background since it's in template)
+      router.push("/app/create/story/script");
+    } else {
+      // For two-char templates: go to template script page (script + text overlays)
+      router.push("/app/create/template/script");
+    }
+  };
+
+  const handleCreateWithTemplate = (projectType: "story" | "TWO_CHAR_CONVO") => {
+    if (!user?.id) {
+      toast.error("Please sign in to use templates");
+      return;
+    }
+    // Clear draft first to start fresh
+    clearDraft();
+    setSelectedProjectType(projectType);
+    setIsTemplateSelectorOpen(true);
+  };
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -173,6 +201,23 @@ export const DashboardView = () => {
             Manage previews, iterate on scripts, and present a polished mock workflow.
           </p>
         </div>
+        <div className="flex gap-2">
+          {user?.id && (
+            <Button 
+              variant="outline"
+              className="rounded-2xl"
+              onClick={() => {
+                // Show all templates (both story and two-char)
+                clearDraft();
+                setSelectedProjectType("TWO_CHAR_CONVO"); // Default, but we'll show all
+                setIsTemplateSelectorOpen(true);
+              }}
+              disabled={authLoading || checkingLimit}
+            >
+              <FileText className="mr-2 h-4 w-4" />
+              Create with Template
+            </Button>
+          )}
         <Button 
           className="rounded-2xl"
           onClick={handleCreateNewVideo}
@@ -180,6 +225,7 @@ export const DashboardView = () => {
         >
           {authLoading ? "Loading..." : checkingLimit ? "Checking..." : "Create new video"}
         </Button>
+        </div>
       </div>
       
       {/* Subscription Card */}
@@ -304,6 +350,16 @@ export const DashboardView = () => {
             </div>
           )}
         </>
+      )}
+
+      {/* Template Selector */}
+      {user?.id && (
+        <TemplateSelector
+          open={isTemplateSelectorOpen}
+          onOpenChange={setIsTemplateSelectorOpen}
+          projectType={selectedProjectType}
+          onTemplateSelected={handleTemplateSelected}
+        />
       )}
     </div>
   );

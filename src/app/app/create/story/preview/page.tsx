@@ -13,11 +13,14 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Download, ChevronDown, ChevronUp, Info } from "lucide-react";
+import { Download, ChevronDown, ChevronUp, Info, Save } from "lucide-react";
 import { config } from "@/lib/config";
 import { supabase } from "@/lib/supabase";
 import { RenderWaitGame } from "@/components/create/RenderWaitGame";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { SaveTemplateDialog } from "@/components/create/save-template-dialog";
+import { templatesApi } from "@/lib/api/projects";
+import { useAuthStore } from "@/lib/stores/auth-store";
 
 const steps = [
   { label: "Step 1", description: "Write narration" },
@@ -102,6 +105,9 @@ export default function StoryPreviewPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isRenderingFinal, setIsRenderingFinal] = useState(false);
   const [renderProgress, setRenderProgress] = useState(0);
+  const [isSaveTemplateOpen, setIsSaveTemplateOpen] = useState(false);
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+  const { user } = useAuthStore();
 
   // Cleanup: Unsubscribe from realtime updates when component unmounts
   useEffect(() => {
@@ -475,7 +481,7 @@ export default function StoryPreviewPage() {
         script: narrationLines.join("\n"),
         backgroundId: draft.backgroundId || "mine_2_cfr",
         subtitleCustomizations: {
-          style: draft.subtitleStyle || "classic",
+          style: draft.subtitleStyle || "karaoke",
           position: draft.subtitlePosition || { x: 50, y: 85 },
           fontSize: draft.subtitleFontSize || 100,
           singleLine: draft.subtitleSingleLine ?? false,
@@ -726,6 +732,49 @@ export default function StoryPreviewPage() {
     }
   };
 
+  const handleSaveTemplate = async (name: string, description?: string) => {
+    if (!draft) {
+      toast.error("No draft found");
+      return;
+    }
+
+    if (!draft.backgroundId) {
+      toast.error("Please select a background first");
+      return;
+    }
+
+    if (!user?.id) {
+      toast.error("Please sign in to save templates");
+      return;
+    }
+
+    try {
+      setIsSavingTemplate(true);
+      await templatesApi.create({
+        name,
+        description,
+        projectType: draft.type || "story",
+        backgroundId: draft.backgroundId,
+        subtitleStyle: draft.subtitleStyle || "karaoke",
+        subtitlePosition: draft.subtitlePosition,
+        subtitleFontSize: draft.subtitleFontSize,
+        textOverlays: draft.textOverlays || [],
+        playbackRate: draft.playbackRate !== undefined && draft.playbackRate !== null ? draft.playbackRate : 1,
+      });
+      toast.success("Template saved successfully!");
+    } catch (error) {
+      console.error("Failed to save template:", error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to save template. Please try again."
+      );
+      throw error;
+    } finally {
+      setIsSavingTemplate(false);
+    }
+  };
+
   const handleSaveDraft = async () => {
     // Update draft locally first
     updateDraft({
@@ -959,6 +1008,16 @@ export default function StoryPreviewPage() {
               Download
             </Button>
           )}
+          {hasPreview && draft?.backgroundId && (
+            <Button
+              variant="outline"
+              className="rounded-2xl"
+              onClick={() => setIsSaveTemplateOpen(true)}
+            >
+              <Save className="mr-2 h-4 w-4" />
+              Save Template
+            </Button>
+          )}
           <div className="flex flex-1 flex-col gap-2">
             <Progress value={progressValue} className="h-2 rounded-full bg-muted" />
             <span className={`text-xs ${
@@ -1083,7 +1142,7 @@ export default function StoryPreviewPage() {
               </div>
               <div className="space-y-4">
                 <SubtitleStyleSelector
-                  value={draft?.subtitleStyle || "classic"}
+                  value={draft?.subtitleStyle || "karaoke"}
                   onChange={(style) => {
                     updateDraft({ subtitleStyle: style });
                     toast.success(`Subtitle style: ${style.replace("-", " ")}`);
@@ -1124,6 +1183,14 @@ export default function StoryPreviewPage() {
             ? "This may take a few minutes. Play a game while you wait!"
             : "This may take a few minutes. Play a game while you wait!"
         }
+      />
+
+      {/* Save Template Dialog */}
+      <SaveTemplateDialog
+        open={isSaveTemplateOpen}
+        onOpenChange={setIsSaveTemplateOpen}
+        onSave={handleSaveTemplate}
+        isLoading={isSavingTemplate}
       />
     </div>
   );

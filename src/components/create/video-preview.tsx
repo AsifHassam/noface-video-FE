@@ -163,7 +163,7 @@ export const VideoPreview = ({
   subtitles,
   showSubtitles,
   onToggleSubtitles,
-  subtitleStyle = "classic",
+  subtitleStyle = "karaoke",
 }: VideoPreviewProps) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [currentMs, setCurrentMs] = useState(0);

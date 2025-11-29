@@ -5,8 +5,8 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Sparkles,
-  CreditCard,
   Settings2,
+  Clock,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -31,11 +31,9 @@ const NAV_ITEMS: NavItem[] = [
     icon: Sparkles,
   },
   {
-    label: "Pricing",
-    href: "/app/pricing",
-    icon: CreditCard,
-    disabled: true,
-    tooltip: "Coming soon",
+    label: "Render Queue",
+    href: "/app/render-queue",
+    icon: Clock,
   },
   {
     label: "Settings",

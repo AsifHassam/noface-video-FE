@@ -16,10 +16,12 @@ import { useAuthStore } from "@/lib/stores/auth-store";
 import { parseSrtText, generateMockFromScript } from "@/lib/utils/srt";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
-import { Download, ChevronDown, ChevronUp, Info } from "lucide-react";
+import { Download, ChevronDown, ChevronUp, Info, Save } from "lucide-react";
 import { RenderWaitGame } from "@/components/create/RenderWaitGame";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { config } from "@/lib/config";
+import { SaveTemplateDialog } from "@/components/create/save-template-dialog";
+import { templatesApi } from "@/lib/api/projects";
 
 const steps = [
   { label: "Step 1", description: "Pick two characters" },
@@ -93,6 +95,8 @@ export default function PreviewPage() {
   const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
   const [isRenderingFinal, setIsRenderingFinal] = useState(false);
   const [isCharacterSettingsExpanded, setIsCharacterSettingsExpanded] = useState(false); // Initially collapsed
+  const [isSaveTemplateOpen, setIsSaveTemplateOpen] = useState(false);
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
   
   // Check if preview has been generated (user can interact with controls)
   // Preview is ready if we have audioFiles (browser preview) OR previewUrl (rendered video)
@@ -229,6 +233,52 @@ export default function PreviewPage() {
           ? error.message 
           : "Failed to render final video. Make sure the video server is running."
       );
+    }
+  };
+
+  const handleSaveTemplate = async (name: string, description?: string) => {
+    if (!draft) {
+      toast.error("No draft found");
+      return;
+    }
+
+    if (!draft.backgroundId) {
+      toast.error("Please select a background first");
+      return;
+    }
+
+    if (!user?.id) {
+      toast.error("Please sign in to save templates");
+      return;
+    }
+
+    try {
+      setIsSavingTemplate(true);
+      await templatesApi.create({
+        name,
+        description,
+        projectType: draft.type || "TWO_CHAR_CONVO",
+        backgroundId: draft.backgroundId,
+        subtitleStyle: draft.subtitleStyle || "karaoke",
+        subtitlePosition: draft.subtitlePosition,
+        subtitleFontSize: draft.subtitleFontSize,
+        textOverlays: draft.textOverlays || [],
+        characters: draft.characters || { A: null, B: null },
+        characterSizes: draft.characterSizes,
+        characterPositions: draft.characterPositions,
+        characterCustomPositions: draft.characterCustomPositions,
+      });
+      toast.success("Template saved successfully!");
+    } catch (error) {
+      console.error("Failed to save template:", error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to save template. Please try again."
+      );
+      throw error;
+    } finally {
+      setIsSavingTemplate(false);
     }
   };
 
@@ -401,7 +451,11 @@ export default function PreviewPage() {
         </header>
         <div className="flex flex-wrap items-center gap-4 rounded-3xl border border-border/40 bg-white/70 p-5">
           <Button
-            className="rounded-2xl"
+            className={`rounded-2xl ${
+              isInitialState 
+                ? "relative animate-glow ring-2 ring-primary ring-offset-2" 
+                : ""
+            }`}
             onClick={handleGeneratePreview}
             disabled={isGeneratingPreview || status === "RENDERING" || status === "QUEUED"}
           >
@@ -417,9 +471,11 @@ export default function PreviewPage() {
             variant="outline"
             className="rounded-2xl"
             onClick={handleRenderFinal}
-            disabled={status === "RENDERING" || status === "QUEUED"}
+            disabled={!hasPreview || status === "RENDERING" || status === "QUEUED" || isRenderingFinal}
           >
-            {status === "RENDERING" 
+            {isRenderingFinal
+              ? "Rendering..."
+              : status === "RENDERING" 
               ? "Rendering..." 
               : draft?.finalUrl
               ? "Re-render Final"
@@ -433,6 +489,16 @@ export default function PreviewPage() {
             >
               <Download className="mr-2 h-4 w-4" />
               Download Video
+            </Button>
+          )}
+          {hasPreview && draft?.backgroundId && (
+            <Button
+              variant="outline"
+              className="rounded-2xl"
+              onClick={() => setIsSaveTemplateOpen(true)}
+            >
+              <Save className="mr-2 h-4 w-4" />
+              Save Template
             </Button>
           )}
           <div className="flex flex-1 flex-col gap-2">
@@ -665,7 +731,7 @@ export default function PreviewPage() {
               </div>
               <div className="space-y-4">
                 <SubtitleStyleSelector
-                  value={draft?.subtitleStyle || "classic"}
+                  value={draft?.subtitleStyle || "karaoke"}
                   onChange={(style) => {
                     if (!isInitialState) {
                     updateDraft({ subtitleStyle: style });
@@ -702,13 +768,6 @@ export default function PreviewPage() {
           <Button variant="outline" className="rounded-2xl" onClick={handleSaveDraft} disabled={isInitialState}>
             Save draft
           </Button>
-          <Button 
-            className="rounded-2xl px-6" 
-            onClick={handleFinish}
-            disabled={isInitialState}
-          >
-            Finish
-          </Button>
         </div>
       </div>
 
@@ -728,6 +787,14 @@ export default function PreviewPage() {
             ? "This may take a few minutes. Play a game while you wait!"
             : "This may take a few minutes. Play a game while you wait!"
         }
+      />
+
+      {/* Save Template Dialog */}
+      <SaveTemplateDialog
+        open={isSaveTemplateOpen}
+        onOpenChange={setIsSaveTemplateOpen}
+        onSave={handleSaveTemplate}
+        isLoading={isSavingTemplate}
       />
     </div>
   );

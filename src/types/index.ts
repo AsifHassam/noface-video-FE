@@ -85,6 +85,7 @@ export type Background = {
   description: string;
   length: string;
   previewUrl?: string;
+  durationSeconds?: number; // Duration in seconds
 };
 
 export type ProjectType =
@@ -169,6 +170,26 @@ export type Project = {
   subtitleFontSize?: number;
   subtitleEnabled?: boolean;
   durationSec?: number | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VideoTemplate = {
+  id: string;
+  userId: string;
+  name: string;
+  description?: string;
+  projectType: ProjectType;
+  backgroundId: BackgroundId;
+  subtitleStyle: SubtitleStyle;
+  subtitlePosition?: SubtitlePosition;
+  subtitleFontSize?: number;
+  textOverlays: TextOverlay[];
+  characters?: { A: Character | null; B: Character | null };
+  characterSizes?: CharacterSizes;
+  characterPositions?: CharacterPositions;
+  characterCustomPositions?: Record<string, { x: number; y: number }>;
+  playbackRate?: number;
   createdAt: string;
   updatedAt: string;
 };

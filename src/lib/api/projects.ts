@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { config } from '@/lib/config';
-import type { Project } from '@/types';
+import type { Project, VideoTemplate } from '@/types';
 
 const API_BASE_URL = config.remotionServerUrl;
 
@@ -422,6 +422,119 @@ export const renderApi = {
     return apiRequest(`/api/projects/${projectId}/captions`, {
       method: 'POST',
     });
+  },
+};
+
+/**
+ * Template API methods
+ */
+export const templatesApi = {
+  /**
+   * Get all templates for the current user
+   */
+  async list(params?: {
+    projectType?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ success: boolean; templates: VideoTemplate[]; total: number }> {
+    const queryParams = new URLSearchParams();
+    if (params?.projectType) queryParams.set('projectType', params.projectType);
+    if (params?.limit) queryParams.set('limit', params.limit.toString());
+    if (params?.offset) queryParams.set('offset', params.offset.toString());
+
+    const query = queryParams.toString();
+    return apiRequest(`/api/templates${query ? `?${query}` : ''}`);
+  },
+
+  /**
+   * Get a specific template
+   */
+  async get(id: string): Promise<{ success: boolean; template: VideoTemplate }> {
+    return apiRequest(`/api/templates/${id}`);
+  },
+
+  /**
+   * Create a new template
+   */
+  async create(data: {
+    name: string;
+    description?: string;
+    projectType: string;
+    backgroundId: string;
+    subtitleStyle: string;
+    subtitlePosition?: { x: number; y: number };
+    subtitleFontSize?: number;
+    textOverlays: any[];
+    characters?: { A: any | null; B: any | null };
+    characterSizes?: any;
+    characterPositions?: any;
+    characterCustomPositions?: Record<string, { x: number; y: number }>;
+    playbackRate?: number;
+  }): Promise<{ success: boolean; template: VideoTemplate }> {
+    return apiRequest('/api/templates', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  /**
+   * Update a template
+   */
+  async update(
+    id: string,
+    data: Partial<VideoTemplate>
+  ): Promise<{ success: boolean; template: VideoTemplate }> {
+    return apiRequest(`/api/templates/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
+  /**
+   * Delete a template
+   */
+  async delete(id: string): Promise<{ success: boolean; message: string }> {
+    return apiRequest(`/api/templates/${id}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
+/**
+ * Render Jobs API methods
+ */
+export const renderJobsApi = {
+  /**
+   * Get all render jobs for the current user
+   */
+  async list(): Promise<{
+    success: boolean;
+    renderJobs: Array<{
+      id: string;
+      projectId: string | null;
+      type: string;
+      status: 'QUEUED' | 'RENDERING' | 'READY' | 'FAILED';
+      progress: number;
+      videoUrl: string | null;
+      errorMessage: string | null;
+      createdAt: string;
+      updatedAt: string;
+      startedAt: string | null;
+      completedAt: string | null;
+      project: {
+        id: string;
+        title: string;
+        userId: string;
+        status: string;
+        finalUrl: string | null;
+        previewUrl: string | null;
+        createdAt: string;
+        updatedAt: string;
+        type: string;
+      } | null;
+    }>;
+  }> {
+    return apiRequest('/api/render-jobs');
   },
 };
 

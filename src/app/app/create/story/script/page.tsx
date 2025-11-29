@@ -6,6 +6,7 @@ import { Stepper } from "@/components/create/stepper";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useProjectStore } from "@/lib/stores/project-store";
+import { useAuthStore } from "@/lib/stores/auth-store";
 import { toast } from "sonner";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
@@ -73,7 +74,13 @@ Your story is waiting to be told.`;
     }
     // Store narration lines in scriptInput for now
     updateDraft({ scriptInput: text });
+    
+    // If background is already set (from template), skip to preview
+    if (draft?.backgroundId) {
+      router.push("/app/create/story/preview");
+    } else {
     router.push("/app/create/story/background");
+    }
   };
 
   return (
@@ -133,7 +140,7 @@ Your story is waiting to be told.`;
             disabled={!isValid}
             onClick={handleNext}
           >
-            Next: Choose Background
+            {draft?.backgroundId ? "Next: Preview" : "Next: Choose Background"}
           </Button>
         </div>
       </div>

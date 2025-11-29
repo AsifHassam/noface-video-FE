@@ -69,7 +69,7 @@ export function CharacterSizeControls({
         : {
             width: Math.round(value * currentAspectRatio), // Maintain aspect ratio
             height: value,
-          },
+      },
     };
     
     setLocalSizes(newSizes);

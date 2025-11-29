@@ -142,9 +142,9 @@ export const CharacterCard = ({ character, selected, onSelect }: CharacterCardPr
           )}
         </div>
         {character.enabled ? (
-          <p className="text-xs text-muted-foreground">
-            {character.isPlaceholder ? "Placeholder voice" : "Premium voice"}
-          </p>
+        <p className="text-xs text-muted-foreground">
+          {character.isPlaceholder ? "Placeholder voice" : "Premium voice"}
+        </p>
         ) : (
           <p className="text-xs text-muted-foreground italic">Coming Soon</p>
         )}

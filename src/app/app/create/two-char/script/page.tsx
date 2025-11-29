@@ -6,6 +6,7 @@ import { Stepper } from "@/components/create/stepper";
 import { ScriptEditor } from "@/components/create/script-editor";
 import { Button } from "@/components/ui/button";
 import { useProjectStore } from "@/lib/stores/project-store";
+import { useAuthStore } from "@/lib/stores/auth-store";
 import { parseScriptInput, scriptSchema } from "@/lib/validators/script-schema";
 import { toast } from "sonner";
 
