@@ -104,6 +104,13 @@ export default function TemplateScriptPage() {
     }
   };
 
+  const handleSample = () => {
+    const sample = `[${nameA}]: Hey, ready to rehearse our lines?\n[${nameB}]: Always. Let me grab the script.\n[${nameA}]: Remember to hit the dramatic pause.\n[${nameB}]: You mean…the pause that sells the story?\n[${nameA}]: Exactly. noface.video loves good pacing.\n[${nameB}]: Say no more. Let's wow the audience.`;
+    handleScriptChange(sample);
+  };
+
+  const handleClear = () => handleScriptChange("");
+
   const handleAddTextOverlay = () => {
     const newOverlay: TextOverlay = {
       id: uuidv4(),
@@ -185,6 +192,8 @@ export default function TemplateScriptPage() {
               onChange={handleScriptChange}
               parsedLines={parsedLines}
               errors={errors}
+              onUseSample={handleSample}
+              onClear={handleClear}
               characterNames={{ A: nameA, B: nameB }}
             />
           )}
