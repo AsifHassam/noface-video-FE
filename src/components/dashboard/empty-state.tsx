@@ -70,7 +70,7 @@ export const EmptyState = () => {
                   return;
                 }
                 const redirectUrl = `${window.location.origin}/app/payment/success`;
-                const paystackUrl = `https://paystack.shop/pay/up7whihnxl?email=${encodeURIComponent(user.email)}&callback_url=${encodeURIComponent(redirectUrl)}`;
+                const paystackUrl = `https://paystack.shop/pay/noface-pro1?email=${encodeURIComponent(user.email)}&callback_url=${encodeURIComponent(redirectUrl)}`;
                 window.location.href = paystackUrl;
               }
             }
@@ -115,7 +115,7 @@ export const EmptyState = () => {
                   return;
                 }
                 const redirectUrl = `${window.location.origin}/app/payment/success`;
-                const paystackUrl = `https://paystack.shop/pay/up7whihnxl?email=${encodeURIComponent(user.email)}&callback_url=${encodeURIComponent(redirectUrl)}`;
+                const paystackUrl = `https://paystack.shop/pay/noface-pro1?email=${encodeURIComponent(user.email)}&callback_url=${encodeURIComponent(redirectUrl)}`;
                 window.location.href = paystackUrl;
               }}
             >
