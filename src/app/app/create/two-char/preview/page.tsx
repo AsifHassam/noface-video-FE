@@ -113,17 +113,18 @@ export default function PreviewPage() {
   }
   const status = effectiveStatus;
   
-  // Helper function to get background video URL
+  // Helper function to get background video URL from S3
   const getBackgroundVideoUrl = (backgroundId: string | null | undefined): string | null => {
     if (!backgroundId) return null;
-    const serverUrl = config.remotionServerUrl || "https://nofacevideo-0f67ae173a97.herokuapp.com";
+    const S3_BUCKET_NAME = process.env.NEXT_PUBLIC_BACKGROUND_VIDEOS_BUCKET || "remotion-background-videos";
+    const S3_REGION = process.env.NEXT_PUBLIC_AWS_REGION || "us-east-1";
     const backgroundMap: Record<string, string> = {
       minecraft: "mine_converted.mp4",
       subway: "Subway.mp4",
       mine_2_cfr: "mine_2_cfr.mp4",
     };
     const fileName = backgroundMap[backgroundId] || backgroundMap.mine_2_cfr;
-    return `${serverUrl}/backgrounds/${fileName}`;
+    return `https://${S3_BUCKET_NAME}.s3.${S3_REGION}.amazonaws.com/videos/${fileName}`;
   };
   
   // Initialize captionsGenerated based on whether srtText exists
