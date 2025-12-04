@@ -47,7 +47,7 @@ export default function CreatePage() {
   const { user, loading: authLoading } = useAuthStore();
   const [canCreateVideo, setCanCreateVideo] = useState(true);
   const [checkingLimit, setCheckingLimit] = useState(false);
-  const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'paid' | null>(null);
+  const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'paid' | 'premium' | null>(null);
 
   // Check subscription limits
   const checkSubscription = useCallback(async () => {

@@ -173,6 +173,7 @@ export type Project = {
   subtitleFontFamily?: SubtitleFontFamily;
   subtitleEnabled?: boolean;
   durationSec?: number | null;
+  metadata?: Record<string, any>;
   createdAt: string;
   updatedAt: string;
 };
