@@ -13,6 +13,7 @@ import type {
   ScriptLine,
   SubtitleStyle,
   SubtitlePosition,
+  SubtitleFontFamily,
   TextOverlay,
   ImageOverlay,
   CharacterSizes,
@@ -45,6 +46,7 @@ type DraftProject = {
   subtitleStyle: SubtitleStyle;
   subtitlePosition: SubtitlePosition;
   subtitleFontSize: number;
+  subtitleFontFamily?: SubtitleFontFamily;
   subtitleSingleLine?: boolean;
   subtitleSingleWord?: boolean;
   characterSizes?: CharacterSizes;
@@ -65,6 +67,7 @@ type DraftProject = {
   mergedAudioUrl?: string | null;
   mergedDurationMs?: number;
   audioTotalDurationMs?: number;
+  redditTitle?: string;
   updatedAt: string;
 };
 
@@ -190,6 +193,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           subtitleSingleLine: metadata.subtitleSingleLine,
           subtitleSingleWord: metadata.subtitleSingleWord,
           subtitleEnabled: metadata.subtitleEnabled,
+          redditTitle: metadata.redditTitle,
           createdAt: p.created_at,
           updatedAt: p.updated_at,
         };
@@ -322,6 +326,9 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       }
       if (draftToSave.characterCustomPositions) {
         metadata.characterCustomPositions = draftToSave.characterCustomPositions;
+      }
+      if (draftToSave.redditTitle) {
+        metadata.redditTitle = draftToSave.redditTitle;
       }
       
       if (Object.keys(updates).length > 0 || Object.keys(metadata).length > 1) {
@@ -725,7 +732,9 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       // Extract subtitle settings from metadata (reusing projectMetadata)
       const metadata = projectMetadata;
       const subtitleStyle = metadata.subtitleStyle || "karaoke";
-      const subtitlePosition = metadata.subtitlePosition || { x: 50, y: 85 };
+      // Use centered position (y: 50) for story type, lower position (y: 85) for two-char conversations
+      const defaultSubtitleY = (projectType === "story" || projectType === "STORY_NARRATION" || projectType === "NORMAL_STORY" || projectType === "REDDIT_STORY") ? 50 : 85;
+      const subtitlePosition = metadata.subtitlePosition || { x: 50, y: defaultSubtitleY };
       const subtitleFontSize = metadata.subtitleFontSize || 100;
       const subtitleSingleLine = metadata.subtitleSingleLine !== undefined ? metadata.subtitleSingleLine : true;  // Default to 3-word mode
       const subtitleSingleWord = metadata.subtitleSingleWord || false;
@@ -782,6 +791,9 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       // Extract background_id from project (it's stored as background_id in the database)
       const backgroundId = (project as any).background_id || null;
 
+      // Extract redditTitle from metadata
+      const redditTitle = projectMetadata.redditTitle || null;
+
       const draft: DraftProject = {
         id: formattedProject.id,
         type: formattedProject.type,
@@ -812,6 +824,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         mergedAudioUrl: mergedAudioUrl,
         mergedDurationMs: mergedDurationMs || null,
         audioFiles: audioFilesMetadata || undefined,
+        redditTitle: redditTitle,
         updatedAt: new Date().toISOString(),
       };
 
@@ -1005,18 +1018,71 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         }));
       }
       
+      // Get redditTitle from draft or fetch from project metadata
+      let finalRedditTitle = draft.redditTitle;
+      
+      // If redditTitle not in draft, try to get it from project metadata
+      if (!finalRedditTitle && targetProjectId) {
+        try {
+          const { project } = await projectsApi.get(targetProjectId);
+          const metadata = (project as any).metadata || {};
+          finalRedditTitle = metadata.redditTitle || null;
+          console.log("📖 Fetched redditTitle from project metadata:", finalRedditTitle);
+          
+          // Update draft with redditTitle from metadata
+          if (finalRedditTitle) {
+            get().updateDraft({ redditTitle: finalRedditTitle });
+          }
+        } catch (error) {
+          console.warn("⚠️ Failed to fetch redditTitle from metadata:", error);
+        }
+      }
+      
+      // Save redditTitle to project metadata if it exists in draft and differs from metadata
+      if (draft.redditTitle && targetProjectId && draft.redditTitle !== finalRedditTitle) {
+        try {
+          // Fetch existing project to get current metadata
+          const { project } = await projectsApi.get(targetProjectId);
+          const existingMetadata = (project as any).metadata || {};
+          
+          // Merge redditTitle into existing metadata
+          const updatedMetadata = {
+            ...existingMetadata,
+            redditTitle: draft.redditTitle,
+          };
+          
+          await projectsApi.update(targetProjectId, { metadata: updatedMetadata });
+          console.log("✅ Saved redditTitle to project metadata:", draft.redditTitle);
+          finalRedditTitle = draft.redditTitle;
+        } catch (error) {
+          console.warn("⚠️ Failed to save redditTitle to metadata:", error);
+        }
+      }
+      
+      // Use finalRedditTitle (from draft or metadata)
+      const redditTitleToSend = finalRedditTitle || draft.redditTitle || null;
+      
       // Call render API with customizations
       console.log("📤 Sending character sizes and positions to backend:", {
         characterSizes: draft.characterSizes,
         characterPositions: draft.characterPositions,
         characterCustomPositions: draft.characterCustomPositions,
       });
-      const result = await renderApi.generateFinal(targetProjectId, {
+      console.log("📤 Sending redditTitle to backend:", {
+        hasRedditTitle: !!redditTitleToSend,
+        redditTitle: redditTitleToSend,
+        fromDraft: !!draft.redditTitle,
+        fromMetadata: !!finalRedditTitle && !draft.redditTitle,
+        draftKeys: Object.keys(draft),
+      });
+      // Build the request payload
+      const requestPayload: any = {
         textOverlays: draft.textOverlays,
         subtitleCustomizations: {
           style: draft.subtitleStyle,
           position: draft.subtitlePosition,
           fontSize: draft.subtitleFontSize,
+          fontFamily: draft.subtitleFontFamily || 'bebas-neue',
           singleLine: draft.subtitleSingleLine ?? true,  // Default to 3-word mode
           singleWord: draft.subtitleSingleWord ?? false,
         },
@@ -1026,7 +1092,25 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         characterSizes: draft.characterSizes, // Include character sizes
         characterPositions: draft.characterPositions, // Include character positions
         characterCustomPositions: draft.characterCustomPositions, // Include custom character positions
+      };
+      
+      // Only include redditTitle if it has a value (don't send null/undefined)
+      if (redditTitleToSend) {
+        requestPayload.redditTitle = redditTitleToSend;
+      }
+      
+      console.log("📤 Final request payload keys:", Object.keys(requestPayload));
+      console.log("📤 Final request payload redditTitle:", requestPayload.redditTitle);
+      console.log("📤 Final request payload FULL object:", JSON.stringify(requestPayload, null, 2));
+      console.log("📤 Draft state at render time:", {
+        hasRedditTitle: !!draft.redditTitle,
+        redditTitle: draft.redditTitle,
+        draftId: draft.id,
+        draftType: draft.type,
+        allDraftKeys: Object.keys(draft),
       });
+      
+      const result = await renderApi.generateFinal(targetProjectId, requestPayload);
       
       // Update draft with queue status immediately
       if (!projectId && (result.queue_position !== undefined || result.estimated_wait_time !== undefined)) {

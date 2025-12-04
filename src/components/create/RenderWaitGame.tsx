@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 
@@ -25,6 +26,7 @@ export function RenderWaitGame({
   title = "Your video is rendering...",
   description = "Play a quick game while you wait!"
 }: RenderWaitGameProps) {
+  const router = useRouter();
   const [snake, setSnake] = useState<Position[]>(INITIAL_SNAKE);
   const [food, setFood] = useState<Position>({ x: 15, y: 15 });
   const [direction, setDirection] = useState<Position>(INITIAL_DIRECTION);
@@ -260,6 +262,17 @@ export function RenderWaitGame({
             <div>Use Arrow Keys or WASD to move</div>
             <div>Press Space to pause</div>
           </div>
+
+          {/* Go to Render Queue Button */}
+          <Button
+            variant="outline"
+            className="w-full rounded-2xl"
+            onClick={() => {
+              router.push("/app/render-queue");
+            }}
+          >
+            Go to Render Queue
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

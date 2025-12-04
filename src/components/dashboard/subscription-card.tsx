@@ -30,7 +30,7 @@ export const SubscriptionCard = () => {
         setSubscription({
           tier: 'free',
           canCreateVideo: true,
-          usage: { total: 0, weekly: 0 },
+          usage: { total: 0, monthly: 0 },
           limit: 5,
           lastResetAt: null
         });
@@ -40,7 +40,7 @@ export const SubscriptionCard = () => {
         setSubscription({
           tier: 'free',
           canCreateVideo: true,
-          usage: { total: 0, weekly: 0 },
+          usage: { total: 0, monthly: 0 },
           limit: 5,
           lastResetAt: null
         });
@@ -64,7 +64,7 @@ export const SubscriptionCard = () => {
     }
   }, [user?.id, authLoading, loadSubscriptionInfo]);
 
-  const handleUpgrade = () => {
+  const handleUpgrade = (tier: 'paid' | 'premium' = 'paid') => {
     if (!user?.email) {
       toast.error("Email address is required for upgrade");
       return;
@@ -72,7 +72,9 @@ export const SubscriptionCard = () => {
 
     // Build Paystack payment URL with user's email and redirect URL
     const redirectUrl = `${window.location.origin}/app/payment/success`;
-    const paystackUrl = `https://paystack.shop/pay/noface-pro1?email=${encodeURIComponent(user.email)}&callback_url=${encodeURIComponent(redirectUrl)}`;
+    // Use different Paystack links for Pro and Premium
+    const paystackSlug = tier === 'premium' ? 'noface-premium' : 'noface-pro1';
+    const paystackUrl = `https://paystack.shop/pay/${paystackSlug}?email=${encodeURIComponent(user.email)}&callback_url=${encodeURIComponent(redirectUrl)}`;
     
     // Open Paystack in same window (Paystack will redirect back after payment)
     window.location.href = paystackUrl;
@@ -112,18 +114,18 @@ export const SubscriptionCard = () => {
     return null;
   }
 
-  const isPaid = subscription.tier === 'paid';
+  const isPaid = subscription.tier === 'paid' || subscription.tier === 'premium';
+  const isPremium = subscription.tier === 'premium';
   const usagePercentage = subscription.limit > 0 
-    ? Math.min((subscription.usage[isPaid ? 'weekly' : 'total'] / subscription.limit) * 100, 100)
+    ? Math.min((subscription.usage[isPaid ? 'monthly' : 'total'] / subscription.limit) * 100, 100)
     : 0;
 
-  // Calculate next reset date (Monday)
+  // Calculate next reset date (1st of next month)
   const getNextResetDate = () => {
     if (!subscription.lastResetAt) return null;
-    const resetDate = new Date(subscription.lastResetAt);
-    const nextReset = new Date(resetDate);
-    nextReset.setUTCDate(resetDate.getUTCDate() + 7);
-    return nextReset;
+    const now = new Date();
+    const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0, 0));
+    return nextMonth;
   };
 
   const nextReset = getNextResetDate();
@@ -134,7 +136,12 @@ export const SubscriptionCard = () => {
         <div className="flex items-center justify-between">
           <div>
             <CardTitle className="flex items-center gap-2">
-              {isPaid ? (
+              {isPremium ? (
+                <>
+                  <Crown className="h-5 w-5 text-primary" />
+                  Premium Plan
+                </>
+              ) : isPaid ? (
                 <>
                   <Crown className="h-5 w-5 text-primary" />
                   Pro Plan
@@ -144,8 +151,10 @@ export const SubscriptionCard = () => {
               )}
             </CardTitle>
             <CardDescription className="mt-1">
-              {isPaid 
-                ? "3 videos per week"
+              {isPremium 
+                ? "60 videos per month"
+                : isPaid 
+                ? "12 videos per month"
                 : "5 free videos total"
               }
             </CardDescription>
@@ -162,11 +171,11 @@ export const SubscriptionCard = () => {
             <div className="flex items-center gap-2">
               <Video className="h-4 w-4 text-muted-foreground" />
               <span className="text-muted-foreground">
-                {isPaid ? "Videos this week" : "Total videos"}
+                {isPaid ? "Videos this month" : "Total videos"}
               </span>
             </div>
             <span className="font-medium">
-              {subscription.usage[isPaid ? 'weekly' : 'total']} / {subscription.limit}
+              {subscription.usage[isPaid ? 'monthly' : 'total']} / {subscription.limit}
             </span>
           </div>
           <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
@@ -195,7 +204,7 @@ export const SubscriptionCard = () => {
               <XCircle className="h-4 w-4 text-destructive" />
               <span className="text-destructive font-medium">
                 {isPaid 
-                  ? "Weekly limit reached"
+                  ? "Monthly limit reached"
                   : "Free plan limit reached"
                 }
               </span>
@@ -203,13 +212,12 @@ export const SubscriptionCard = () => {
           )}
         </div>
 
-        {/* Reset info for paid plan */}
+        {/* Reset info for paid/premium plan */}
         {isPaid && nextReset && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Calendar className="h-4 w-4" />
             <span>
-              Resets {nextReset.toLocaleDateString('en-US', { 
-                weekday: 'long',
+              Resets on {nextReset.toLocaleDateString('en-US', { 
                 month: 'long',
                 day: 'numeric'
               })}
@@ -218,7 +226,7 @@ export const SubscriptionCard = () => {
         )}
 
         {/* Action buttons */}
-        <div className="pt-2">
+        <div className="pt-2 space-y-2">
           {isPaid ? (
             <Button
               variant="outline"
@@ -236,9 +244,28 @@ export const SubscriptionCard = () => {
               )}
             </Button>
           ) : (
+            <>
             <Button
               className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
-              onClick={handleUpgrade}
+                onClick={() => handleUpgrade('paid')}
+                disabled={updating}
+              >
+                {updating ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <Crown className="mr-2 h-4 w-4" />
+                    Upgrade to Pro ($29/mo)
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full border-yellow-500 text-yellow-700 hover:bg-yellow-50"
+                onClick={() => handleUpgrade('premium')}
               disabled={updating}
             >
               {updating ? (
@@ -249,10 +276,11 @@ export const SubscriptionCard = () => {
               ) : (
                 <>
                   <Crown className="mr-2 h-4 w-4" />
-                  Upgrade to Pro
+                    Upgrade to Premium ($60/mo)
                 </>
               )}
             </Button>
+            </>
           )}
         </div>
       </CardContent>

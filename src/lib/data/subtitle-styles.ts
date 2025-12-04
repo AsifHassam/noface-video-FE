@@ -138,7 +138,7 @@ export const SUBTITLE_STYLES: SubtitleStyleConfig[] = [
     name: "Elegant",
     description: "Sophisticated serif style - luxury brand",
     className: "text-white font-serif font-medium text-xl tracking-wider italic",
-    containerClassName: "bg-black/70 backdrop-blur-md px-8 py-4 rounded-lg border border-white/30 shadow-xl",
+    containerClassName: "bg-transparent px-8 py-4",
     icon: "✨",
   },
   {

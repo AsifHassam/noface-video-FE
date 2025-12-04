@@ -7,9 +7,13 @@ import {
   Sparkles,
   Settings2,
   Clock,
+  Shield,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/lib/stores/auth-store";
+
+const ADMIN_EMAIL = "asifhassam14@gmail.com";
 
 type NavItem = {
   label: string;
@@ -36,6 +40,11 @@ const NAV_ITEMS: NavItem[] = [
     icon: Clock,
   },
   {
+    label: "Admin",
+    href: "/app/admin",
+    icon: Shield,
+  },
+  {
     label: "Settings",
     href: "/app/settings",
     icon: Settings2,
@@ -46,6 +55,16 @@ const NAV_ITEMS: NavItem[] = [
 
 export const Sidebar = () => {
   const pathname = usePathname();
+  const { user } = useAuthStore();
+  const isAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+
+  // Filter out Admin item if user is not admin
+  const visibleNavItems = NAV_ITEMS.filter(item => {
+    if (item.label === "Admin" && !isAdmin) {
+      return false;
+    }
+    return true;
+  });
 
   return (
     <aside className="hidden h-full w-64 flex-col rounded-3xl border border-border/60 bg-white/70 p-6 shadow-xl shadow-primary/5 backdrop-blur-xl lg:flex">
@@ -56,7 +75,7 @@ export const Sidebar = () => {
         noface.video
       </div>
       <nav className="flex flex-1 flex-col gap-2">
-        {NAV_ITEMS.map((item) => {
+        {visibleNavItems.map((item) => {
           const isActive = pathname.startsWith(item.href);
           const content = (
             <span

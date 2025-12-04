@@ -13,7 +13,7 @@ export const EmptyState = () => {
   const { user } = useAuthStore();
   const [canCreateVideo, setCanCreateVideo] = useState(true);
   const [checkingLimit, setCheckingLimit] = useState(false);
-  const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'paid' | null>(null);
+  const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'paid' | 'premium' | null>(null);
 
   // Check subscription limits
   useEffect(() => {
@@ -75,8 +75,8 @@ export const EmptyState = () => {
               }
             }
           });
-        } else if (tier === 'paid') {
-          toast.error(`You've reached your weekly limit of ${limit} videos. Your limit resets on Monday.`);
+        } else if (tier === 'paid' || tier === 'premium') {
+          toast.error(`You've reached your monthly limit of ${limit} videos. Your limit resets on the 1st of each month.`);
         } else {
           toast.error("You've reached your video creation limit.");
         }
@@ -133,7 +133,7 @@ export const EmptyState = () => {
         ) : (
           <div className="w-full max-w-sm text-center">
             <p className="text-sm text-muted-foreground mb-4">
-              Your weekly limit resets every Monday. Come back then to create more videos!
+              Your monthly limit resets on the 1st of each month. Come back then to create more videos!
             </p>
             <Button 
               variant="outline"

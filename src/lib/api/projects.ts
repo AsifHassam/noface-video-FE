@@ -7,7 +7,7 @@ const API_BASE_URL = config.remotionServerUrl;
 /**
  * Get authentication token from Supabase session
  */
-async function getAuthToken(): Promise<string | null> {
+export async function getAuthToken(): Promise<string | null> {
   console.log("🟣 Getting auth token...");
   try {
     // Check if we're in browser environment
@@ -85,6 +85,28 @@ async function apiRequest<T>(
 
   const url = `${API_BASE_URL}${endpoint}`;
   console.log("🔵 Fetching:", url);
+
+  // Log request body if it exists
+  if (options.body) {
+    try {
+      const bodyObj = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+      console.log("🔵 Request body being sent:", JSON.stringify(bodyObj, null, 2));
+      console.log("🔵 Request body keys:", Object.keys(bodyObj || {}));
+      if (bodyObj?.redditTitle !== undefined) {
+        console.log("🔵 Request body redditTitle:", {
+          value: bodyObj.redditTitle,
+          type: typeof bodyObj.redditTitle,
+          length: bodyObj.redditTitle ? bodyObj.redditTitle.length : 0,
+        });
+      } else {
+        console.log("🔵 Request body does NOT contain redditTitle");
+      }
+    } catch (e) {
+      console.log("🔵 Request body (could not parse):", options.body);
+    }
+  } else {
+    console.log("🔵 No request body");
+  }
 
   try {
     const response = await fetch(url, {
@@ -357,6 +379,7 @@ export const renderApi = {
     characterSizes?: any;
     characterPositions?: any;
     characterCustomPositions?: any;
+    redditTitle?: string;
   }): Promise<{
     success: boolean;
     message?: string;
@@ -367,17 +390,27 @@ export const renderApi = {
     videoUrl?: string; // For backward compatibility
   }> {
     console.log("🎬 renderApi.generateFinal called for project:", projectId);
-    console.log("📤 renderApi.generateFinal data payload:", {
+    console.log("📤 renderApi.generateFinal FULL data payload:", JSON.stringify(data, null, 2));
+    console.log("📤 renderApi.generateFinal data payload summary:", {
       hasCharacterSizes: !!data?.characterSizes,
       hasCharacterPositions: !!data?.characterPositions,
       hasCharacterCustomPositions: !!data?.characterCustomPositions,
       characterCustomPositions: data?.characterCustomPositions,
       characterCustomPositionsKeys: data?.characterCustomPositions ? Object.keys(data.characterCustomPositions) : [],
+      hasRedditTitle: !!data?.redditTitle,
+      redditTitle: data?.redditTitle,
+      redditTitleType: typeof data?.redditTitle,
+      redditTitleLength: data?.redditTitle ? data.redditTitle.length : 0,
       fullDataKeys: data ? Object.keys(data) : [],
     });
+    
+    const requestBody = data ? JSON.stringify(data) : undefined;
+    console.log("📤 renderApi.generateFinal request body (stringified):", requestBody);
+    console.log("📤 renderApi.generateFinal request body size:", requestBody ? requestBody.length : 0, "bytes");
+    
     return apiRequest(`/api/projects/${projectId}/render/final`, {
       method: 'POST',
-      body: data ? JSON.stringify(data) : undefined,
+      body: requestBody,
     });
   },
 

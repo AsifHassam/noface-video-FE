@@ -77,7 +77,7 @@ export type ImageOverlay = {
   };
 };
 
-export type BackgroundId = "minecraft" | "subway" | "mine_2_cfr";
+export type BackgroundId = "minecraft" | "subway" | "mine_2_cfr" | "subway_surfers" | "asmr1";
 
 export type Background = {
   id: BackgroundId;
@@ -132,6 +132,8 @@ export type SubtitleStyle =
   | "elegant"
   | "gaming";
 
+export type SubtitleFontFamily = 'bebas-neue' | 'impact' | 'montserrat' | 'poppins' | 'futura' | 'roboto' | 'inter';
+
 export type CharacterPosition = 'left' | 'center' | 'right';
 
 export type CharacterSizes = {
@@ -168,6 +170,7 @@ export type Project = {
   subtitleStyle?: SubtitleStyle;
   subtitlePosition?: SubtitlePosition;
   subtitleFontSize?: number;
+  subtitleFontFamily?: SubtitleFontFamily;
   subtitleEnabled?: boolean;
   durationSec?: number | null;
   createdAt: string;

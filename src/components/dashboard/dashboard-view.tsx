@@ -24,7 +24,7 @@ export const DashboardView = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [canCreateVideo, setCanCreateVideo] = useState(true);
   const [checkingLimit, setCheckingLimit] = useState(false);
-  const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'paid' | null>(null);
+  const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'paid' | 'premium' | null>(null);
   const [isTemplateSelectorOpen, setIsTemplateSelectorOpen] = useState(false);
   const [selectedProjectType, setSelectedProjectType] = useState<"story" | "TWO_CHAR_CONVO">("TWO_CHAR_CONVO");
 
@@ -143,8 +143,8 @@ export const DashboardView = () => {
               }
             }
           });
-        } else if (tier === 'paid') {
-          toast.error(`You've reached your weekly limit of ${limit} videos. Your limit resets on Monday.`);
+        } else if (tier === 'paid' || tier === 'premium') {
+          toast.error(`You've reached your monthly limit of ${limit} videos. Your limit resets on the 1st of each month.`);
         } else {
           toast.error("You've reached your video creation limit.");
         }

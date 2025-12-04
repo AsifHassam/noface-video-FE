@@ -62,11 +62,11 @@ async function apiRequest<T>(
 }
 
 export type SubscriptionInfo = {
-  tier: 'free' | 'paid';
+  tier: 'free' | 'paid' | 'premium';
   canCreateVideo: boolean;
   usage: {
     total: number;
-    weekly: number;
+    monthly: number;
   };
   limit: number;
   lastResetAt: string | null;
@@ -90,7 +90,7 @@ export const subscriptionApi = {
 
       // Get user profile - gracefully handle missing columns (migration not run yet)
       let profile: any = null;
-      let tier: 'free' | 'paid' = 'free';
+      let tier: 'free' | 'paid' | 'premium' = 'free';
       
       try {
         const { data, error: profileError } = await supabase
@@ -112,7 +112,7 @@ export const subscriptionApi = {
         } else {
           profile = data;
           const subscriptionTier = profile?.subscription_tier;
-          tier = (subscriptionTier === 'paid' || subscriptionTier === 'free') ? subscriptionTier : 'free';
+          tier = (subscriptionTier === 'paid' || subscriptionTier === 'premium' || subscriptionTier === 'free') ? subscriptionTier : 'free';
         }
       } catch (err: any) {
         // Handle column not found errors gracefully
@@ -124,23 +124,21 @@ export const subscriptionApi = {
         }
       }
 
-      // Calculate week start (Monday 00:00:00 UTC)
+      // Calculate month start (1st of current month 00:00:00 UTC)
       const now = new Date();
-      const weekStart = new Date(now);
-      weekStart.setUTCDate(now.getUTCDate() - now.getUTCDay() + 1); // Monday
-      weekStart.setUTCHours(0, 0, 0, 0);
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
 
-      // Check if we need to reset weekly count (only if columns exist)
+      // Check if we need to reset monthly count (only if columns exist)
       let lastResetAt: Date | null = null;
       if (profile?.last_video_reset_at) {
         lastResetAt = new Date(profile.last_video_reset_at);
-        if (!lastResetAt || lastResetAt < weekStart) {
-          lastResetAt = weekStart;
+        if (!lastResetAt || lastResetAt < monthStart) {
+          lastResetAt = monthStart;
           // Try to update in database (may fail if migration not run)
           try {
             await supabase
               .from('profiles')
-              .update({ last_video_reset_at: weekStart.toISOString() })
+              .update({ last_video_reset_at: monthStart.toISOString() })
               .eq('id', session.user.id);
           } catch (updateErr) {
             // Silently fail if column doesn't exist
@@ -148,11 +146,11 @@ export const subscriptionApi = {
           }
         }
       } else {
-        lastResetAt = weekStart;
+        lastResetAt = monthStart;
       }
 
       // Count videos - handle errors gracefully
-      let usage = { total: 0, weekly: 0 };
+      let usage = { total: 0, monthly: 0 };
 
       try {
         if (tier === 'free') {
@@ -171,22 +169,22 @@ export const subscriptionApi = {
           } else {
             usage.total = count || 0;
           }
-          usage.weekly = usage.total;
+          usage.monthly = usage.total;
         } else {
-          // Paid tier - count weekly (must have final_url)
-          const { count: weeklyCount, error: weeklyError } = await supabase
+          // Paid/Premium tier - count monthly (must have final_url)
+          const { count: monthlyCount, error: monthlyError } = await supabase
             .from('projects')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', session.user.id)
             .not('final_url', 'is', null)
             .not('final_url', 'eq', '')
-            .gte('created_at', weekStart.toISOString());
+            .gte('created_at', monthStart.toISOString());
 
-          if (weeklyError) {
-            console.warn('⚠️ Error counting weekly videos:', weeklyError);
-            usage.weekly = 0;
+          if (monthlyError) {
+            console.warn('⚠️ Error counting monthly videos:', monthlyError);
+            usage.monthly = 0;
           } else {
-            usage.weekly = weeklyCount || 0;
+            usage.monthly = monthlyCount || 0;
           }
 
           // Also get total for display
@@ -211,7 +209,8 @@ export const subscriptionApi = {
 
       const limits = {
         free: { total: 5 },
-        paid: { weekly: 3 }
+        paid: { monthly: 12 },
+        premium: { monthly: 60 }
       };
 
       let canCreateVideo = false;
@@ -220,9 +219,12 @@ export const subscriptionApi = {
       if (tier === 'free') {
         limit = limits.free.total;
         canCreateVideo = usage.total < limit;
-      } else {
-        limit = limits.paid.weekly;
-        canCreateVideo = usage.weekly < limit;
+      } else if (tier === 'paid') {
+        limit = limits.paid.monthly;
+        canCreateVideo = usage.monthly < limit;
+      } else if (tier === 'premium') {
+        limit = limits.premium.monthly;
+        canCreateVideo = usage.monthly < limit;
       }
 
       return {
@@ -245,29 +247,27 @@ export const subscriptionApi = {
   /**
    * Update user's subscription tier
    */
-  async updateSubscription(tier: 'free' | 'paid'): Promise<{ success: boolean }> {
+  async updateSubscription(tier: 'free' | 'paid' | 'premium'): Promise<{ success: boolean }> {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) {
         throw new Error('Not authenticated');
       }
 
-      // Calculate week start (Monday 00:00:00 UTC) to reset weekly video count when upgrading
+      // Calculate month start (1st of current month 00:00:00 UTC) to reset monthly video count when upgrading
       let lastVideoResetAt: string | null = null;
-      if (tier === 'paid') {
+      if (tier === 'paid' || tier === 'premium') {
         const now = new Date();
-        const weekStart = new Date(now);
-        weekStart.setUTCDate(now.getUTCDate() - now.getUTCDay() + 1); // Monday
-        weekStart.setUTCHours(0, 0, 0, 0);
-        lastVideoResetAt = weekStart.toISOString();
+        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+        lastVideoResetAt = monthStart.toISOString();
       }
 
       const { error } = await supabase
         .from('profiles')
         .update({
           subscription_tier: tier,
-          subscription_started_at: tier === 'paid' ? new Date().toISOString() : null,
-          last_video_reset_at: lastVideoResetAt, // Reset weekly count to 0 when upgrading to paid
+          subscription_started_at: (tier === 'paid' || tier === 'premium') ? new Date().toISOString() : null,
+          last_video_reset_at: lastVideoResetAt, // Reset monthly count to 0 when upgrading
         })
         .eq('id', session.user.id);
 

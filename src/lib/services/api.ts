@@ -119,6 +119,7 @@ export const api = {
       style: string;
       position: { x: number; y: number };
       fontSize: number;
+      fontFamily?: 'bebas-neue' | 'impact' | 'montserrat' | 'poppins' | 'futura' | 'roboto' | 'inter';
     } | null;
     srtText: string; // Edited subtitle text
     imageOverlays?: any[]; // Array of image overlay objects

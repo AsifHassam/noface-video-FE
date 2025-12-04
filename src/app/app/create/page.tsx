@@ -118,8 +118,8 @@ export default function CreatePage() {
               }
             }
           });
-        } else if (tier === 'paid') {
-          toast.error(`You've reached your weekly limit of ${limit} videos. Your limit resets on Monday.`);
+        } else if (tier === 'paid' || tier === 'premium') {
+          toast.error(`You've reached your monthly limit of ${limit} videos. Your limit resets on the 1st of each month.`);
         } else {
           toast.error("You've reached your video creation limit.");
         }

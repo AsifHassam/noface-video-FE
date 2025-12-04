@@ -20,6 +20,7 @@ export default function PaymentSuccessPage() {
   const [paymentVerified, setPaymentVerified] = useState(false);
   const [verificationError, setVerificationError] = useState<string | null>(null);
   const [emailVerified, setEmailVerified] = useState(false);
+  const [subscriptionTier, setSubscriptionTier] = useState<'paid' | 'premium' | null>(null);
 
   useEffect(() => {
     // Require user to be logged in
@@ -119,6 +120,11 @@ export default function PaymentSuccessPage() {
       if (verificationResult.success) {
         setPaymentVerified(true);
         setEmailVerified(verificationResult.email_verified || true);
+        
+        // Store tier for display
+        const tier = verificationResult.subscription_tier || 'paid';
+        setSubscriptionTier(tier);
+        localStorage.setItem('payment_tier', tier);
 
         toast.success("Payment Verified! Your subscription is now active.");
 
@@ -252,7 +258,7 @@ export default function PaymentSuccessPage() {
                   Payment Successful!
                 </CardTitle>
                 <CardDescription className="mt-1">
-                  Welcome to Pro Plan
+                  Welcome to {subscriptionTier === 'premium' ? 'Premium' : 'Pro'} Plan
                 </CardDescription>
               </div>
             </div>
@@ -279,7 +285,7 @@ export default function PaymentSuccessPage() {
             <div className="rounded-lg bg-green-50 p-4 text-sm text-green-800 dark:bg-green-950 dark:text-green-300">
               <p className="font-medium">Your subscription is now active!</p>
               <p className="mt-1 text-xs">
-                You can now create up to 3 videos per week. Redirecting to dashboard...
+                You can now create up to {tier === 'premium' ? '60' : '12'} videos per month. Your limit resets on the 1st of each month. Redirecting to dashboard...
               </p>
             </div>
             <Button asChild className="w-full">

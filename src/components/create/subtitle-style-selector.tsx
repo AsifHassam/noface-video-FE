@@ -6,6 +6,13 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -13,7 +20,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import type { SubtitleStyle } from "@/types";
+import type { SubtitleStyle, SubtitleFontFamily } from "@/types";
 import { SUBTITLE_STYLES } from "@/lib/data/subtitle-styles";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +29,8 @@ type SubtitleStyleSelectorProps = {
   onChange: (style: SubtitleStyle) => void;
   fontSize?: number;
   onFontSizeChange?: (size: number) => void;
+  fontFamily?: SubtitleFontFamily;
+  onFontFamilyChange?: (font: SubtitleFontFamily) => void;
   // Karaoke single-line toggle
   singleLine?: boolean;
   onSingleLineChange?: (value: boolean) => void;
@@ -35,6 +44,8 @@ export const SubtitleStyleSelector = ({
   onChange,
   fontSize = 100,
   onFontSizeChange,
+  fontFamily = 'bebas-neue',
+  onFontFamilyChange,
   singleLine = false,
   onSingleLineChange,
   singleWord = false,
@@ -102,13 +113,20 @@ export const SubtitleStyleSelector = ({
                   >
                     <p
                       className={cn(style.className, "text-sm md:text-base")}
-                      style={
-                        style.id === "outlined"
+                      style={{
+                        ...(style.id === "outlined"
                           ? {
                               textShadow: `-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000`,
                             }
-                          : undefined
-                      }
+                          : {}),
+                        fontFamily: fontFamily === 'impact' ? 'var(--font-impact)' :
+                                   fontFamily === 'montserrat' ? 'var(--font-montserrat)' :
+                                   fontFamily === 'poppins' ? 'var(--font-poppins)' :
+                                   fontFamily === 'futura' ? 'var(--font-futura)' :
+                                   fontFamily === 'roboto' ? 'var(--font-roboto)' :
+                                   fontFamily === 'inter' ? 'var(--font-inter)' :
+                                   'var(--font-bebas-neue), Arial Black, Arial, sans-serif',
+                      }}
                     >
                       Sample Text
                     </p>
@@ -120,6 +138,65 @@ export const SubtitleStyleSelector = ({
         </DialogContent>
       </Dialog>
       </div>
+
+      {/* Font Family Control */}
+      {onFontFamilyChange && (
+        <div className="space-y-2">
+          <Label className="text-sm font-medium flex items-center gap-2">
+            <Type className="h-4 w-4" />
+            Font Family
+          </Label>
+          <Select
+            value={fontFamily}
+            onValueChange={(value) => onFontFamilyChange(value as SubtitleFontFamily)}
+          >
+            <SelectTrigger className="w-full rounded-xl">
+              <SelectValue>
+                <span style={{
+                  fontFamily: fontFamily === 'bebas-neue' ? 'var(--font-bebas-neue)' :
+                             fontFamily === 'impact' ? 'var(--font-impact)' :
+                             fontFamily === 'montserrat' ? 'var(--font-montserrat)' :
+                             fontFamily === 'poppins' ? 'var(--font-poppins)' :
+                             fontFamily === 'futura' ? 'var(--font-futura)' :
+                             fontFamily === 'roboto' ? 'var(--font-roboto)' :
+                             fontFamily === 'inter' ? 'var(--font-inter)' : 'inherit'
+                }}>
+                  {fontFamily === 'bebas-neue' ? 'Bebas Neue' :
+                   fontFamily === 'impact' ? 'Impact' :
+                   fontFamily === 'montserrat' ? 'Montserrat' :
+                   fontFamily === 'poppins' ? 'Poppins' :
+                   fontFamily === 'futura' ? 'Futura' :
+                   fontFamily === 'roboto' ? 'Roboto' :
+                   fontFamily === 'inter' ? 'Inter' : 'Bebas Neue'}
+                </span>
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="bebas-neue" style={{ fontFamily: 'var(--font-bebas-neue)' }}>
+                Bebas Neue
+              </SelectItem>
+              <SelectItem value="impact" style={{ fontFamily: 'var(--font-impact)' }}>
+                Impact
+              </SelectItem>
+              <SelectItem value="montserrat" style={{ fontFamily: 'var(--font-montserrat)' }}>
+                Montserrat
+              </SelectItem>
+              <SelectItem value="poppins" style={{ fontFamily: 'var(--font-poppins)' }}>
+                Poppins
+              </SelectItem>
+              <SelectItem value="futura" style={{ fontFamily: 'var(--font-futura)' }}>
+                Futura
+              </SelectItem>
+              <SelectItem value="roboto" style={{ fontFamily: 'var(--font-roboto)' }}>
+                Roboto
+              </SelectItem>
+              <SelectItem value="inter" style={{ fontFamily: 'var(--font-inter)' }}>
+                Inter
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {/* Font Size Control */}
       {onFontSizeChange && (

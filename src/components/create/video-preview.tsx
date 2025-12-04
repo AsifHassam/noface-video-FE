@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import type { OverlayItem, RenderStatus, SubtitleSegment, SubtitleStyle, TextOverlay } from "@/types";
+import type { OverlayItem, RenderStatus, SubtitleSegment, SubtitleStyle, SubtitleFontFamily, TextOverlay } from "@/types";
 import { cn } from "@/lib/utils";
 import { getSubtitleStyle, OUTLINED_STYLE } from "@/lib/data/subtitle-styles";
 
@@ -20,6 +20,7 @@ type VideoPreviewProps = {
   showSubtitles: boolean;
   onToggleSubtitles: (value: boolean) => void;
   subtitleStyle?: SubtitleStyle;
+  subtitleFontFamily?: SubtitleFontFamily;
 };
 
 const OVERLAY_POSITION_CLASSES: Record<OverlayItem["position"], string> = {
@@ -35,9 +36,11 @@ const OVERLAY_POSITION_CLASSES: Record<OverlayItem["position"], string> = {
 const SubtitleRenderer = ({
   text,
   styleId,
+  fontFamily = 'bebas-neue',
 }: {
   text: string;
   styleId: SubtitleStyle;
+  fontFamily?: SubtitleFontFamily;
 }) => {
   const style = getSubtitleStyle(styleId);
   const isOutlined = styleId === "outlined";
@@ -52,7 +55,17 @@ const SubtitleRenderer = ({
       >
         <p
           className={cn(style.className)}
-          style={isOutlined ? OUTLINED_STYLE : undefined}
+          style={{
+            ...(isOutlined ? OUTLINED_STYLE : {}),
+            ...(styleId === "elegant" ? { textShadow: '-5px -5px 0 #000, 5px -5px 0 #000, -5px 5px 0 #000, 5px 5px 0 #000' } : {}),
+            fontFamily: fontFamily === 'impact' ? 'var(--font-impact)' :
+                       fontFamily === 'montserrat' ? 'var(--font-montserrat)' :
+                       fontFamily === 'poppins' ? 'var(--font-poppins)' :
+                       fontFamily === 'futura' ? 'var(--font-futura)' :
+                       fontFamily === 'roboto' ? 'var(--font-roboto)' :
+                       fontFamily === 'inter' ? 'var(--font-inter)' :
+                       'var(--font-bebas-neue), Arial Black, Arial, sans-serif',
+          }}
         >
           {text}
         </p>
@@ -164,6 +177,7 @@ export const VideoPreview = ({
   showSubtitles,
   onToggleSubtitles,
   subtitleStyle = "karaoke",
+  subtitleFontFamily = 'bebas-neue',
 }: VideoPreviewProps) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [currentMs, setCurrentMs] = useState(0);
@@ -265,6 +279,7 @@ export const VideoPreview = ({
               <SubtitleRenderer
                 text={activeSubtitle.text}
                 styleId={subtitleStyle}
+                fontFamily={subtitleFontFamily}
               />
             ) : null}
           </>

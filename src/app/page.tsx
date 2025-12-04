@@ -96,7 +96,7 @@ const PRICING_PLANS = [
     period: "per month",
     description: "For creators and businesses ready to scale",
     features: [
-      "3 videos per week",
+      "12 videos per month",
       "Premium templates library",
       "All subtitle styles & animations",
       "4K video quality",
@@ -106,6 +106,23 @@ const PRICING_PLANS = [
     cta: "Start Pro Trial",
     popular: true,
     gradient: "from-purple-500 to-pink-500",
+  },
+  {
+    name: "Premium",
+    price: "$60",
+    period: "per month",
+    description: "For power users and agencies",
+    features: [
+      "60 videos per month",
+      "Premium templates library",
+      "All subtitle styles & animations",
+      "4K video quality",
+      "No watermark",
+      "Priority support",
+    ],
+    cta: "Start Premium",
+    popular: false,
+    gradient: "from-yellow-500 to-orange-500",
   },
 ];
 

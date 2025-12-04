@@ -578,6 +578,12 @@ export default function PreviewPage() {
               updateDraft({ subtitleFontSize: size });
               }
             }}
+            subtitleFontFamily={draft?.subtitleFontFamily || 'bebas-neue'}
+            onSubtitleFontFamilyChange={(font) => {
+              if (!isInitialState) {
+              updateDraft({ subtitleFontFamily: font });
+              }
+            }}
             playbackRate={draft?.playbackRate ?? 1}
             onPlaybackRateChange={(rate) => {
               if (!isInitialState) {
@@ -743,6 +749,22 @@ export default function PreviewPage() {
                   onFontSizeChange={(size) => {
                     if (!isInitialState) {
                     updateDraft({ subtitleFontSize: size });
+                    }
+                  }}
+                  fontFamily={draft?.subtitleFontFamily || 'bebas-neue'}
+                  onFontFamilyChange={(font) => {
+                    if (!isInitialState) {
+                    updateDraft({ subtitleFontFamily: font });
+                    const fontNames: Record<string, string> = {
+                      'bebas-neue': 'Bebas Neue',
+                      'impact': 'Impact',
+                      'montserrat': 'Montserrat',
+                      'poppins': 'Poppins',
+                      'futura': 'Futura',
+                      'roboto': 'Roboto',
+                      'inter': 'Inter',
+                    };
+                    toast.success(`Font: ${fontNames[font] || 'Bebas Neue'}`);
                     }
                   }}
                   singleLine={draft?.subtitleSingleLine ?? false}

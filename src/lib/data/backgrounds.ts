@@ -14,6 +14,8 @@ const BACKGROUND_VIDEO_MAP: Record<string, string> = {
   minecraft: "mine_converted.mp4",
   subway: "Subway.mp4",
   mine_2_cfr: "mine_2_cfr.mp4",
+  subway_surfers: "Subway_Surfers.mp4",
+  asmr1: "ASMR1.mp4",
 };
 
 export const BACKGROUNDS: Background[] = [
@@ -39,6 +41,22 @@ export const BACKGROUNDS: Background[] = [
     description: "Cool Minecraft gameplay with smooth visuals.",
     length: "1080p @ 60fps",
     previewUrl: getS3Url(BACKGROUND_VIDEO_MAP.mine_2_cfr),
+    durationSeconds: 120, // Estimated duration - adjust based on actual video length
+  },
+  {
+    id: "subway_surfers",
+    name: "Subway Surfers",
+    description: "Fast-paced endless runner with vibrant city visuals.",
+    length: "1080p @ 60fps",
+    previewUrl: getS3Url(BACKGROUND_VIDEO_MAP.subway_surfers),
+    durationSeconds: 120, // Estimated duration - adjust based on actual video length
+  },
+  {
+    id: "asmr1",
+    name: "ASMR Visuals",
+    description: "Calming and relaxing visual experience.",
+    length: "1080p @ 60fps",
+    previewUrl: getS3Url(BACKGROUND_VIDEO_MAP.asmr1),
     durationSeconds: 120, // Estimated duration - adjust based on actual video length
   },
 ];

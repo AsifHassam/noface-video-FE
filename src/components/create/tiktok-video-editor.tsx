@@ -21,11 +21,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import type { TextOverlay, TextOverlayStyle, RenderStatus, SubtitleSegment, SubtitleStyle, SubtitlePosition, ImageOverlay, Character, CharacterSizes, CharacterPositions } from "@/types";
+import type { TextOverlay, TextOverlayStyle, RenderStatus, SubtitleSegment, SubtitleStyle, SubtitlePosition, SubtitleFontFamily, ImageOverlay, Character, CharacterSizes, CharacterPositions } from "@/types";
 import { cn } from "@/lib/utils";
 import { v4 as uuid } from "uuid";
 import { getSubtitleStyle, OUTLINED_STYLE, STYLE_3D_POP, STYLE_STROKE_THICK } from "@/lib/data/subtitle-styles";
 import Image from "next/image";
+import { RedditPostOverlay } from "./reddit-post-overlay";
 
 type TikTokVideoEditorProps = {
   videoUrl?: string | null;
@@ -42,6 +43,8 @@ type TikTokVideoEditorProps = {
   onSubtitlePositionChange?: (position: SubtitlePosition) => void;
   subtitleFontSize?: number;
   onSubtitleFontSizeChange?: (size: number) => void;
+  subtitleFontFamily?: SubtitleFontFamily;
+  onSubtitleFontFamilyChange?: (font: SubtitleFontFamily) => void;
   playbackRate?: number;
   onPlaybackRateChange?: (rate: number) => void;
   // Single-line preview controls
@@ -68,6 +71,8 @@ type TikTokVideoEditorProps = {
   // Custom character positions for browser preview (x/y coordinates in %)
   characterCustomPositions?: Record<string, { x: number; y: number }>;
   onCharacterCustomPositionsChange?: (positions: Record<string, { x: number; y: number }>) => void;
+  // Reddit story title overlay
+  redditTitle?: string;
 };
 
 const TEXT_OVERLAY_STYLES: Record<TextOverlayStyle, string> = {
@@ -191,6 +196,8 @@ export const TikTokVideoEditor = ({
   onSubtitlePositionChange,
   subtitleFontSize = 100,
   onSubtitleFontSizeChange,
+  subtitleFontFamily = 'bebas-neue',
+  onSubtitleFontFamilyChange,
   playbackRate: externalPlaybackRate,
   onPlaybackRateChange,
   subtitleSingleLine = false,
@@ -206,6 +213,7 @@ export const TikTokVideoEditor = ({
   onCharacterPositionsChange,
   characterCustomPositions,
   onCharacterCustomPositionsChange,
+  redditTitle,
 }: TikTokVideoEditorProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -2112,6 +2120,17 @@ export const TikTokVideoEditor = ({
           </div>
         ))}
 
+        {/* Reddit Post Overlay - Show during first narration segment (title) */}
+        {redditTitle && subtitles.length > 0 && (
+          <RedditPostOverlay
+            title={redditTitle}
+            show={true}
+            startMs={subtitles[0]?.startMs || 0}
+            endMs={subtitles[0]?.endMs || 3000}
+            currentMs={currentTimeMs}
+          />
+        )}
+
         {/* Render Characters (browser preview mode) */}
         {browserPreviewMode && activeCharacter && activeCharacter.character && (
           (() => {
@@ -2296,7 +2315,10 @@ export const TikTokVideoEditor = ({
             >
               <p
                 className={cn(
-                  getSubtitleStyle(subtitleStyle).className.replace(/text-(xs|sm|base|lg|xl|2xl|3xl|4xl|5xl|6xl|7xl|8xl|9xl)/g, ''),
+                  // Remove font size and font family classes to allow custom fonts
+                  getSubtitleStyle(subtitleStyle).className
+                    .replace(/text-(xs|sm|base|lg|xl|2xl|3xl|4xl|5xl|6xl|7xl|8xl|9xl)/g, '')
+                    .replace(/font-(sans|serif|mono|black|bold|semibold|medium|normal|light|thin|extralight)/g, ''),
                   "break-words text-center w-full"
                 )}
                 style={{
@@ -2305,8 +2327,17 @@ export const TikTokVideoEditor = ({
                   overflowWrap: 'break-word',
                   lineHeight: '1.2',
                   textAlign: 'center',
+                  fontFamily: subtitleFontFamily === 'impact' ? 'var(--font-impact)' :
+                             subtitleFontFamily === 'montserrat' ? 'var(--font-montserrat)' :
+                             subtitleFontFamily === 'poppins' ? 'var(--font-poppins)' :
+                             subtitleFontFamily === 'futura' ? 'var(--font-futura)' :
+                             subtitleFontFamily === 'roboto' ? 'var(--font-roboto)' :
+                             subtitleFontFamily === 'inter' ? 'var(--font-inter)' :
+                             'var(--font-bebas-neue), Arial Black, Arial, sans-serif',
                   ...(subtitleStyle === "outlined"
                     ? OUTLINED_STYLE
+                    : subtitleStyle === "elegant"
+                    ? { textShadow: '-5px -5px 0 #000, 5px -5px 0 #000, -5px 5px 0 #000, 5px 5px 0 #000' }
                     : subtitleStyle === "3d-pop"
                     ? STYLE_3D_POP
                     : subtitleStyle === "stroke-thick"

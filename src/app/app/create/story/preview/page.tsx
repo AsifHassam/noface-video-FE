@@ -12,6 +12,7 @@ import { parseSrtText } from "@/lib/utils/srt";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Download, ChevronDown, ChevronUp, Info, Save } from "lucide-react";
 import { config } from "@/lib/config";
@@ -479,21 +480,9 @@ export default function StoryPreviewPage() {
       console.log("📝 Subtitle text length:", subtitleText?.length || 0);
       console.log("🌐 Server URL:", config.remotionServerUrl);
       
-      const requestBody = {
-        script: narrationLines.join("\n"),
-        backgroundId: draft.backgroundId || "mine_2_cfr",
-        subtitleCustomizations: {
-          style: draft.subtitleStyle || "karaoke",
-          position: draft.subtitlePosition || { x: 50, y: 85 },
-          fontSize: draft.subtitleFontSize || 100,
-          singleLine: draft.subtitleSingleLine ?? false,
-          singleWord: draft.subtitleSingleWord ?? false,
-        },
-        srtText: subtitleText,
-        playbackRate: playbackRate, // Send playback rate for final render
-        textOverlays: draft.textOverlays || [], // Send text overlays
-        imageOverlays: draft.imageOverlays || [], // Send image overlays
-      };
+      // Initialize redditTitle from draft
+      let redditTitleToSend = draft?.redditTitle || null;
+      console.log("📖 Initial redditTitle from draft:", redditTitleToSend);
       
       // Check if project exists in database (story narrations create project after preview)
       // First, check if we have a project in the projects list (from store)
@@ -604,6 +593,51 @@ export default function StoryPreviewPage() {
         }
         throw new Error("Failed to verify project. Please try again.");
       }
+
+      // If redditTitle not in draft, try to get it from project metadata (now that projectId is determined)
+      if (!redditTitleToSend && projectId) {
+        try {
+          const { projectsApi } = await import("@/lib/api/projects");
+          const { project } = await projectsApi.get(projectId);
+          const metadata = (project as any).metadata || {};
+          redditTitleToSend = metadata.redditTitle || null;
+          console.log("📖 Fetched redditTitle from project metadata in handleRenderFinal:", redditTitleToSend);
+          
+          // Update draft with redditTitle from metadata
+          if (redditTitleToSend) {
+            updateDraft({ redditTitle: redditTitleToSend });
+          }
+        } catch (error) {
+          console.warn("⚠️ Failed to fetch redditTitle from metadata in handleRenderFinal:", error);
+        }
+      }
+
+      // Build request body
+      const requestBody: any = {
+        script: narrationLines.join("\n"),
+        backgroundId: draft.backgroundId || "mine_2_cfr",
+        subtitleCustomizations: {
+          style: draft.subtitleStyle || "karaoke",
+          position: draft.subtitlePosition || { x: 50, y: 50 },
+          fontSize: draft.subtitleFontSize || 100,
+          fontFamily: draft.subtitleFontFamily || 'bebas-neue',
+          singleLine: draft.subtitleSingleLine ?? false,
+          singleWord: draft.subtitleSingleWord ?? false,
+        },
+        srtText: subtitleText,
+        playbackRate: playbackRate, // Send playback rate for final render
+        textOverlays: draft.textOverlays || [], // Send text overlays
+        imageOverlays: draft.imageOverlays || [], // Send image overlays
+      };
+      
+      // Only include redditTitle if it has a value
+      if (redditTitleToSend) {
+        requestBody.redditTitle = redditTitleToSend;
+      }
+      
+      console.log("📤 handleRenderFinal requestBody keys:", Object.keys(requestBody));
+      console.log("📤 handleRenderFinal requestBody redditTitle:", requestBody.redditTitle);
+      console.log("📤 handleRenderFinal FULL requestBody:", JSON.stringify(requestBody, null, 2));
 
       console.log("📤 Sending final render request:", {
         url: `${config.remotionServerUrl}/api/projects/${projectId}/render/final`,
@@ -1063,13 +1097,17 @@ export default function StoryPreviewPage() {
             subtitles={subtitleSegments}
             showSubtitles={showSubtitles}
             subtitleStyle={draft?.subtitleStyle}
-            subtitlePosition={draft?.subtitlePosition ?? { x: 50, y: 85 }}
+            subtitlePosition={draft?.subtitlePosition ?? { x: 50, y: 50 }}
             onSubtitlePositionChange={(position) => {
               updateDraft({ subtitlePosition: position });
             }}
             subtitleFontSize={draft?.subtitleFontSize ?? 100}
             onSubtitleFontSizeChange={(size) => {
               updateDraft({ subtitleFontSize: size });
+            }}
+            subtitleFontFamily={draft?.subtitleFontFamily || 'bebas-neue'}
+            onSubtitleFontFamilyChange={(font) => {
+              updateDraft({ subtitleFontFamily: font });
             }}
             playbackRate={draft?.playbackRate ?? 1}
             onPlaybackRateChange={handlePlaybackRateChange}
@@ -1081,6 +1119,7 @@ export default function StoryPreviewPage() {
             mergedAudioUrl={draft?.mergedAudioUrl || null}
             mergedDurationMs={draft?.mergedDurationMs || draft?.audioTotalDurationMs}
             backgroundVideoUrl={draft?.backgroundId ? getBackgroundVideoUrl(draft.backgroundId) : null}
+            redditTitle={draft?.redditTitle}
           />
           
           {/* Beta Notice for Subtitles */}
@@ -1152,6 +1191,20 @@ export default function StoryPreviewPage() {
                   fontSize={draft?.subtitleFontSize || 100}
                   onFontSizeChange={(size) => {
                     updateDraft({ subtitleFontSize: size });
+                  }}
+                  fontFamily={draft?.subtitleFontFamily || 'bebas-neue'}
+                  onFontFamilyChange={(font) => {
+                    updateDraft({ subtitleFontFamily: font });
+                    const fontNames: Record<string, string> = {
+                      'bebas-neue': 'Bebas Neue',
+                      'impact': 'Impact',
+                      'montserrat': 'Montserrat',
+                      'poppins': 'Poppins',
+                      'futura': 'Futura',
+                      'roboto': 'Roboto',
+                      'inter': 'Inter',
+                    };
+                    toast.success(`Font: ${fontNames[font] || 'Bebas Neue'}`);
                   }}
                   singleLine={draft?.subtitleSingleLine ?? false}
                   onSingleLineChange={(v) => {
