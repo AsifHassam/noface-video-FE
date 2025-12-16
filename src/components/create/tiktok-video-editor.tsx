@@ -24,7 +24,7 @@ import {
 import type { TextOverlay, TextOverlayStyle, RenderStatus, SubtitleSegment, SubtitleStyle, SubtitlePosition, SubtitleFontFamily, ImageOverlay, Character, CharacterSizes, CharacterPositions } from "@/types";
 import { cn } from "@/lib/utils";
 import { v4 as uuid } from "uuid";
-import { getSubtitleStyle, OUTLINED_STYLE, STYLE_3D_POP, STYLE_STROKE_THICK } from "@/lib/data/subtitle-styles";
+import { getSubtitleStyle, OUTLINED_STYLE, STYLE_KARAOKE_PINK, STYLE_MAGIC_LOOPS, STYLE_BOLD_GREEN } from "@/lib/data/subtitle-styles";
 import Image from "next/image";
 import { RedditPostOverlay } from "./reddit-post-overlay";
 
@@ -45,6 +45,8 @@ type TikTokVideoEditorProps = {
   onSubtitleFontSizeChange?: (size: number) => void;
   subtitleFontFamily?: SubtitleFontFamily;
   onSubtitleFontFamilyChange?: (font: SubtitleFontFamily) => void;
+  karaokePillColor?: string;
+  boldGreenColor?: string;
   playbackRate?: number;
   onPlaybackRateChange?: (rate: number) => void;
   // Single-line preview controls
@@ -191,13 +193,15 @@ export const TikTokVideoEditor = ({
   onImageOverlaysChange,
   subtitles = [],
   showSubtitles = true,
-  subtitleStyle = "karaoke",
+  subtitleStyle = "outlined",
   subtitlePosition = { x: 50, y: 85 },
   onSubtitlePositionChange,
   subtitleFontSize = 100,
   onSubtitleFontSizeChange,
   subtitleFontFamily = 'bebas-neue',
   onSubtitleFontFamilyChange,
+  karaokePillColor = '#E96BA8',
+  boldGreenColor = '#63E443',
   playbackRate: externalPlaybackRate,
   onPlaybackRateChange,
   subtitleSingleLine = false,
@@ -2319,13 +2323,12 @@ export const TikTokVideoEditor = ({
                   getSubtitleStyle(subtitleStyle).className
                     .replace(/text-(xs|sm|base|lg|xl|2xl|3xl|4xl|5xl|6xl|7xl|8xl|9xl)/g, '')
                     .replace(/font-(sans|serif|mono|black|bold|semibold|medium|normal|light|thin|extralight)/g, ''),
-                  "break-words text-center w-full"
+                  subtitleStyle === 'magic-loops' ? "text-center w-full" : "break-words text-center w-full"
                 )}
                 style={{
                   fontSize: `${subtitleFontSize / 100 * 24}px`,
-                  wordWrap: 'break-word',
-                  overflowWrap: 'break-word',
-                  lineHeight: '1.2',
+                  wordWrap: subtitleStyle === 'magic-loops' ? 'normal' : 'break-word',
+                  overflowWrap: subtitleStyle === 'magic-loops' ? 'normal' : 'break-word',
                   textAlign: 'center',
                   fontFamily: subtitleFontFamily === 'impact' ? 'var(--font-impact)' :
                              subtitleFontFamily === 'montserrat' ? 'var(--font-montserrat)' :
@@ -2333,51 +2336,218 @@ export const TikTokVideoEditor = ({
                              subtitleFontFamily === 'futura' ? 'var(--font-futura)' :
                              subtitleFontFamily === 'roboto' ? 'var(--font-roboto)' :
                              subtitleFontFamily === 'inter' ? 'var(--font-inter)' :
+                       subtitleFontFamily === 'zy-resolve' ? 'var(--font-zy-resolve)' :
                              'var(--font-bebas-neue), Arial Black, Arial, sans-serif',
                   ...(subtitleStyle === "outlined"
                     ? OUTLINED_STYLE
                     : subtitleStyle === "elegant"
-                    ? { textShadow: '-5px -5px 0 #000, 5px -5px 0 #000, -5px 5px 0 #000, 5px 5px 0 #000' }
-                    : subtitleStyle === "3d-pop"
-                    ? STYLE_3D_POP
-                    : subtitleStyle === "stroke-thick"
-                    ? STYLE_STROKE_THICK
+                    ? { WebkitTextStroke: '4px #000000', paintOrder: 'stroke fill', textShadow: '0px 2px 4px rgba(0,0,0,0.3)' }
+                    : subtitleStyle === "karaoke-pink"
+                    ? STYLE_KARAOKE_PINK
+                    : subtitleStyle === "magic-loops"
+                    ? { ...STYLE_MAGIC_LOOPS, display: 'flex' as const, flexDirection: 'column' as const, alignItems: 'center' as const, textTransform: 'uppercase' as const, whiteSpace: 'normal' as const }
+                    : subtitleStyle === "bold-green"
+                    ? { ...STYLE_BOLD_GREEN, textTransform: 'uppercase' as const }
                     : {})
                 }}
               >
                 {(() => {
+                  // Optimized: For non-single-line mode, just render text directly (faster)
+                  if (!subtitleSingleLine) {
+                    if (subtitleStyle === 'karaoke-pink') {
                   const words = activeSubtitle.text.split(' ').filter(Boolean);
-                  if (!subtitleSingleLine || words.length === 0) {
-                    // Non single-line: simple preview (keep style)
-                    if (subtitleStyle === 'karaoke') {
                       const middleIndex = Math.floor(words.length / 2);
                       return words.map((word, idx) => (
                         <span
                           key={idx}
-                          className={idx === middleIndex ? "bg-yellow-300 text-black px-2 py-1 rounded-md mx-1" : "mx-1"}
+                          style={{
+                            color: '#FFFFFF',
+                            WebkitTextStroke: '2.5px #000000',
+                            paintOrder: 'stroke fill',
+                            marginRight: '2px',
+                            display: 'inline-block',
+                            transition: 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.2s ease-out',
+                            ...(idx === middleIndex ? {
+                              backgroundColor: karaokePillColor,
+                              padding: '4px 4px',
+                              borderRadius: '6px',
+                              transform: 'scale(1.12)',
+                            } : {})
+                          }}
                         >
                           {word}
                         </span>
                       ));
                     }
+                    if (subtitleStyle === 'magic-loops') {
+                      const words = activeSubtitle.text.split(' ').filter(Boolean);
+                      
+                      // Calculate which word is active (middle word of all words)
+                      const middleIndex = Math.floor(words.length / 2);
+                      
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
+                          {words.map((word, wordIndex) => {
+                            const isActive = wordIndex === middleIndex;
+                            return (
+                              <div 
+                                key={wordIndex}
+                                style={{ 
+                                  display: 'flex', 
+                                  justifyContent: 'center', 
+                                  alignItems: 'center',
+                                  width: '100%', 
+                                  marginBottom: '0px',
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    color: isActive ? '#6CE846' : '#FFFFFF',
+                                    WebkitTextStroke: '2.5px #000000',
+                                    paintOrder: 'stroke fill',
+                                    display: 'inline-block',
+                                    whiteSpace: 'nowrap',
+                                    flexShrink: 0,
+                                    transition: 'color 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                                    transform: isActive ? 'scale(1.3)' : 'scale(1)',
+                                    transformOrigin: 'center center',
+                                    verticalAlign: 'baseline',
+                                  }}
+                                >
+                                  {word}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    }
+                    if (subtitleStyle === 'bold-green') {
+                      const words = activeSubtitle.text.split(' ').filter(Boolean);
+                      const middleIndex = Math.floor(words.length / 2);
+                      
+                      return (
+                        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', gap: '10px', flexWrap: 'wrap' }}>
+                          {words.map((word, idx) => {
+                            const isActive = idx === middleIndex;
+                            return (
+                              <span
+                                key={idx}
+                                style={{
+                                  color: isActive ? boldGreenColor : '#FFFFFF',
+                                  WebkitTextStroke: '2.5px #000000',
+                                  paintOrder: 'stroke fill',
+                                  display: 'inline-block',
+                                  whiteSpace: 'nowrap',
+                                  transition: 'color 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                                  textShadow: '2px 2px 0px #000000',
+                                  fontWeight: '900',
+                                  textTransform: 'uppercase',
+                                  letterSpacing: '0.2px',
+                                  lineHeight: '1.0',
+                                  WebkitFontSmoothing: 'antialiased',
+                                  MozOsxFontSmoothing: 'grayscale',
+                                  fontFamily: subtitleFontFamily === 'impact' ? 'var(--font-impact)' :
+                                             subtitleFontFamily === 'montserrat' ? 'var(--font-montserrat)' :
+                                             subtitleFontFamily === 'poppins' ? 'var(--font-poppins)' :
+                                             subtitleFontFamily === 'futura' ? 'var(--font-futura)' :
+                                             subtitleFontFamily === 'roboto' ? 'var(--font-roboto)' :
+                                             subtitleFontFamily === 'inter' ? 'var(--font-inter)' :
+                                             subtitleFontFamily === 'zy-resolve' ? 'var(--font-zy-resolve)' :
+                                             subtitleFontFamily === 'bebas-neue' ? 'var(--font-bebas-neue)' :
+                                             'var(--font-bebas-neue), Arial Black, Arial, sans-serif',
+                                }}
+                              >
+                                {word}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      );
+                    }
+                    // For CapCut and other styles, just render the text directly
                     return activeSubtitle.text;
                   }
                   
-                  // Single-line preview: compute current word index based on time
+                  // Single-line mode: compute current word index based on time
+                  const words = activeSubtitle.text.split(' ').filter(Boolean);
+                  if (words.length === 0) return '';
+                  
                   const segmentDuration = Math.max(activeSubtitle.endMs - activeSubtitle.startMs, 1);
                   const progress = Math.max(0, Math.min(1, (currentTimeMs - activeSubtitle.startMs) / segmentDuration));
                   const currentWordIndex = Math.max(0, Math.min(words.length - 1, Math.floor(progress * words.length)));
                   
-                  // Only apply Karaoke highlighting if style is 'karaoke'
-                  const isKaraokeStyle = subtitleStyle === 'karaoke';
+                  // Apply Karaoke highlighting for karaoke styles
+                  const isKaraokePinkStyle = subtitleStyle === 'karaoke-pink';
+                  const isMagicLoopsStyle = subtitleStyle === 'magic-loops';
+                  const isOutlinedStyle = subtitleStyle === 'outlined';
+                  const isElegantStyle = subtitleStyle === 'elegant';
+                  const isBoldGreenStyle = subtitleStyle === 'bold-green';
                   
                   if (subtitleSingleWord) {
                     const currentWord = words[currentWordIndex] ?? '';
                     return (
-                      <span className={cn(
-                        "mx-1",
-                        isKaraokeStyle ? "bg-yellow-300 text-black px-2 py-1 rounded-md" : ""
-                      )}>
+                      <span 
+                        key={`word-${currentWordIndex}-${currentWord}`}
+                        className="mx-1"
+                        style={{
+                          ...(isKaraokePinkStyle ? {
+                            color: '#FFFFFF',
+                            WebkitTextStroke: '2.5px #000000',
+                            paintOrder: 'stroke fill',
+                            backgroundColor: karaokePillColor,
+                            padding: '4px 4px',
+                            borderRadius: '6px',
+                            marginRight: '2px',
+                            display: 'inline-block',
+                            transition: 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.2s ease-out',
+                            transform: 'scale(1.12)',
+                          } : {}),
+                          ...(isMagicLoopsStyle ? {
+                            color: '#6CE846',
+                            WebkitTextStroke: '2.5px #000000',
+                            paintOrder: 'stroke fill',
+                            marginRight: '0px',
+                            display: 'inline-block',
+                            transition: 'color 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                            transform: 'scale(1.3)',
+                            transformOrigin: 'center center',
+                            verticalAlign: 'baseline',
+                          } : {}),
+                          ...(isOutlinedStyle ? {
+                            display: 'inline-block',
+                            animation: 'popInOut 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                            transformOrigin: 'center center',
+                          } : {}),
+                          ...(isElegantStyle ? {
+                            display: 'inline-block',
+                            animation: 'popInOut 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                            transformOrigin: 'center center',
+                          } : {}),
+                          ...(isBoldGreenStyle ? {
+                            color: boldGreenColor,
+                            WebkitTextStroke: '2.5px #000000',
+                            paintOrder: 'stroke fill',
+                            display: 'inline-block',
+                            textShadow: '2px 2px 0px #000000',
+                            fontWeight: '900',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.2px',
+                            lineHeight: '1.0',
+                            WebkitFontSmoothing: 'antialiased',
+                            MozOsxFontSmoothing: 'grayscale',
+                            fontFamily: subtitleFontFamily === 'impact' ? 'var(--font-impact)' :
+                                       subtitleFontFamily === 'montserrat' ? 'var(--font-montserrat)' :
+                                       subtitleFontFamily === 'poppins' ? 'var(--font-poppins)' :
+                                       subtitleFontFamily === 'futura' ? 'var(--font-futura)' :
+                                       subtitleFontFamily === 'roboto' ? 'var(--font-roboto)' :
+                                       subtitleFontFamily === 'inter' ? 'var(--font-inter)' :
+                                       subtitleFontFamily === 'zy-resolve' ? 'var(--font-zy-resolve)' :
+                                       subtitleFontFamily === 'bebas-neue' ? 'var(--font-bebas-neue)' :
+                                       'var(--font-bebas-neue), Arial Black, Arial, sans-serif',
+                          } : {})
+                        }}
+                      >
                         {currentWord}
                       </span>
                     );
@@ -2387,16 +2557,104 @@ export const TikTokVideoEditor = ({
                   const chunkStart = Math.floor(currentWordIndex / 3) * 3;
                   const from = chunkStart;
                   const to = Math.min(words.length - 1, chunkStart + 2);
-                  return words.slice(from, to + 1).map((word, i) => {
+                  const chunkWords = words.slice(from, to + 1);
+                  
+                  // Magic Loops: render 3-word chunk vertically stacked
+                  if (isMagicLoopsStyle) {
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
+                        {chunkWords.map((word, i) => {
+                          const idx = from + i;
+                          const isActive = idx === currentWordIndex;
+                          return (
+                            <div 
+                              key={idx}
+                              style={{ 
+                                display: 'flex', 
+                                justifyContent: 'center', 
+                                alignItems: 'center',
+                                width: '100%', 
+                                marginBottom: '0px',
+                              }}
+                            >
+                              <span
+                                style={{
+                                  color: isActive ? '#6CE846' : '#FFFFFF',
+                                  WebkitTextStroke: '5px #000000',
+                                  paintOrder: 'stroke fill',
+                                  display: 'inline-block',
+                                  whiteSpace: 'nowrap',
+                                  flexShrink: 0,
+                                  textShadow: `-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0px 2px 4px rgba(0,0,0,0.40)`,
+                                  fontWeight: '800',
+                                  textTransform: 'uppercase',
+                                  letterSpacing: '0.4px',
+                                  lineHeight: '1.05',
+                                  WebkitFontSmoothing: 'antialiased',
+                                  MozOsxFontSmoothing: 'grayscale',
+                                  transform: isActive ? 'scale(1.3)' : 'scale(1)',
+                                  transformOrigin: 'center center',
+                                  verticalAlign: 'baseline',
+                                  transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                                  fontFamily: subtitleFontFamily === 'impact' ? 'var(--font-impact)' :
+                                             subtitleFontFamily === 'montserrat' ? 'var(--font-montserrat)' :
+                                             subtitleFontFamily === 'poppins' ? 'var(--font-poppins)' :
+                                             subtitleFontFamily === 'futura' ? 'var(--font-futura)' :
+                                             subtitleFontFamily === 'roboto' ? 'var(--font-roboto)' :
+                                             subtitleFontFamily === 'inter' ? 'var(--font-inter)' :
+                                             subtitleFontFamily === 'zy-resolve' ? 'var(--font-zy-resolve)' :
+                                             subtitleFontFamily === 'bebas-neue' ? 'var(--font-bebas-neue)' :
+                                             'var(--font-bebas-neue), Arial Black, Arial, sans-serif',
+                                }}
+                              >
+                                {word}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  }
+                  
+                  return chunkWords.map((word, i) => {
                     const idx = from + i;
                     const isActive = idx === currentWordIndex;
                     return (
                       <span
-                        key={idx}
-                        className={cn(
-                          "mx-1 px-1 rounded-md",
-                          isKaraokeStyle && isActive ? "bg-yellow-300 text-black" : ""
-                        )}
+                        key={`chunk-${idx}-${word}-${isActive}`}
+                        className="px-1"
+                        style={{
+                          color: isKaraokePinkStyle ? '#FFFFFF' : isBoldGreenStyle ? (isActive ? boldGreenColor : '#FFFFFF') : undefined,
+                          WebkitTextStroke: isKaraokePinkStyle ? '2.5px #000000' : isBoldGreenStyle ? '2.5px #000000' : undefined,
+                          paintOrder: (isKaraokePinkStyle || isBoldGreenStyle) ? 'stroke fill' : undefined,
+                          marginRight: (isKaraokePinkStyle || isBoldGreenStyle) ? (isBoldGreenStyle ? '10px' : '2px') : undefined,
+                          display: (isKaraokePinkStyle || isOutlinedStyle || isElegantStyle || isBoldGreenStyle) ? 'inline-block' : undefined,
+                          transition: isKaraokePinkStyle ? 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.2s ease-out' : isBoldGreenStyle ? 'color 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)' : undefined,
+                          ...(isKaraokePinkStyle && isActive ? {
+                            backgroundColor: karaokePillColor,
+                            padding: '4px 4px',
+                            borderRadius: '6px',
+                            transform: 'scale(1.12)',
+                          } : {}),
+                          ...(isBoldGreenStyle ? {
+                            textShadow: '2px 2px 0px #000000',
+                            fontWeight: '900',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.2px',
+                            lineHeight: '1.0',
+                            WebkitFontSmoothing: 'antialiased',
+                            MozOsxFontSmoothing: 'grayscale',
+                            fontFamily: subtitleFontFamily === 'impact' ? 'var(--font-impact)' :
+                                       subtitleFontFamily === 'montserrat' ? 'var(--font-montserrat)' :
+                                       subtitleFontFamily === 'poppins' ? 'var(--font-poppins)' :
+                                       subtitleFontFamily === 'futura' ? 'var(--font-futura)' :
+                                       subtitleFontFamily === 'roboto' ? 'var(--font-roboto)' :
+                                       subtitleFontFamily === 'inter' ? 'var(--font-inter)' :
+                                       subtitleFontFamily === 'zy-resolve' ? 'var(--font-zy-resolve)' :
+                                       subtitleFontFamily === 'bebas-neue' ? 'var(--font-bebas-neue)' :
+                                       'var(--font-bebas-neue), Arial Black, Arial, sans-serif',
+                          } : {})
+                        }}
                       >
                         {word}
                       </span>

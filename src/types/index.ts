@@ -114,25 +114,13 @@ export type SubtitlePosition = {
 };
 
 export type SubtitleStyle =
-  | "classic"
-  | "bold-pop"
-  | "neon-glow"
+  | "magic-loops"
   | "outlined"
-  | "minimal"
-  | "boxed"
-  | "karaoke"
-  | "typewriter"
-  | "retro"
-  | "bubble"
-  | "highlight"
-  | "3d-pop"
-  | "shadow-deep"
-  | "stroke-thick"
-  | "comic"
   | "elegant"
-  | "gaming";
+  | "bold-green"
+  | "karaoke-pink";
 
-export type SubtitleFontFamily = 'bebas-neue' | 'impact' | 'montserrat' | 'poppins' | 'futura' | 'roboto' | 'inter';
+export type SubtitleFontFamily = 'bebas-neue' | 'impact' | 'montserrat' | 'poppins' | 'futura' | 'roboto' | 'inter' | 'zy-resolve';
 
 export type CharacterPosition = 'left' | 'center' | 'right';
 

@@ -260,7 +260,7 @@ export default function PreviewPage() {
         description,
         projectType: draft.type || "TWO_CHAR_CONVO",
         backgroundId: draft.backgroundId,
-        subtitleStyle: draft.subtitleStyle || "karaoke",
+        subtitleStyle: draft.subtitleStyle || "bold-green",
         subtitlePosition: draft.subtitlePosition,
         subtitleFontSize: draft.subtitleFontSize,
         textOverlays: draft.textOverlays || [],
@@ -578,12 +578,13 @@ export default function PreviewPage() {
               updateDraft({ subtitleFontSize: size });
               }
             }}
-            subtitleFontFamily={draft?.subtitleFontFamily || 'bebas-neue'}
+            subtitleFontFamily={draft?.subtitleFontFamily || 'zy-resolve'}
             onSubtitleFontFamilyChange={(font) => {
               if (!isInitialState) {
               updateDraft({ subtitleFontFamily: font });
               }
             }}
+            karaokePillColor={draft?.karaokePillColor || '#E96BA8'}
             playbackRate={draft?.playbackRate ?? 1}
             onPlaybackRateChange={(rate) => {
               if (!isInitialState) {
@@ -738,7 +739,7 @@ export default function PreviewPage() {
               </div>
               <div className="space-y-4">
                 <SubtitleStyleSelector
-                  value={draft?.subtitleStyle || "karaoke"}
+                  value={draft?.subtitleStyle || "bold-green"}
                   onChange={(style) => {
                     if (!isInitialState) {
                     updateDraft({ subtitleStyle: style });
@@ -763,6 +764,7 @@ export default function PreviewPage() {
                       'futura': 'Futura',
                       'roboto': 'Roboto',
                       'inter': 'Inter',
+                      'zy-resolve': 'ZY Resolve',
                     };
                     toast.success(`Font: ${fontNames[font] || 'Bebas Neue'}`);
                     }
@@ -777,6 +779,18 @@ export default function PreviewPage() {
                   onSingleWordChange={(v) => {
                     if (!isInitialState) {
                     updateDraft({ subtitleSingleWord: v });
+                    }
+                  }}
+                  karaokePillColor={draft?.karaokePillColor || '#E96BA8'}
+                  onKaraokePillColorChange={(color) => {
+                    if (!isInitialState) {
+                    updateDraft({ karaokePillColor: color });
+                    }
+                  }}
+                  boldGreenColor={draft?.boldGreenColor || '#63E443'}
+                  onBoldGreenColorChange={(color) => {
+                    if (!isInitialState) {
+                    updateDraft({ boldGreenColor: color });
                     }
                   }}
                 />

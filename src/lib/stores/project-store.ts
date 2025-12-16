@@ -49,6 +49,8 @@ type DraftProject = {
   subtitleFontFamily?: SubtitleFontFamily;
   subtitleSingleLine?: boolean;
   subtitleSingleWord?: boolean;
+  karaokePillColor?: string; // Color for karaoke-pink style pill highlight
+  boldGreenColor?: string; // Color for bold-green style accent word
   characterSizes?: CharacterSizes;
   characterPositions?: CharacterPositions;
   characterCustomPositions?: Record<string, { x: number; y: number }>;
@@ -119,11 +121,14 @@ const initialDraft = (): DraftProject => ({
   finalUrl: null,
   durationSec: null,
   subtitleEnabled: true,
-  subtitleStyle: "karaoke",
+  subtitleStyle: "bold-green",
   subtitlePosition: { x: 50, y: 85 }, // Lower position to avoid cutting off
   subtitleFontSize: 100,
+  subtitleFontFamily: "zy-resolve",
   subtitleSingleLine: true,  // Default to 3-word subtitle mode
   subtitleSingleWord: false,
+  karaokePillColor: '#E96BA8', // Default pink color for karaoke-pink style
+  boldGreenColor: '#63E443', // Default green color for bold-green style accent word
   characterSizes: {
     Peter: { width: 320, height: 400 },
     Stewie: { width: 280, height: 360 },
@@ -731,13 +736,16 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
 
       // Extract subtitle settings from metadata (reusing projectMetadata)
       const metadata = projectMetadata;
-      const subtitleStyle = metadata.subtitleStyle || "karaoke";
+      const subtitleStyle = metadata.subtitleStyle || "bold-green";
       // Use centered position (y: 50) for story type, lower position (y: 85) for two-char conversations
       const defaultSubtitleY = (projectType === "story" || projectType === "STORY_NARRATION" || projectType === "NORMAL_STORY" || projectType === "REDDIT_STORY") ? 50 : 85;
       const subtitlePosition = metadata.subtitlePosition || { x: 50, y: defaultSubtitleY };
       const subtitleFontSize = metadata.subtitleFontSize || 100;
+      const subtitleFontFamily = metadata.subtitleFontFamily || "zy-resolve";
       const subtitleSingleLine = metadata.subtitleSingleLine !== undefined ? metadata.subtitleSingleLine : true;  // Default to 3-word mode
       const subtitleSingleWord = metadata.subtitleSingleWord || false;
+      const karaokePillColor = metadata.karaokePillColor || '#E96BA8';
+      const boldGreenColor = metadata.boldGreenColor || '#63E443';
       const subtitleEnabled = metadata.subtitleEnabled !== undefined ? metadata.subtitleEnabled : true;
       const playbackRate = metadata.playbackRate || 1;
       const characterSizes = metadata.characterSizes || {
@@ -815,6 +823,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         subtitleStyle: subtitleStyle,
         subtitlePosition: subtitlePosition,
         subtitleFontSize: subtitleFontSize,
+        subtitleFontFamily: subtitleFontFamily,
         subtitleSingleLine: subtitleSingleLine,
         subtitleSingleWord: subtitleSingleWord,
         playbackRate: playbackRate,
@@ -1085,6 +1094,8 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           fontFamily: draft.subtitleFontFamily || 'bebas-neue',
           singleLine: draft.subtitleSingleLine ?? true,  // Default to 3-word mode
           singleWord: draft.subtitleSingleWord ?? false,
+          karaokePillColor: draft.karaokePillColor || '#E96BA8',
+          boldGreenColor: draft.boldGreenColor || '#63E443',
         },
         srtText: draft.srtText,
         imageOverlays: draft.imageOverlays,

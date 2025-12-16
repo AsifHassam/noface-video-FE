@@ -550,23 +550,35 @@ export default function StoryPreviewPage() {
 
       // Verify project exists in database before calling final render
       console.log("🔍 Verifying project exists in database:", projectId);
+      console.log("🌐 Using server URL:", config.remotionServerUrl);
       try {
-        const verifyResponse = await fetch(
-          `${config.remotionServerUrl}/api/projects/${projectId}`,
-          {
+        const verifyUrl = `${config.remotionServerUrl}/api/projects/${projectId}`;
+        console.log("🔗 Fetching:", verifyUrl);
+        
+        const verifyResponse = await fetch(verifyUrl, {
             method: "GET",
             headers: {
               "Authorization": `Bearer ${token}`,
             },
-          }
+        }).catch((fetchError) => {
+          console.error("❌ Fetch error:", fetchError);
+          console.error("   Error message:", fetchError.message);
+          console.error("   Error name:", fetchError.name);
+          console.error("   Server URL:", config.remotionServerUrl);
+          throw new Error(
+            `Failed to connect to server at ${config.remotionServerUrl}. ` +
+            `Make sure the server is running. Error: ${fetchError.message}`
         );
+        });
         
         if (!verifyResponse.ok) {
           console.error("❌ Project verification failed:", verifyResponse.status);
+          const errorText = await verifyResponse.text().catch(() => '');
+          console.error("   Response body:", errorText);
           if (verifyResponse.status === 404) {
             throw new Error("Project not found in database. Please generate a preview first and wait for it to complete.");
           }
-          throw new Error(`Failed to verify project: ${verifyResponse.status}`);
+          throw new Error(`Failed to verify project: ${verifyResponse.status} - ${errorText}`);
         }
         
         const projectData = await verifyResponse.json();
@@ -617,12 +629,14 @@ export default function StoryPreviewPage() {
         script: narrationLines.join("\n"),
         backgroundId: draft.backgroundId || "mine_2_cfr",
         subtitleCustomizations: {
-          style: draft.subtitleStyle || "karaoke",
+          style: draft.subtitleStyle || "bold-green",
           position: draft.subtitlePosition || { x: 50, y: 50 },
           fontSize: draft.subtitleFontSize || 100,
-          fontFamily: draft.subtitleFontFamily || 'bebas-neue',
+          fontFamily: draft.subtitleFontFamily || 'zy-resolve',
           singleLine: draft.subtitleSingleLine ?? false,
           singleWord: draft.subtitleSingleWord ?? false,
+          karaokePillColor: draft.karaokePillColor || '#E96BA8',
+          boldGreenColor: draft.boldGreenColor || '#63E443',
         },
         srtText: subtitleText,
         playbackRate: playbackRate, // Send playback rate for final render
@@ -791,7 +805,7 @@ export default function StoryPreviewPage() {
         description,
         projectType: draft.type || "story",
         backgroundId: draft.backgroundId,
-        subtitleStyle: draft.subtitleStyle || "karaoke",
+        subtitleStyle: draft.subtitleStyle || "bold-green",
         subtitlePosition: draft.subtitlePosition,
         subtitleFontSize: draft.subtitleFontSize,
         textOverlays: draft.textOverlays || [],
@@ -1105,10 +1119,12 @@ export default function StoryPreviewPage() {
             onSubtitleFontSizeChange={(size) => {
               updateDraft({ subtitleFontSize: size });
             }}
-            subtitleFontFamily={draft?.subtitleFontFamily || 'bebas-neue'}
+            subtitleFontFamily={draft?.subtitleFontFamily || 'zy-resolve'}
             onSubtitleFontFamilyChange={(font) => {
               updateDraft({ subtitleFontFamily: font });
             }}
+            karaokePillColor={draft?.karaokePillColor || '#E96BA8'}
+            boldGreenColor={draft?.boldGreenColor || '#63E443'}
             playbackRate={draft?.playbackRate ?? 1}
             onPlaybackRateChange={handlePlaybackRateChange}
             subtitleSingleLine={draft?.subtitleSingleLine ?? false}
@@ -1183,7 +1199,7 @@ export default function StoryPreviewPage() {
               </div>
               <div className="space-y-4">
                 <SubtitleStyleSelector
-                  value={draft?.subtitleStyle || "karaoke"}
+                  value={draft?.subtitleStyle || "bold-green"}
                   onChange={(style) => {
                     updateDraft({ subtitleStyle: style });
                     toast.success(`Subtitle style: ${style.replace("-", " ")}`);
@@ -1203,6 +1219,7 @@ export default function StoryPreviewPage() {
                       'futura': 'Futura',
                       'roboto': 'Roboto',
                       'inter': 'Inter',
+                      'zy-resolve': 'ZY Resolve',
                     };
                     toast.success(`Font: ${fontNames[font] || 'Bebas Neue'}`);
                   }}
@@ -1213,6 +1230,14 @@ export default function StoryPreviewPage() {
                   singleWord={draft?.subtitleSingleWord ?? false}
                   onSingleWordChange={(v) => {
                     updateDraft({ subtitleSingleWord: v });
+                  }}
+                  karaokePillColor={draft?.karaokePillColor || '#E96BA8'}
+                  onKaraokePillColorChange={(color) => {
+                    updateDraft({ karaokePillColor: color });
+                  }}
+                  boldGreenColor={draft?.boldGreenColor || '#63E443'}
+                  onBoldGreenColorChange={(color) => {
+                    updateDraft({ boldGreenColor: color });
                   }}
                 />
               </div>

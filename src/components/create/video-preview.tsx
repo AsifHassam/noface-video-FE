@@ -57,7 +57,7 @@ const SubtitleRenderer = ({
           className={cn(style.className)}
           style={{
             ...(isOutlined ? OUTLINED_STYLE : {}),
-            ...(styleId === "elegant" ? { textShadow: '-5px -5px 0 #000, 5px -5px 0 #000, -5px 5px 0 #000, 5px 5px 0 #000' } : {}),
+            ...(styleId === "elegant" ? { WebkitTextStroke: '4px #000000', paintOrder: 'stroke fill', textShadow: '0px 2px 4px rgba(0,0,0,0.3)' } : {}),
             fontFamily: fontFamily === 'impact' ? 'var(--font-impact)' :
                        fontFamily === 'montserrat' ? 'var(--font-montserrat)' :
                        fontFamily === 'poppins' ? 'var(--font-poppins)' :
@@ -176,7 +176,7 @@ export const VideoPreview = ({
   subtitles,
   showSubtitles,
   onToggleSubtitles,
-  subtitleStyle = "karaoke",
+  subtitleStyle = "outlined",
   subtitleFontFamily = 'bebas-neue',
 }: VideoPreviewProps) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);

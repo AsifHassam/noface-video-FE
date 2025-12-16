@@ -9,12 +9,13 @@
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-bebas-neue: var(--font-bebas-neue);
-  --font-impact: Impact, "Arial Black", Arial, sans-serif;
+  --font-impact: var(--font-impact);
   --font-montserrat: var(--font-montserrat);
   --font-poppins: var(--font-poppins);
-  --font-futura: Futura, "Futura-Medium", "Futura Medium", "Trebuchet MS", Arial, sans-serif;
+  --font-futura: var(--font-futura);
   --font-roboto: var(--font-roboto);
   --font-inter: var(--font-sans);
+  --font-zy-resolve: "ZY Resolve", "Arial Black", Arial, sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -139,4 +140,51 @@
 
 .animate-glow {
   animation: glow 2s ease-in-out infinite;
+}
+
+@keyframes popInOut {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}
+
+@keyframes chunkEnter {
+  0% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes chunkExit {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+}
+
+/* ZY Resolve font - Update the src path to point to your font file */
+@font-face {
+  font-family: 'ZY Resolve';
+  src: url('/fonts/ZYResolve.woff2') format('woff2'),
+       url('/fonts/ZYResolve.woff') format('woff'),
+       url('/fonts/ZYResolve.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
 }
