@@ -18,11 +18,18 @@ type AuthState = {
   initialize: () => Promise<void>;
 };
 
+let authListenerInitialized = false;
+
 export const useAuthStore = create<AuthState>()((set, get) => ({
   user: null,
   loading: true,
 
   async initialize() {
+    // Prevent multiple initializations
+    if (authListenerInitialized && !get().loading) {
+      return;
+    }
+
     try {
       // Get current session
       const {
@@ -49,6 +56,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         set({ user: null, loading: false });
       }
 
+      // Only set up listener once
+      if (!authListenerInitialized) {
+        authListenerInitialized = true;
       // Listen for auth changes
       supabase.auth.onAuthStateChange(async (event, session) => {
         if (session?.user) {
@@ -71,6 +81,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
           set({ user: null, loading: false });
         }
       });
+      }
     } catch (error) {
       console.error("Error initializing auth:", error);
       set({ user: null, loading: false });
@@ -98,6 +109,13 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   async signOut() {
     await supabase.auth.signOut();
+    // Clear token cache on sign out
+    try {
+      const { clearCachedToken } = await import('@/lib/utils/token-cache');
+      clearCachedToken();
+    } catch (e) {
+      // Ignore if token-cache module not available
+    }
     set({ user: null, loading: false });
   },
 }));

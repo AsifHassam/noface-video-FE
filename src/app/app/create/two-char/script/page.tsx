@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { parseScriptInput, scriptSchema } from "@/lib/validators/script-schema";
+import { subscriptionApi } from "@/lib/api/subscription";
 import { toast } from "sonner";
 
 const steps = [
@@ -20,6 +21,8 @@ const steps = [
 export default function ScriptPage() {
   const router = useRouter();
   const { draft, updateDraft } = useProjectStore();
+  const { user } = useAuthStore();
+  const [userCredits, setUserCredits] = useState<number | null>(null);
 
   useEffect(() => {
     if (!draft?.characters?.A || !draft?.characters?.B) {
@@ -64,6 +67,41 @@ export default function ScriptPage() {
     };
   }, [text, nameA, nameB]);
 
+  // Load user credits
+  useEffect(() => {
+    const loadUserCredits = async () => {
+      if (!user?.id) {
+        setUserCredits(null);
+        return;
+      }
+      
+      try {
+        const result = await subscriptionApi.getSubscriptionInfo();
+        setUserCredits(result.subscription.credits || 0);
+      } catch (error) {
+        console.error("Error loading user credits:", error);
+        setUserCredits(null);
+      }
+    };
+
+    loadUserCredits();
+  }, [user?.id]);
+
+  // Calculate estimated credits (Flash model: 0.2 credits/second)
+  const estimatedCredits = useMemo(() => {
+    if (!text || text.trim().length === 0) return 0;
+
+    // Estimate duration: average speaking rate is ~150 words per minute = 2.5 words per second
+    const words = text.trim().split(/\s+/).length;
+    const estimatedSeconds = words / 2.5;
+    
+    // Flash model rate: 0.2 credits/second
+    const creditRate = 0.2;
+    const estimatedCredits = estimatedSeconds * creditRate;
+    
+    return Math.max(0.01, estimatedCredits); // Minimum 0.01 credits
+  }, [text]);
+
 
   const handleChange = (value: string) => {
     setText(value);
@@ -104,6 +142,8 @@ export default function ScriptPage() {
           onUseSample={handleSample}
           onClear={handleClear}
           characterNames={{ A: nameA, B: nameB }}
+          estimatedCredits={estimatedCredits}
+          userCredits={userCredits}
         />
         <div className="flex justify-end gap-3">
           <Button variant="ghost" className="rounded-2xl" onClick={() => router.push("/app/create/two-char/characters")}>

@@ -1,61 +1,39 @@
 import { supabase } from '@/lib/supabase';
 import { config } from '@/lib/config';
 import type { Project, VideoTemplate } from '@/types';
+import { getCachedToken, refreshToken } from '@/lib/utils/token-cache';
 
 const API_BASE_URL = config.remotionServerUrl;
 
 /**
  * Get authentication token from Supabase session
+ * Uses token cache to prevent expiration issues during long-running operations
  */
-export async function getAuthToken(): Promise<string | null> {
+export async function getAuthToken(useCache: boolean = true): Promise<string | null> {
   console.log("🟣 Getting auth token...");
+  
+  // Use cached token for better reliability during long operations
+  if (useCache) {
+    const cachedToken = await getCachedToken();
+    if (cachedToken) {
+      return cachedToken;
+    }
+  }
+  
+  // Fallback to direct session access (for backward compatibility)
   try {
-    // Check if we're in browser environment
     if (typeof window === 'undefined') {
       console.log("🟣 Not in browser, no token available");
       return null;
     }
     
-    // Try 1: Read directly from Supabase localStorage
-    try {
-      const supabaseProjectRef = config.supabaseUrl?.split('.')[0]?.split('//')[1];
-      if (supabaseProjectRef) {
-        const storageKey = `sb-${supabaseProjectRef}-auth-token`;
-        const data = localStorage.getItem(storageKey);
-        if (data) {
-          const parsed = JSON.parse(data);
-          const token = parsed?.access_token;
-          if (token) {
-            console.log("🟣 Token from localStorage: ✅");
-            return token;
-          }
-        }
-      }
-    } catch (e) {
-      console.log("🟣 Failed to get token from localStorage:", e);
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error || !session?.access_token) {
+      console.error("🟣 Session error:", error);
+      return null;
     }
     
-    // Try 2: Use async getSession (with timeout)
-    console.log("🟣 Trying async getSession...");
-    const timeoutPromise = new Promise<null>((resolve) => {
-      setTimeout(() => {
-        console.warn("⚠️ getSession timeout after 2 seconds");
-        resolve(null);
-      }, 2000);
-    });
-    
-    const sessionPromise = supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (error) {
-        console.error("🟣 Session error:", error);
-        return null;
-      }
-      const token = session?.access_token || null;
-      console.log("🟣 Session token:", token ? "✅ Found" : "❌ Not found");
-      return token;
-    });
-    
-    const token = await Promise.race([sessionPromise, timeoutPromise]);
-    return token;
+    return session.access_token;
   } catch (error) {
     console.error("❌ getAuthToken failed:", error);
     return null;
@@ -108,13 +86,43 @@ async function apiRequest<T>(
     console.log("🔵 No request body");
   }
 
+  // Add AbortController for timeout (25 seconds, before the 30s Promise.race timeout)
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 25000);
+
   try {
-    const response = await fetch(url, {
+    let response = await fetch(url, {
       ...options,
       headers,
+      signal: controller.signal,
     });
 
+    clearTimeout(timeoutId);
     console.log("🔵 Response:", response.status, response.statusText);
+
+    // Handle 401 (Unauthorized) - token might have expired, try to refresh
+    if (response.status === 401) {
+      console.warn('⚠️ Got 401, attempting token refresh...');
+      const refreshedToken = await refreshToken();
+      if (refreshedToken) {
+        headers['Authorization'] = `Bearer ${refreshedToken}`;
+        console.log('🔄 Retrying request with refreshed token...');
+        // Retry the request with refreshed token
+        const retryController = new AbortController();
+        const retryTimeoutId = setTimeout(() => retryController.abort(), 25000);
+        try {
+          response = await fetch(url, {
+            ...options,
+            headers,
+            signal: retryController.signal,
+          });
+          clearTimeout(retryTimeoutId);
+        } catch (retryError) {
+          clearTimeout(retryTimeoutId);
+          throw retryError;
+        }
+      }
+    }
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ 
@@ -136,7 +144,11 @@ async function apiRequest<T>(
       allKeys: Object.keys(data)
     });
     return data;
-  } catch (error) {
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error('Request timeout');
+    }
     console.error("❌ Fetch failed:", error);
     throw error;
   }

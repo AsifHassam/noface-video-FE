@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import { Stepper } from "@/components/create/stepper";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { useAuthStore } from "@/lib/stores/auth-store";
+import { subscriptionApi } from "@/lib/api/subscription";
 import { toast } from "sonner";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -22,6 +24,8 @@ const steps = [
 export default function StoryScriptPage() {
   const router = useRouter();
   const { draft, updateDraft } = useProjectStore();
+  const { user } = useAuthStore();
+  const [userCredits, setUserCredits] = useState<number | null>(null);
 
   // Initialize draft type for story narration and set default subtitle position
   useEffect(() => {
@@ -78,6 +82,46 @@ export default function StoryScriptPage() {
   }, [text]);
 
   const isValid = lines.length > 0;
+
+  // Load user credits
+  useEffect(() => {
+    const loadUserCredits = async () => {
+      if (!user?.id) {
+        setUserCredits(null);
+        return;
+      }
+      
+      try {
+        const result = await subscriptionApi.getSubscriptionInfo();
+        setUserCredits(result.subscription.credits || 0);
+      } catch (error) {
+        console.error("Error loading user credits:", error);
+        setUserCredits(null);
+      }
+    };
+
+    loadUserCredits();
+  }, [user?.id]);
+
+  // Calculate estimated credits (Flash model: 0.2 credits/second)
+  // Use full script including Reddit title if present
+  const fullScriptText = useMemo(() => {
+    return getFullScript(text, draft?.redditTitle);
+  }, [text, draft?.redditTitle]);
+
+  const estimatedCredits = useMemo(() => {
+    if (!fullScriptText || fullScriptText.trim().length === 0) return 0;
+
+    // Estimate duration: average speaking rate is ~150 words per minute = 2.5 words per second
+    const words = fullScriptText.trim().split(/\s+/).length;
+    const estimatedSeconds = words / 2.5;
+    
+    // Flash model rate: 0.2 credits/second
+    const creditRate = 0.2;
+    const estimatedCredits = estimatedSeconds * creditRate;
+    
+    return Math.max(0.01, estimatedCredits); // Minimum 0.01 credits
+  }, [fullScriptText]);
 
   const handleChange = (value: string) => {
     // Prevent exceeding max characters (excluding Reddit title)
@@ -194,18 +238,40 @@ Your story is waiting to be told.`;
             )}
             rows={12}
           />
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">
-              {lines.length} line{lines.length !== 1 ? "s" : ""}
-            </span>
-            <span className={text.length >= (MAX_CHARS - (draft?.redditTitle ? draft.redditTitle.length + 2 : 0)) ? "text-orange-600 font-medium" : "text-muted-foreground"}>
-              {text.length} / {MAX_CHARS - (draft?.redditTitle ? draft.redditTitle.length + 2 : 0)} characters
-              {draft?.redditTitle && draft.redditTitle.trim() && (
-                <span className="ml-2 text-muted-foreground">
-                  (+ {draft.redditTitle.length + 2} for title)
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">
+                  {lines.length} line{lines.length !== 1 ? "s" : ""}
                 </span>
-              )}
-            </span>
+                {estimatedCredits > 0 && (
+                  <Badge 
+                    variant={userCredits !== null && userCredits < estimatedCredits ? "destructive" : "secondary"} 
+                    className="rounded-full px-2 py-0.5 text-xs"
+                  >
+                    Credits: {estimatedCredits.toFixed(2)}
+                    {userCredits !== null && (
+                      <span className="ml-1 opacity-75">
+                        (Balance: {userCredits.toFixed(2)})
+                      </span>
+                    )}
+                  </Badge>
+                )}
+              </div>
+              <span className={text.length >= (MAX_CHARS - (draft?.redditTitle ? draft.redditTitle.length + 2 : 0)) ? "text-orange-600 font-medium" : "text-muted-foreground"}>
+                {text.length} / {MAX_CHARS - (draft?.redditTitle ? draft.redditTitle.length + 2 : 0)} characters
+                {draft?.redditTitle && draft.redditTitle.trim() && (
+                  <span className="ml-2 text-muted-foreground">
+                    (+ {draft.redditTitle.length + 2} for title)
+                  </span>
+                )}
+              </span>
+            </div>
+            {estimatedCredits > 0 && (
+              <div className="text-xs text-muted-foreground">
+                Credits will only be used upon generating a preview in the next section
+              </div>
+            )}
           </div>
         </div>
 

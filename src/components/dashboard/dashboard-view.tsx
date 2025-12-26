@@ -11,7 +11,7 @@ import { useAuthStore } from "@/lib/stores/auth-store";
 import { subscriptionApi } from "@/lib/api/subscription";
 import { toast } from "sonner";
 import { Loader2, ChevronLeft, ChevronRight, FileText } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { TemplateSelector } from "@/components/create/template-selector";
 import type { VideoTemplate } from "@/types";
 
@@ -21,6 +21,7 @@ export const DashboardView = () => {
   const { projects, deleteProject, loadProjects, loading, clearDraft, updateDraft } = useProjectStore();
   const { user, loading: authLoading, initialize } = useAuthStore();
   const router = useRouter();
+  const pathname = usePathname();
   const [currentPage, setCurrentPage] = useState(1);
   const [canCreateVideo, setCanCreateVideo] = useState(true);
   const [checkingLimit, setCheckingLimit] = useState(false);
@@ -31,14 +32,33 @@ export const DashboardView = () => {
   // Ensure auth is initialized on mount
   useEffect(() => {
     if (authLoading) {
-      initialize();
+      initialize().catch((error) => {
+        console.error('Error initializing auth:', error);
+      });
     }
   }, [authLoading, initialize]);
 
-  // Load projects from API on mount
+  // Load projects from API on mount and when navigating to dashboard
   useEffect(() => {
+    // Only load if we're on the dashboard route
+    if (pathname === '/app/dashboard') {
+      loadProjects();
+    }
+  }, [loadProjects, pathname]);
+
+  // Also reload when window regains focus (user switches back to tab)
+  useEffect(() => {
+    const handleFocus = () => {
+      if (pathname === '/app/dashboard') {
     loadProjects();
-  }, [loadProjects]);
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [loadProjects, pathname]);
 
   // Check subscription limits - only after auth has finished loading
   // Also refresh when projects change (in case a new video was rendered)

@@ -92,7 +92,8 @@ export type ProjectType =
   | "REDDIT_STORY"
   | "TWO_CHAR_CONVO"
   | "NORMAL_STORY"
-  | "story";
+  | "story"
+  | "AI_UGC";
 
 export type RenderStatus = "QUEUED" | "RENDERING" | "READY" | "FAILED";
 

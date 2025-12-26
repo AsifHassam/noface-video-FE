@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
-import { Sparkles, MessageCircle, BookOpen } from "lucide-react";
+import { Sparkles, MessageCircle, Video } from "lucide-react";
 import { subscriptionApi } from "@/lib/api/subscription";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { toast } from "sonner";
@@ -20,11 +20,12 @@ const steps = [
 
 const cards = [
   {
-    title: "Reddit Story Narration",
-    description: "AI voiceover with B-roll and motion captions.",
-    icon: BookOpen,
-    href: "#",
-    disabled: true,
+    title: "AI UGC Video",
+    description: "Create professional UGC videos with advanced editing tools, scenes, and AI-powered features.",
+    icon: Video,
+    href: "/app/create/ai-ugc/editor",
+    disabled: false,
+    mostPopular: true, // Mark as most popular
   },
   {
     title: "2 Characters Having a Conversation",
@@ -182,7 +183,7 @@ export default function CreatePage() {
         </div>
       )}
       
-      <section className="grid gap-6 md:grid-cols-3">
+      <section className="grid gap-6 grid-cols-1 md:grid-cols-3">
         {cards.map((card) => {
           const isDisabled = card.disabled || (checkingLimit || (!canCreateVideo && !!user?.id));
           
@@ -208,7 +209,7 @@ export default function CreatePage() {
                   <Badge variant="outline" className="rounded-full">
                     Coming soon
                   </Badge>
-                ) : card.title === "2 Characters Having a Conversation" ? (
+                ) : (card as any).mostPopular ? (
                   <Badge className="rounded-full bg-primary/10 text-primary">
                     Most popular
                   </Badge>

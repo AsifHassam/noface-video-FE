@@ -22,5 +22,13 @@ export const config = {
   supabaseUrl:
     process.env.NEXT_PUBLIC_SUPABASE_URL || 
     'https://khjcirljcxmrzrrosssx.supabase.co',
+  
+  /**
+   * STT (Speech-to-Text) server URL
+   * Used for generating subtitles from audio/video
+   */
+  sttServerUrl:
+    process.env.NEXT_PUBLIC_STT_SERVER_URL || 
+    'http://localhost:5009',
 } as const;
 

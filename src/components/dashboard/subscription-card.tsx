@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Crown, Video, Calendar, CheckCircle2, XCircle } from "lucide-react";
+import { Crown, Video, Calendar, CheckCircle2, XCircle, Coins } from "lucide-react";
 import { subscriptionApi, type SubscriptionInfo } from "@/lib/api/subscription";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -29,9 +29,10 @@ export const SubscriptionCard = () => {
         // Don't show error toast - just use default free tier
         setSubscription({
           tier: 'free',
-          canCreateVideo: true,
+          canCreateVideo: false,
+          credits: 0,
           usage: { total: 0, monthly: 0 },
-          limit: 5,
+          limit: null,
           lastResetAt: null
         });
       } else {
@@ -39,9 +40,10 @@ export const SubscriptionCard = () => {
         // Set default values on error so UI doesn't break
         setSubscription({
           tier: 'free',
-          canCreateVideo: true,
+          canCreateVideo: false,
+          credits: 0,
           usage: { total: 0, monthly: 0 },
-          limit: 5,
+          limit: null,
           lastResetAt: null
         });
       }
@@ -56,13 +58,36 @@ export const SubscriptionCard = () => {
       return;
     }
     
-    if (user?.id) {
-      loadSubscriptionInfo();
-    } else {
-      // If no user, stop loading
+    // If no user after auth has loaded, stop loading
+    if (!user?.id) {
       setLoading(false);
+      return;
     }
+    
+    // Load subscription info
+    loadSubscriptionInfo();
   }, [user?.id, authLoading, loadSubscriptionInfo]);
+
+  // Add a timeout safeguard to prevent infinite loading
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (loading && !authLoading) {
+        console.warn('Subscription loading timeout - stopping loader');
+        setLoading(false);
+        // Set default subscription on timeout
+        setSubscription({
+          tier: 'free',
+          canCreateVideo: false,
+          credits: 0,
+          usage: { total: 0, monthly: 0 },
+          limit: null,
+          lastResetAt: null
+        });
+      }
+    }, 10000); // 10 second timeout
+
+    return () => clearTimeout(timeout);
+  }, [loading, authLoading]);
 
   const handleUpgrade = (tier: 'paid' | 'premium' = 'paid') => {
     if (!user?.email) {
@@ -116,19 +141,7 @@ export const SubscriptionCard = () => {
 
   const isPaid = subscription.tier === 'paid' || subscription.tier === 'premium';
   const isPremium = subscription.tier === 'premium';
-  const usagePercentage = subscription.limit > 0 
-    ? Math.min((subscription.usage[isPaid ? 'monthly' : 'total'] / subscription.limit) * 100, 100)
-    : 0;
-
-  // Calculate next reset date (1st of next month)
-  const getNextResetDate = () => {
-    if (!subscription.lastResetAt) return null;
-    const now = new Date();
-    const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0, 0));
-    return nextMonth;
-  };
-
-  const nextReset = getNextResetDate();
+  const credits = subscription.credits || 0;
 
   return (
     <Card className={isPaid ? "border-primary bg-gradient-to-br from-primary/5 to-primary/10" : ""}>
@@ -151,12 +164,7 @@ export const SubscriptionCard = () => {
               )}
             </CardTitle>
             <CardDescription className="mt-1">
-              {isPremium 
-                ? "60 videos per month"
-                : isPaid 
-                ? "12 videos per month"
-                : "5 free videos total"
-              }
+              Credits-based usage system
             </CardDescription>
           </div>
           <Badge variant={isPaid ? "default" : "secondary"} className="ml-2">
@@ -165,30 +173,26 @@ export const SubscriptionCard = () => {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Usage Progress */}
+        {/* Credits Balance */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-2">
-              <Video className="h-4 w-4 text-muted-foreground" />
-              <span className="text-muted-foreground">
-                {isPaid ? "Videos this month" : "Total videos"}
-              </span>
+              <Coins className="h-4 w-4 text-muted-foreground" />
+              <span className="text-muted-foreground">Credits Balance</span>
             </div>
-            <span className="font-medium">
-              {subscription.usage[isPaid ? 'monthly' : 'total']} / {subscription.limit}
+            <span className="font-semibold text-lg">
+              {credits.toFixed(2)}
             </span>
           </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-            <div
-              className={`h-full transition-all ${
-                usagePercentage >= 100
-                  ? "bg-destructive"
-                  : usagePercentage >= 80
-                  ? "bg-orange-500"
-                  : "bg-primary"
-              }`}
-              style={{ width: `${usagePercentage}%` }}
-            />
+          <div className="rounded-lg bg-muted/50 p-3 space-y-1">
+            <div className="text-xs text-muted-foreground">
+              Credit rates:
+            </div>
+            <div className="text-xs space-y-0.5">
+              <div>• Flash speech: 0.2 credits/sec</div>
+              <div>• Alpha speech: 0.35 credits/sec</div>
+              <div>• Lip sync: 16 credits</div>
+            </div>
           </div>
         </div>
 
@@ -197,33 +201,17 @@ export const SubscriptionCard = () => {
           {subscription.canCreateVideo ? (
             <>
               <CheckCircle2 className="h-4 w-4 text-green-500" />
-              <span className="text-muted-foreground">You can create more videos</span>
+              <span className="text-muted-foreground">You have enough credits to create videos</span>
             </>
           ) : (
             <>
               <XCircle className="h-4 w-4 text-destructive" />
               <span className="text-destructive font-medium">
-                {isPaid 
-                  ? "Monthly limit reached"
-                  : "Free plan limit reached"
-                }
+                Insufficient credits (need at least 0.2 credits)
               </span>
             </>
           )}
         </div>
-
-        {/* Reset info for paid/premium plan */}
-        {isPaid && nextReset && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Calendar className="h-4 w-4" />
-            <span>
-              Resets on {nextReset.toLocaleDateString('en-US', { 
-                month: 'long',
-                day: 'numeric'
-              })}
-            </span>
-          </div>
-        )}
 
         {/* Action buttons */}
         <div className="pt-2 space-y-2">

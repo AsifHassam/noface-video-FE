@@ -52,6 +52,17 @@ export const VideoCard = ({ project, onDelete }: { project: Project; onDelete: (
 
   const handleEdit = async () => {
     try {
+      // Check if this is a UGC project first
+      const metadataType = (project as any).metadata?.type;
+      const isUgc = metadataType === 'UGC' || (project as any).metadata?.isUgc === true || (project as any).background_id === 'ugc';
+      
+      if (isUgc) {
+        // Route directly to UGC editor with project ID
+        console.log("🔀 Routing UGC project to editor:", project.id);
+        router.push(`/app/create/ai-ugc/editor?projectId=${project.id}`);
+        return;
+      }
+      
       // Load project into draft (now fetches from API)
       await loadProjectIntoDraft(project.id);
       
@@ -63,7 +74,6 @@ export const VideoCard = ({ project, onDelete }: { project: Project; onDelete: (
       
       // Check project type from metadata or draft type
       const projectType = project.type || (draft?.type as any);
-      const metadataType = (project as any).metadata?.type;
       const effectiveType = (projectType || metadataType || (draft?.type as any)) as any;
       
       console.log("🔀 Edit routing check:", {
@@ -332,19 +342,11 @@ export const VideoCard = ({ project, onDelete }: { project: Project; onDelete: (
                 Play
               </DropdownMenuItem>
               <DropdownMenuItem
-                disabled={!!project.finalUrl}
-                className={cn(
-                  "flex items-center gap-2 rounded-xl",
-                  !!project.finalUrl && "opacity-50 cursor-not-allowed"
-                )}
-                onSelect={(e) => {
-                  if (!project.finalUrl) {
+                className="flex items-center gap-2 rounded-xl"
+                onSelect={() => {
                     handleEdit();
-                  } else {
-                    e.preventDefault();
-                  }
                 }}
-                title={project.finalUrl ? "Cannot edit after final video is rendered" : "Edit project"}
+                title="Edit project"
               >
                 <Edit className="h-4 w-4" />
                 Edit

@@ -22,6 +22,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SaveTemplateDialog } from "@/components/create/save-template-dialog";
 import { templatesApi } from "@/lib/api/projects";
 import { useAuthStore } from "@/lib/stores/auth-store";
+import { subscriptionApi } from "@/lib/api/subscription";
 
 const steps = [
   { label: "Step 1", description: "Write narration" },
@@ -109,6 +110,7 @@ export default function StoryPreviewPage() {
   const [isSaveTemplateOpen, setIsSaveTemplateOpen] = useState(false);
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);
   const { user } = useAuthStore();
+  const [userCredits, setUserCredits] = useState<number | null>(null);
 
   // Cleanup: Unsubscribe from realtime updates when component unmounts
   useEffect(() => {
@@ -124,12 +126,62 @@ export default function StoryPreviewPage() {
     }
   }, [draft?.subtitleEnabled]);
 
+  // Load user credits
+  useEffect(() => {
+    const loadUserCredits = async () => {
+      if (!user?.id) {
+        setUserCredits(null);
+        return;
+      }
+      
+      try {
+        const result = await subscriptionApi.getSubscriptionInfo();
+        setUserCredits(result.subscription.credits || 0);
+      } catch (error) {
+        console.error("Error loading user credits:", error);
+        setUserCredits(null);
+      }
+    };
+
+    loadUserCredits();
+  }, [user?.id]);
+
+  // Calculate estimated credits based on script (Flash model: 0.2 credits/second)
+  const estimatedCredits = useMemo(() => {
+    if (!draft?.scriptInput?.trim()) return 0;
+
+    // Estimate duration: average speaking rate is ~150 words per minute = 2.5 words per second
+    const words = draft.scriptInput.trim().split(/\s+/).length;
+    const estimatedSeconds = words / 2.5;
+    
+    // Flash model rate: 0.2 credits/second
+    const creditRate = 0.2;
+    const estimatedCredits = estimatedSeconds * creditRate;
+    
+    return Math.max(0.01, estimatedCredits); // Minimum 0.01 credits
+  }, [draft?.scriptInput]);
+
   const subtitleSegments = useMemo(() => {
     const segments = parseSrtText(subtitleText);
     return segments;
   }, [subtitleText, showSubtitles]);
   
   const status = draft?.status ?? null;
+
+  // Refresh credits after preview generation
+  useEffect(() => {
+    if (status === "READY" && user?.id) {
+      const refreshCredits = async () => {
+        try {
+          const result = await subscriptionApi.getSubscriptionInfo();
+          setUserCredits(result.subscription.credits || 0);
+        } catch (error) {
+          console.error("Error refreshing credits:", error);
+        }
+      };
+      refreshCredits();
+    }
+  }, [status, user?.id]);
 
   // Reset generating state when render completes or fails
   useEffect(() => {
@@ -950,48 +1002,65 @@ export default function StoryPreviewPage() {
         </header>
 
         {/* Action Buttons & Progress - Moved to top like 2-char preview */}
-        <div className="flex flex-wrap items-center gap-4 rounded-3xl border border-border/40 bg-white/70 p-5">
-          <Button
-            variant="ghost"
-            className="rounded-2xl"
-            onClick={() => router.push("/app/create/story/background")}
-          >
-            Back
-          </Button>
-          {!hasPreview && (
+        <div className="flex flex-col gap-3 rounded-3xl border border-border/40 bg-white/70 p-5">
+          {/* Credit Balance Display */}
+          {userCredits !== null && estimatedCredits > 0 && (
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Your balance:</span>
+              <span className={`font-medium ${userCredits < estimatedCredits ? 'text-destructive' : 'text-foreground'}`}>
+                {userCredits.toFixed(2)} credits
+              </span>
+            </div>
+          )}
+          {userCredits !== null && userCredits < estimatedCredits && estimatedCredits > 0 && (
+            <div className="text-xs text-destructive bg-destructive/10 p-2 rounded">
+              ⚠️ Low on credits! You need {estimatedCredits.toFixed(2)} credits but only have {userCredits.toFixed(2)}.
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-4">
             <Button
+              variant="ghost"
               className="rounded-2xl"
-              onClick={async (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                console.log("🔘 Generate Preview button clicked", {
-                  hasDraft: !!draft,
-                  scriptInput: draft?.scriptInput?.substring(0, 30),
-                  backgroundId: draft?.backgroundId,
-                  isGenerating,
-                });
-                
-                if (!draft) {
-                  console.error("❌ Draft is null when button clicked");
-                  toast.error("Draft not loaded. Please refresh the page.");
-                  return;
-                }
-                
-                if (!draft.scriptInput?.trim()) {
-                  console.error("❌ No script input when button clicked");
-                  toast.error("Please write narration first");
-                  router.push("/app/create/story/script");
-                  return;
-                }
-                
-                await handleGeneratePreview();
-              }}
-              disabled={isGenerating || status === "RENDERING" || status === "QUEUED" || !draft?.scriptInput?.trim() || !draft?.backgroundId}
+              onClick={() => router.push("/app/create/story/background")}
             >
-              {isGenerating || status === "RENDERING" || status === "QUEUED"
+              Back
+            </Button>
+            {!hasPreview && (
+              <Button
+                className={`rounded-2xl ${userCredits !== null && userCredits < estimatedCredits ? 'opacity-60' : ''}`}
+                onClick={async (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  console.log("🔘 Generate Preview button clicked", {
+                    hasDraft: !!draft,
+                    scriptInput: draft?.scriptInput?.substring(0, 30),
+                    backgroundId: draft?.backgroundId,
+                    isGenerating,
+                  });
+                  
+                  if (!draft) {
+                    console.error("❌ Draft is null when button clicked");
+                    toast.error("Draft not loaded. Please refresh the page.");
+                    return;
+                  }
+                  
+                  if (!draft.scriptInput?.trim()) {
+                    console.error("❌ No script input when button clicked");
+                    toast.error("Please write narration first");
+                    router.push("/app/create/story/script");
+                    return;
+                  }
+                  
+                  await handleGeneratePreview();
+                }}
+                disabled={isGenerating || status === "RENDERING" || status === "QUEUED" || !draft?.scriptInput?.trim() || !draft?.backgroundId || (userCredits !== null && userCredits < estimatedCredits)}
+              >
+                {isGenerating || status === "RENDERING" || status === "QUEUED"
                 ? "Generating..." 
                 : status === "FAILED"
                 ? "Retry Preview"
+                : estimatedCredits > 0
+                ? `Generate Preview (${estimatedCredits.toFixed(2)} credits)`
                 : "Generate Preview"}
             </Button>
           )}
@@ -1085,6 +1154,7 @@ export default function StoryPreviewPage() {
                 ? "Ready - Click Download"
                 : status ?? "IDLE"}
             </span>
+          </div>
           </div>
         </div>
 

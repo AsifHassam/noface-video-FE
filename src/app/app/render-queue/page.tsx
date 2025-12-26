@@ -74,10 +74,15 @@ export default function RenderQueuePage() {
       const result = await renderJobsApi.list();
       
       // Format render jobs
-      const formattedJobs: RenderQueueItem[] = result.renderJobs.map((job) => ({
+      const formattedJobs: RenderQueueItem[] = result.renderJobs.map((job) => {
+        // For UGC renders, use the project title if available, otherwise fallback
+        const title = job.project?.title || 
+                     (job.type === 'UGC_RENDER' ? `UGC Video ${job.id.substring(0, 8)}` : `Render Job ${job.id.substring(0, 8)}`);
+        
+        return {
         id: job.id,
         projectId: job.projectId,
-        title: job.project?.title || `Render Job ${job.id.substring(0, 8)}`,
+          title,
         status: job.status,
         finalUrl: job.project?.finalUrl || job.videoUrl || null,
         videoUrl: job.videoUrl || null,
@@ -88,7 +93,8 @@ export default function RenderQueuePage() {
         completedAt: job.completedAt,
         type: job.project?.type || job.type || 'TWO_CHAR_CONVO',
         errorMessage: job.errorMessage,
-      }));
+        };
+      });
 
       setRenderJobs(formattedJobs);
       
@@ -236,7 +242,13 @@ export default function RenderQueuePage() {
                   <CardContent>
                     <div className="flex items-center justify-between text-sm">
                       <div className="flex items-center gap-4 text-muted-foreground">
-                        <span>Type: {item.type === "story" || item.type === "NORMAL_STORY" || item.type === "STORY_PREVIEW" || item.type === "STORY_FINAL" ? "Story" : "Two-Char"}</span>
+                        <span>Type: {
+                          item.type === "story" || item.type === "NORMAL_STORY" || item.type === "STORY_PREVIEW" || item.type === "STORY_FINAL" 
+                            ? "Story" 
+                            : item.type === "UGC_RENDER" 
+                            ? "UGC" 
+                            : "Two-Char"
+                        }</span>
                         {item.status === "RENDERING" && (
                           <span className="flex items-center gap-1">
                             <Loader2 className="h-3 w-3 animate-spin" />

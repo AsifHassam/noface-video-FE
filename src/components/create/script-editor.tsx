@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,8 @@ type ScriptEditorProps = {
   onUseSample: () => void;
   onClear: () => void;
   characterNames: { A: string; B: string };
+  estimatedCredits?: number;
+  userCredits?: number | null;
 };
 
 export const ScriptEditor = ({
@@ -26,13 +28,14 @@ export const ScriptEditor = ({
   onUseSample,
   onClear,
   characterNames,
+  estimatedCredits,
+  userCredits,
 }: ScriptEditorProps) => {
   // Character limits: 1200 chars ≈ 50 seconds, max 60 seconds = 1440 chars
   const CHARS_PER_50_SEC = 1200;
   const MAX_VIDEO_SECONDS = 60;
   const MAX_CHARS = Math.round((CHARS_PER_50_SEC / 50) * MAX_VIDEO_SECONDS); // 1440 chars for 60s max
   const charCount = value.length;
-  const tokenCount = Math.ceil(charCount / 4);
   const estimatedSeconds = Math.round((charCount / CHARS_PER_50_SEC) * 50);
   const [showAll, setShowAll] = useState(false);
   const visibleLines = parsedLines.length > 5 && !showAll ? parsedLines.slice(0, 5) : parsedLines;
@@ -48,9 +51,6 @@ export const ScriptEditor = ({
     <div className="grid gap-6 md:grid-cols-[2fr_1fr]">
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="secondary" className="rounded-full px-3 py-1">
-            Tokens ~{tokenCount}
-          </Badge>
           <Badge 
             variant={charCount >= MAX_CHARS ? "destructive" : estimatedSeconds >= MAX_VIDEO_SECONDS ? "destructive" : "outline"} 
             className="rounded-full px-3 py-1"
@@ -63,6 +63,24 @@ export const ScriptEditor = ({
           >
             Est. {estimatedSeconds}s / {MAX_VIDEO_SECONDS}s max
           </Badge>
+          {estimatedCredits !== undefined && estimatedCredits > 0 && (
+            <Badge 
+              variant={userCredits !== null && userCredits !== undefined && userCredits < estimatedCredits ? "destructive" : "secondary"} 
+              className="rounded-full px-3 py-1"
+            >
+              Credits: {estimatedCredits.toFixed(2)}
+              {userCredits !== null && userCredits !== undefined && (
+                <span className="ml-1 text-xs opacity-75">
+                  (Balance: {userCredits.toFixed(2)})
+                </span>
+              )}
+            </Badge>
+          )}
+          {estimatedCredits !== undefined && estimatedCredits > 0 && (
+            <span className="text-xs text-muted-foreground">
+              Credits will only be used upon generating a preview in the next section
+            </span>
+          )}
           <span className="text-sm text-muted-foreground">
             Alternate lines between {characterNames.A} and {characterNames.B}
           </span>

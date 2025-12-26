@@ -22,6 +22,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { config } from "@/lib/config";
 import { SaveTemplateDialog } from "@/components/create/save-template-dialog";
 import { templatesApi } from "@/lib/api/projects";
+import { subscriptionApi } from "@/lib/api/subscription";
 
 const steps = [
   { label: "Step 1", description: "Pick two characters" },
@@ -97,6 +98,7 @@ export default function PreviewPage() {
   const [isCharacterSettingsExpanded, setIsCharacterSettingsExpanded] = useState(false); // Initially collapsed
   const [isSaveTemplateOpen, setIsSaveTemplateOpen] = useState(false);
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+  const [userCredits, setUserCredits] = useState<number | null>(null);
   
   // Check if preview has been generated (user can interact with controls)
   // Preview is ready if we have audioFiles (browser preview) OR previewUrl (rendered video)
@@ -164,6 +166,64 @@ export default function PreviewPage() {
       unsubscribeFromRenderJob();
     };
   }, [unsubscribeFromRenderJob]);
+
+  // Load user credits
+  useEffect(() => {
+    const loadUserCredits = async () => {
+      if (!user?.id) {
+        setUserCredits(null);
+        return;
+      }
+      
+      try {
+        const result = await subscriptionApi.getSubscriptionInfo();
+        setUserCredits(result.subscription.credits || 0);
+      } catch (error) {
+        console.error("Error loading user credits:", error);
+        setUserCredits(null);
+      }
+    };
+
+    loadUserCredits();
+  }, [user?.id]);
+
+  // Calculate estimated credits based on script (Flash model: 0.2 credits/second)
+  const estimatedCredits = useMemo(() => {
+    if (!draft?.script?.length) return 0;
+
+    // Calculate total text length from script
+    const totalText = draft.script
+      .map(line => line.text || '')
+      .join(' ')
+      .trim();
+
+    if (!totalText) return 0;
+
+    // Estimate duration: average speaking rate is ~150 words per minute = 2.5 words per second
+    const words = totalText.split(/\s+/).length;
+    const estimatedSeconds = words / 2.5;
+    
+    // Flash model rate: 0.2 credits/second
+    const creditRate = 0.2;
+    const estimatedCredits = estimatedSeconds * creditRate;
+    
+    return Math.max(0.01, estimatedCredits); // Minimum 0.01 credits
+  }, [draft?.script]);
+
+  // Refresh credits after preview generation
+  useEffect(() => {
+    if (status === "READY" && user?.id) {
+      const refreshCredits = async () => {
+        try {
+          const result = await subscriptionApi.getSubscriptionInfo();
+          setUserCredits(result.subscription.credits || 0);
+        } catch (error) {
+          console.error("Error refreshing credits:", error);
+        }
+      };
+      refreshCredits();
+    }
+  }, [status, user?.id]);
 
   const handleGeneratePreview = async () => {
     if (!draft?.script?.length) {
@@ -450,15 +510,30 @@ export default function PreviewPage() {
             Generate a TikTok/Reels format video (1080×1920), tweak subtitles, and add overlays.
           </p>
         </header>
-        <div className="flex flex-wrap items-center gap-4 rounded-3xl border border-border/40 bg-white/70 p-5">
+        <div className="flex flex-col gap-3 rounded-3xl border border-border/40 bg-white/70 p-5">
+          {/* Credit Balance Display */}
+          {userCredits !== null && estimatedCredits > 0 && (
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Your balance:</span>
+              <span className={`font-medium ${userCredits < estimatedCredits ? 'text-destructive' : 'text-foreground'}`}>
+                {userCredits.toFixed(2)} credits
+              </span>
+            </div>
+          )}
+          {userCredits !== null && userCredits < estimatedCredits && estimatedCredits > 0 && (
+            <div className="text-xs text-destructive bg-destructive/10 p-2 rounded">
+              ⚠️ Low on credits! You need {estimatedCredits.toFixed(2)} credits but only have {userCredits.toFixed(2)}.
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-4">
           <Button
             className={`rounded-2xl ${
               isInitialState 
                 ? "relative animate-glow ring-2 ring-primary ring-offset-2" 
                 : ""
-            }`}
+              } ${userCredits !== null && userCredits < estimatedCredits ? 'opacity-60' : ''}`}
             onClick={handleGeneratePreview}
-            disabled={isGeneratingPreview || status === "RENDERING" || status === "QUEUED"}
+              disabled={isGeneratingPreview || status === "RENDERING" || status === "QUEUED" || (userCredits !== null && userCredits < estimatedCredits)}
           >
             {isGeneratingPreview
               ? "Generating Audio..."
@@ -466,6 +541,8 @@ export default function PreviewPage() {
               ? "Generating..." 
               : status === "FAILED"
               ? "Retry Preview"
+                : estimatedCredits > 0
+                ? `Generate Preview (${estimatedCredits.toFixed(2)} credits)`
               : "Generate Preview"}
           </Button>
           <Button
@@ -519,6 +596,7 @@ export default function PreviewPage() {
                 ? "Ready - Click Download"
                 : status ?? "IDLE"}
             </span>
+          </div>
           </div>
         </div>
         {/* Captions Generation Gate - Show whenever preview exists */}

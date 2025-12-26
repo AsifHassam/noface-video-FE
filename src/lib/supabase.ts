@@ -132,3 +132,48 @@ export type RenderJob = {
   updated_at: string;
 };
 
+// UGC Video Project Types
+export type UGCVideoProject = {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string | null;
+  avatar_id: string | null;
+  avatar_url: string | null;
+  status: 'DRAFT' | 'GENERATING_SPEECH' | 'GENERATING_LIPSYNC' | 'READY' | 'ERROR';
+  final_video_url: string | null;
+  thumbnail_url: string | null;
+  duration_seconds: number | null;
+  metadata: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UGCVoiceGeneration = {
+  id: string;
+  project_id: string;
+  voice_id: string;
+  voice_name: string | null;
+  voice_provider: string; // 'elevenlabs'
+  script_text: string;
+  audio_url: string | null;
+  audio_storage_path: string | null;
+  duration_seconds: number | null;
+  metadata: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UGCGeneratedVideo = {
+  id: string;
+  project_id: string;
+  voice_generation_id: string | null;
+  video_url: string;
+  video_storage_path: string | null;
+  thumbnail_url: string | null;
+  duration_seconds: number | null;
+  metadata: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+};
+

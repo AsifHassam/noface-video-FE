@@ -285,7 +285,7 @@ export default function PaymentSuccessPage() {
             <div className="rounded-lg bg-green-50 p-4 text-sm text-green-800 dark:bg-green-950 dark:text-green-300">
               <p className="font-medium">Your subscription is now active!</p>
               <p className="mt-1 text-xs">
-                You can now create up to {subscriptionTier === 'premium' ? '60' : '12'} videos per month. Your limit resets on the 1st of each month. Redirecting to dashboard...
+                You can now create videos using your credits. Credits are deducted based on usage (speech generation, lip sync, etc.). Redirecting to dashboard...
               </p>
             </div>
             <Button asChild className="w-full">
