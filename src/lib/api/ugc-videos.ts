@@ -628,9 +628,7 @@ export async function uploadVideoToStorage(
   if (error) {
     console.error('❌ Error uploading video:', error);
     console.error('Error details:', {
-      message: error.message,
-      statusCode: error.statusCode,
-      error: error.error
+      message: error.message
     });
     throw new Error(`Failed to upload video: ${error.message}`);
   }
@@ -684,9 +682,7 @@ export async function uploadAudioToStorage(
   if (error) {
     console.error('❌ Error uploading audio:', error);
     console.error('Error details:', {
-      message: error.message,
-      statusCode: error.statusCode,
-      error: error.error
+      message: error.message
     });
     throw new Error(`Failed to upload audio: ${error.message}`);
   }

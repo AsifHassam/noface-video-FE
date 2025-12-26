@@ -467,10 +467,6 @@ export const subscriptionApi = {
         throw err;
       }
 
-      if (error) {
-        throw error;
-      }
-
       return { success: true };
     } catch (error) {
       console.error('❌ Error updating subscription:', error);

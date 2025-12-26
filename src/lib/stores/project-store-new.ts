@@ -78,7 +78,7 @@ const initialDraft = (): DraftProject => ({
   finalUrl: null,
   durationSec: null,
   subtitleEnabled: true,
-  subtitleStyle: "classic",
+  subtitleStyle: "outlined",
   subtitlePosition: { x: 50, y: 60 },
   subtitleFontSize: 100,
   updatedAt: new Date().toISOString(),
