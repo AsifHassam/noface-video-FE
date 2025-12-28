@@ -1197,7 +1197,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
                   
                   if (supabaseUrl && supabaseAnonKey) {
-                    const storagePath = `ugc-audio/${projectId}/${fileName}`;
+              const storagePath = `ugc-audio/${projectId}/${fileName}`;
                     const insertUrl = `${supabaseUrl}/rest/v1/user_uploads`;
                     
                     const makeRequest = async (authToken: string) => {
@@ -1214,13 +1214,13 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                           },
                           body: JSON.stringify({
                             user_id: userId,
-                            file_name: fileName,
-                            file_type: 'audio',
-                            storage_path: storagePath,
-                            storage_url: audioUrl,
-                            file_size: file.size,
-                            mime_type: file.type,
-                            metadata: {}
+                file_name: fileName,
+                file_type: 'audio',
+                storage_path: storagePath,
+                storage_url: audioUrl,
+                file_size: file.size,
+                mime_type: file.type,
+                metadata: {}
                           }),
                           signal: controller.signal
                         });
@@ -2351,16 +2351,16 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       let response;
       try {
         response = await fetch(`${config.remotionServerUrl}/voices/generate`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            voice_id: selectedVoice,
-            text: speechText,
-            speed: speechSpeed,
-            model_id: selectedModel === "alpha3" ? "eleven_v3" : "eleven_flash_v2_5",
-          }),
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          voice_id: selectedVoice,
+          text: speechText,
+          speed: speechSpeed,
+          model_id: selectedModel === "alpha3" ? "eleven_v3" : "eleven_flash_v2_5",
+        }),
           signal: controller.signal
-        });
+      });
         clearTimeout(timeoutId);
       } catch (fetchError: any) {
         clearTimeout(timeoutId);
@@ -2487,7 +2487,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
                     
                     if (supabaseUrl && supabaseAnonKey) {
-                      const storagePath = `ugc-audio/${currentProject.id}/${audioFileName}`;
+                const storagePath = `ugc-audio/${currentProject.id}/${audioFileName}`;
                       const insertUrl = `${supabaseUrl}/rest/v1/user_uploads`;
                       
                       const makeRequest = async (authToken: string) => {
@@ -2504,17 +2504,17 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                             },
                             body: JSON.stringify({
                               user_id: userId,
-                              file_name: audioFileName,
-                              file_type: 'audio',
-                              storage_path: storagePath,
-                              storage_url: audioStorageUrl,
-                              file_size: audioBlob.size,
-                              mime_type: 'audio/mpeg',
-                              metadata: {
-                                voice_id: selectedVoice,
-                                voice_name: elevenLabsVoices.find(v => v.voice_id === selectedVoice)?.name || null,
-                                generated_with: 'elevenlabs'
-                              }
+                  file_name: audioFileName,
+                  file_type: 'audio',
+                  storage_path: storagePath,
+                  storage_url: audioStorageUrl,
+                  file_size: audioBlob.size,
+                  mime_type: 'audio/mpeg',
+                  metadata: {
+                    voice_id: selectedVoice,
+                    voice_name: elevenLabsVoices.find(v => v.voice_id === selectedVoice)?.name || null,
+                    generated_with: 'elevenlabs'
+                  }
                             }),
                             signal: controller.signal
                           });
@@ -2537,7 +2537,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                       }
                       
                       if (response.ok) {
-                        console.log("Audio saved to user_uploads table");
+                console.log("Audio saved to user_uploads table");
                       } else {
                         console.warn('[Speech Generation] Failed to save audio metadata:', response.status);
                       }
@@ -2802,46 +2802,46 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   const videoResponse = await fetch(videoUrl, { signal: controller.signal });
                   clearTimeout(timeoutId);
                   
-                  if (!videoResponse.ok) {
-                    throw new Error(`Failed to download video: ${videoResponse.statusText}`);
-                  }
-                  
-                  const videoBlob = await videoResponse.blob();
+              if (!videoResponse.ok) {
+                throw new Error(`Failed to download video: ${videoResponse.statusText}`);
+              }
+              
+              const videoBlob = await videoResponse.blob();
                   console.log("[Lip Sync] Video downloaded, size:", (videoBlob.size / 1024 / 1024).toFixed(2), "MB");
-                  
-                  const videoFileName = `lipsync-${uuid()}.mp4`;
+              
+              const videoFileName = `lipsync-${uuid()}.mp4`;
                   console.log("[Lip Sync] Uploading to Supabase Storage...");
                   videoStorageUrl = await uploadVideoToStorage(
-                    videoBlob,
-                    currentProject.id,
-                    videoFileName
-                  );
-                  
-                  if (!videoStorageUrl) {
-                    throw new Error("Failed to upload video to storage");
-                  }
-                  
+                videoBlob,
+                currentProject.id,
+                videoFileName
+              );
+              
+              if (!videoStorageUrl) {
+                throw new Error("Failed to upload video to storage");
+              }
+              
                   videoStoragePath = `ugc-videos/${currentProject.id}/${videoFileName}`;
                   console.log("[Lip Sync] Video uploaded to storage:", videoStorageUrl);
-                  
-                  // Get video duration from the video blob
-                  try {
-                    const video = document.createElement('video');
-                    video.preload = 'metadata';
-                    video.src = URL.createObjectURL(videoBlob);
-                    await new Promise((resolve, reject) => {
-                      video.onloadedmetadata = () => {
-                        durationSeconds = video.duration;
-                        URL.revokeObjectURL(video.src);
-                        resolve(null);
-                      };
-                      video.onerror = reject;
-                      setTimeout(() => {
-                        URL.revokeObjectURL(video.src);
-                        resolve(null); // Resolve anyway if metadata doesn't load
-                      }, 2000);
-                    });
-                  } catch (e) {
+              
+              // Get video duration from the video blob
+              try {
+                const video = document.createElement('video');
+                video.preload = 'metadata';
+                video.src = URL.createObjectURL(videoBlob);
+                await new Promise((resolve, reject) => {
+                  video.onloadedmetadata = () => {
+                    durationSeconds = video.duration;
+                    URL.revokeObjectURL(video.src);
+                    resolve(null);
+                  };
+                  video.onerror = reject;
+                  setTimeout(() => {
+                    URL.revokeObjectURL(video.src);
+                    resolve(null); // Resolve anyway if metadata doesn't load
+                  }, 2000);
+                });
+              } catch (e) {
                     console.warn("[Lip Sync] Could not get video duration:", e);
                   }
                 } catch (fetchError: any) {
@@ -3044,46 +3044,46 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   const videoResponse = await fetch(videoUrl, { signal: controller.signal });
                   clearTimeout(timeoutId);
                   
-                  if (!videoResponse.ok) {
-                    throw new Error(`Failed to download video: ${videoResponse.statusText}`);
-                  }
-                  
-                  const videoBlob = await videoResponse.blob();
+              if (!videoResponse.ok) {
+                throw new Error(`Failed to download video: ${videoResponse.statusText}`);
+              }
+              
+              const videoBlob = await videoResponse.blob();
                   console.log("[Lip Sync] Video downloaded, size:", (videoBlob.size / 1024 / 1024).toFixed(2), "MB");
-                  
-                  const videoFileName = `lipsync-${uuid()}.mp4`;
+              
+              const videoFileName = `lipsync-${uuid()}.mp4`;
                   console.log("[Lip Sync] Uploading to Supabase Storage...");
                   videoStorageUrl = await uploadVideoToStorage(
-                    videoBlob,
-                    currentProject.id,
-                    videoFileName
-                  );
-                  
-                  if (!videoStorageUrl) {
-                    throw new Error("Failed to upload video to storage");
-                  }
-                  
+                videoBlob,
+                currentProject.id,
+                videoFileName
+              );
+              
+              if (!videoStorageUrl) {
+                throw new Error("Failed to upload video to storage");
+              }
+              
                   videoStoragePath = `ugc-videos/${currentProject.id}/${videoFileName}`;
                   console.log("[Lip Sync] Video uploaded to storage:", videoStorageUrl);
-                  
-                  // Get video duration from the video blob
-                  try {
-                    const video = document.createElement('video');
-                    video.preload = 'metadata';
-                    video.src = URL.createObjectURL(videoBlob);
-                    await new Promise((resolve, reject) => {
-                      video.onloadedmetadata = () => {
-                        durationSeconds = video.duration;
-                        URL.revokeObjectURL(video.src);
-                        resolve(null);
-                      };
-                      video.onerror = reject;
-                      setTimeout(() => {
-                        URL.revokeObjectURL(video.src);
-                        resolve(null); // Resolve anyway if metadata doesn't load
-                      }, 2000);
-                    });
-                  } catch (e) {
+              
+              // Get video duration from the video blob
+              try {
+                const video = document.createElement('video');
+                video.preload = 'metadata';
+                video.src = URL.createObjectURL(videoBlob);
+                await new Promise((resolve, reject) => {
+                  video.onloadedmetadata = () => {
+                    durationSeconds = video.duration;
+                    URL.revokeObjectURL(video.src);
+                    resolve(null);
+                  };
+                  video.onerror = reject;
+                  setTimeout(() => {
+                    URL.revokeObjectURL(video.src);
+                    resolve(null); // Resolve anyway if metadata doesn't load
+                  }, 2000);
+                });
+              } catch (e) {
                     console.warn("[Lip Sync] Could not get video duration:", e);
                   }
                 } catch (fetchError: any) {
@@ -4736,27 +4736,31 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
           updateCanvasElement(elementId, { url: data.video_url });
           alert('Background removed successfully!');
           setRemovingBackground(null);
-        } else if (data.prediction_id) {
-          // Background removal is processing, poll for status
-          console.log('[Background Removal] Processing, prediction ID:', data.prediction_id);
+        } else if (data.job_id) {
+          // Background removal is queued/processing, poll for status using job_id
+          console.log('[Background Removal] Job queued, job ID:', data.job_id);
+          // Inform user about expected processing time
+          alert('Background removal started! This process typically takes ~8 minutes. Please wait...');
           let pollAttempts = 0;
-          const maxPollAttempts = 60; // 5 minutes max (60 * 5 seconds)
+          const maxPollAttempts = 180; // 15 minutes max (180 * 5 seconds = 900 seconds)
           
           const pollStatus = async () => {
             pollAttempts++;
-            console.log(`[Background Removal] Polling attempt ${pollAttempts}/${maxPollAttempts}`);
+            console.log(`[Background Removal] Polling attempt ${pollAttempts}/${maxPollAttempts} for job: ${data.job_id}`);
             
             try {
               // Use cached token for polling (prevents expiration during long operations)
               const { getCachedToken } = await import('@/lib/utils/token-cache');
               const cachedToken = await getCachedToken();
               
-              const headers: HeadersInit = {};
+              const headers: HeadersInit = {
+                'Content-Type': 'application/json',
+              };
               if (cachedToken) {
                 headers['Authorization'] = `Bearer ${cachedToken}`;
               }
               
-              const statusResponse = await fetch(`${config.remotionServerUrl}/video/remove-background-status/${data.prediction_id}`, {
+              const statusResponse = await fetch(`${config.remotionServerUrl}/video/remove-background-status/${data.job_id}`, {
                 headers,
               });
               
@@ -4767,24 +4771,26 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
               const statusData = await statusResponse.json();
               console.log('[Background Removal] Status data:', statusData);
               
-              if (statusData.success && statusData.video_url) {
+              if (statusData.success) {
+                if (statusData.status === 'completed' && statusData.video_url) {
+                  // Job completed successfully
                 console.log('[Background Removal] Completed, updating element with:', statusData.video_url);
                 updateCanvasElement(elementId, { url: statusData.video_url });
                 alert('Background removed successfully!');
                 setRemovingBackground(null);
-              } else if (statusData.status === 'failed' || statusData.status === 'canceled') {
+                } else if (statusData.status === 'failed') {
+                  // Job failed
                 throw new Error(statusData.error || 'Background removal failed');
-              } else if (statusData.status === 'succeeded' && statusData.video_url) {
-                console.log('[Background Removal] Succeeded, updating element with:', statusData.video_url);
-                updateCanvasElement(elementId, { url: statusData.video_url });
-                alert('Background removed successfully!');
-                setRemovingBackground(null);
               } else if (pollAttempts >= maxPollAttempts) {
-                throw new Error('Background removal timed out after 5 minutes');
+                  // Timeout
+                  throw new Error('Background removal timed out after 15 minutes');
               } else {
-                // Still processing, poll again
-                console.log(`[Background Removal] Still processing (${statusData.status}), polling again in 5s...`);
+                  // Still processing (queued or processing), poll again
+                  console.log(`[Background Removal] Status: ${statusData.status}, polling again in 5s...`);
                 setTimeout(pollStatus, 5000);
+                }
+              } else {
+                throw new Error(statusData.error || 'Failed to get job status');
               }
             } catch (pollError: any) {
               console.error('[Background Removal] Error polling status:', pollError);
@@ -4793,11 +4799,11 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
             }
           };
           
-          // Start polling
+          // Start polling after 5 seconds
           setTimeout(pollStatus, 5000);
           return; // Don't set removingBackground to null yet
         } else {
-          throw new Error('No video URL or prediction ID returned');
+          throw new Error('No video URL or job ID returned');
         }
       } else {
         throw new Error(data.error || 'Failed to remove background');
@@ -6390,7 +6396,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                             const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
                             
                             if (supabaseUrl && supabaseAnonKey) {
-                              const storagePath = `ugc-audio/${projectId}/${fileName}`;
+                        const storagePath = `ugc-audio/${projectId}/${fileName}`;
                               const insertUrl = `${supabaseUrl}/rest/v1/user_uploads`;
                               
                               const makeRequest = async (authToken: string) => {
@@ -6407,13 +6413,13 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                                     },
                                     body: JSON.stringify({
                                       user_id: userId,
-                                      file_name: fileName,
-                                      file_type: 'audio',
-                                      storage_path: storagePath,
-                                      storage_url: audioUrl,
-                                      file_size: file.size,
-                                      mime_type: file.type,
-                                      metadata: {}
+                          file_name: fileName,
+                          file_type: 'audio',
+                          storage_path: storagePath,
+                          storage_url: audioUrl,
+                          file_size: file.size,
+                          mime_type: file.type,
+                          metadata: {}
                                     }),
                                     signal: controller.signal
                                   });
@@ -8786,7 +8792,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                         type="button"
                       >
                         <Mic className="h-4 w-4 mr-2" />
-                        {generatingLipSync ? "Generating..." : "Generate Lip Sync"}
+                        {generatingLipSync ? "Generating..." : "Generate Lip Sync (16 credits)"}
                       </Button>
                       {lipSyncVideoUrl && (
                         <Button
