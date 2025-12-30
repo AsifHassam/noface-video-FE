@@ -18,7 +18,7 @@ interface CharacterSizeControlsProps {
   disabled?: boolean; // Whether controls are disabled
 }
 
-const defaultSizes: CharacterSizes = {
+const defaultSizes: Record<string, { width: number; height: number }> = {
   Peter: { width: 400, height: 500 },
   Stewie: { width: 350, height: 450 },
   Rick: { width: 800, height: 1000 }, // 2x default size
@@ -26,13 +26,21 @@ const defaultSizes: CharacterSizes = {
   Morty: { width: 560, height: 720 }, // 2x default size, reduced by 20%
 };
 
-// Calculate aspect ratios from default sizes (width/height)
-const aspectRatios: Record<keyof CharacterSizes, number> = {
-  Peter: (defaultSizes.Peter?.width ?? 400) / (defaultSizes.Peter?.height ?? 500), // 0.8
-  Stewie: (defaultSizes.Stewie?.width ?? 350) / (defaultSizes.Stewie?.height ?? 450), // ~0.778
-  Rick: (defaultSizes.Rick?.width ?? 800) / (defaultSizes.Rick?.height ?? 1000), // 0.8
-  Brian: (defaultSizes.Brian?.width ?? 350) / (defaultSizes.Brian?.height ?? 450), // ~0.778
-  Morty: (defaultSizes.Morty?.width ?? 560) / (defaultSizes.Morty?.height ?? 720), // ~0.778
+// Default size for custom characters
+const DEFAULT_CUSTOM_CHAR_SIZE = { width: 400, height: 500 };
+
+// Get default size for a character (fallback to default custom size if not found)
+const getDefaultSize = (characterName: string): { width: number; height: number } => {
+  return defaultSizes[characterName] || DEFAULT_CUSTOM_CHAR_SIZE;
+};
+
+// Calculate aspect ratio for a character
+const getAspectRatio = (characterName: string, currentSize?: { width: number; height: number }): number => {
+  if (currentSize && currentSize.width > 0 && currentSize.height > 0) {
+    return currentSize.width / currentSize.height;
+  }
+  const defaultSize = getDefaultSize(characterName);
+  return defaultSize.width / defaultSize.height;
 };
 
 export function CharacterSizeControls({
@@ -47,16 +55,11 @@ export function CharacterSizeControls({
   const [localSizes, setLocalSizes] = useState<CharacterSizes>(characterSizes);
   const [isOpen, setIsOpen] = useState(defaultExpanded);
 
-  const updateSize = (character: keyof CharacterSizes, dimension: 'width' | 'height', value: number) => {
+  const updateSize = (character: string, dimension: 'width' | 'height', value: number) => {
     if (disabled) return;
     
-    const currentSize = localSizes[character] || defaultSizes[character]!;
-    
-    // Calculate aspect ratio from current size (if it exists and is valid), otherwise use default
-    // This ensures we preserve the aspect ratio that the user has already set (which may differ from defaults)
-    const currentAspectRatio = currentSize.width > 0 && currentSize.height > 0
-      ? currentSize.width / currentSize.height
-      : aspectRatios[character];
+    const currentSize = localSizes[character] || getDefaultSize(character);
+    const currentAspectRatio = getAspectRatio(character, currentSize);
     
     // Maintain aspect ratio: when width changes, adjust height; when height changes, adjust width
     const newSizes = {
@@ -76,9 +79,8 @@ export function CharacterSizeControls({
     onCharacterSizesChange(newSizes);
   };
 
-  const resetCharacter = (character: keyof CharacterSizes) => {
-    const defaultSize = defaultSizes[character];
-    if (!defaultSize) return;
+  const resetCharacter = (character: string) => {
+    const defaultSize = getDefaultSize(character);
     
     const newSizes = {
       ...localSizes,
@@ -89,15 +91,17 @@ export function CharacterSizeControls({
   };
 
   const resetAll = () => {
-    setLocalSizes(defaultSizes);
-    onCharacterSizesChange(defaultSizes);
+    // Reset all selected characters to their default sizes
+    const resetSizes: CharacterSizes = {};
+    selectedCharacters.forEach((name) => {
+      resetSizes[name] = getDefaultSize(name);
+    });
+    setLocalSizes(resetSizes);
+    onCharacterSizesChange(resetSizes);
   };
 
-  // Only show controls for selected characters
-  const charactersToShow = selectedCharacters.filter(
-    (name): name is keyof CharacterSizes => 
-      name in defaultSizes
-  ) as (keyof CharacterSizes)[];
+  // Show controls for all selected characters (including custom ones)
+  const charactersToShow = selectedCharacters.filter(Boolean);
 
   if (charactersToShow.length === 0) {
     return (
@@ -150,7 +154,7 @@ export function CharacterSizeControls({
       {isOpen && (
         <CardContent className="space-y-6">
         {charactersToShow.map((character) => {
-          const currentSize = localSizes[character] || defaultSizes[character]!;
+          const currentSize = localSizes[character] || getDefaultSize(character);
           
           return (
             <div key={character} className="space-y-4">

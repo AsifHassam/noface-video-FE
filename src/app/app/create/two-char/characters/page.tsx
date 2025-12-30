@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Stepper } from "@/components/create/stepper";
 import { CharacterCard } from "@/components/create/character-card";
+import { CreateCharacterCard } from "@/components/create/create-character-card";
+import { CreateCharacterDialog } from "@/components/create/create-character-dialog";
 import { Button } from "@/components/ui/button";
-import { useCharacterStore } from "@/lib/stores/character-store";
+import { useCharacterStore, useAllCharacters } from "@/lib/stores/character-store";
 import { useProjectStore } from "@/lib/stores/project-store";
 import type { Character } from "@/types";
 import { toast } from "sonner";
@@ -20,8 +22,15 @@ const steps = [
 export default function CharacterSelectionPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { characters } = useCharacterStore();
+  const { loadCustomCharacters, refreshCharacters } = useCharacterStore();
+  const allCharacters = useAllCharacters();
   const { draft, setDraftCharacters, startDraft } = useProjectStore();
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+
+  // Load custom characters on mount
+  useEffect(() => {
+    loadCustomCharacters();
+  }, [loadCustomCharacters]);
   
   // Clear all draft data when starting a new video (not editing)
   useEffect(() => {
@@ -62,6 +71,12 @@ export default function CharacterSelectionPage() {
     router.push("/app/create/two-char/script");
   };
 
+  const handleCharacterCreated = async () => {
+    // Reload characters from API
+    await refreshCharacters();
+    toast.success("Character created! It's now available in the list.");
+  };
+
   return (
     <div className="flex flex-col gap-8">
       <Stepper steps={steps} activeIndex={0} />
@@ -73,12 +88,23 @@ export default function CharacterSelectionPage() {
           </p>
         </header>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {characters.map((character) => (
+          {/* Create Character Card */}
+          <CreateCharacterCard onClick={() => setIsCreateDialogOpen(true)} />
+          
+          {/* All Characters (custom + default) */}
+          {allCharacters.map((character) => (
               <CharacterCard
                 key={character.id}
                 character={character}
                 selected={selected.some((item) => item.id === character.id)}
                 onSelect={toggleCharacter}
+                onDelete={() => {
+                  // Deselect the character if it was selected
+                  const isSelected = selected.some((item) => item.id === character.id);
+                  if (isSelected) {
+                    toggleCharacter(character);
+                  }
+                }}
               />
             ))}
         </div>
@@ -88,6 +114,13 @@ export default function CharacterSelectionPage() {
           </Button>
         </div>
       </div>
+
+      {/* Create Character Dialog */}
+      <CreateCharacterDialog
+        open={isCreateDialogOpen}
+        onOpenChange={setIsCreateDialogOpen}
+        onCharacterCreated={handleCharacterCreated}
+      />
     </div>
   );
 }

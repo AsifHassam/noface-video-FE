@@ -23,6 +23,7 @@ import { config } from "@/lib/config";
 import { SaveTemplateDialog } from "@/components/create/save-template-dialog";
 import { templatesApi } from "@/lib/api/projects";
 import { subscriptionApi } from "@/lib/api/subscription";
+import { getBackgrounds } from "@/lib/data/backgrounds-api";
 
 const steps = [
   { label: "Step 1", description: "Pick two characters" },
@@ -115,18 +116,25 @@ export default function PreviewPage() {
   }
   const status = effectiveStatus;
   
-  // Helper function to get background video URL from S3
+  // State to cache background videos
+  const [backgroundVideos, setBackgroundVideos] = useState<Array<{ id: string; s3_url: string }>>([]);
+  
+  // Load background videos on mount
+  useEffect(() => {
+    getBackgrounds()
+      .then((backgrounds) => {
+        setBackgroundVideos(backgrounds.map(bg => ({ id: bg.id, s3_url: bg.previewUrl || '' })));
+      })
+      .catch((error) => {
+        console.error('Error loading background videos:', error);
+      });
+  }, []);
+  
+  // Helper function to get background video URL from API
   const getBackgroundVideoUrl = (backgroundId: string | null | undefined): string | null => {
     if (!backgroundId) return null;
-    const S3_BUCKET_NAME = process.env.NEXT_PUBLIC_BACKGROUND_VIDEOS_BUCKET || "remotion-background-videos";
-    const S3_REGION = process.env.NEXT_PUBLIC_AWS_REGION || "us-east-1";
-    const backgroundMap: Record<string, string> = {
-      minecraft: "mine_converted.mp4",
-      subway: "Subway.mp4",
-      mine_2_cfr: "mine_2_cfr.mp4",
-    };
-    const fileName = backgroundMap[backgroundId] || backgroundMap.mine_2_cfr;
-    return `https://${S3_BUCKET_NAME}.s3.${S3_REGION}.amazonaws.com/videos/${fileName}`;
+    const background = backgroundVideos.find(bg => bg.id === backgroundId);
+    return background?.s3_url || null;
   };
   
   // Initialize captionsGenerated based on whether srtText exists
@@ -702,15 +710,61 @@ export default function PreviewPage() {
             }}
           />
           {/* Character Size Controls */}
-          {draft?.characters?.A || draft?.characters?.B ? (
-            <CharacterSizeControls
-              characterSizes={draft?.characterSizes || {
+          {draft?.characters?.A || draft?.characters?.B ? (() => {
+            // Initialize default sizes for custom characters if they don't exist
+            const defaultSizes: Record<string, { width: number; height: number }> = {
                 Peter: { width: 400, height: 500 },
                 Stewie: { width: 350, height: 450 },
-                Rick: { width: 800, height: 1000 }, // 2x default size
+              Rick: { width: 800, height: 1000 },
                 Brian: { width: 350, height: 450 },
-                Morty: { width: 560, height: 720 }, // 2x default size, reduced by 20%
-              }}
+              Morty: { width: 560, height: 720 },
+            };
+            
+            // Default size for custom characters
+            const DEFAULT_CUSTOM_SIZE = { width: 400, height: 500 };
+            
+            // Merge existing characterSizes with defaults for selected characters
+            const initializedSizes: Record<string, { width: number; height: number }> = {
+              ...draft?.characterSizes || {},
+            };
+            
+            // Ensure selected characters have sizes
+            [draft?.characters?.A?.name, draft?.characters?.B?.name]
+              .filter(Boolean)
+              .forEach((charName) => {
+                if (charName && !initializedSizes[charName]) {
+                  initializedSizes[charName] = defaultSizes[charName] || DEFAULT_CUSTOM_SIZE;
+                }
+              });
+            
+            // Initialize default positions for custom characters
+            const defaultPositions: Record<string, 'left' | 'right' | 'center'> = {
+              Peter: 'left',
+              Stewie: 'right',
+              Rick: 'left',
+              Brian: 'right',
+              Morty: 'right',
+            };
+            
+            const DEFAULT_CUSTOM_POSITION: 'left' | 'right' = 'left'; // Default to left for custom characters
+            
+            const initializedPositions: Record<string, 'left' | 'right' | 'center'> = {
+              ...draft?.characterPositions || {},
+            };
+            
+            // Ensure selected characters have positions
+            [draft?.characters?.A?.name, draft?.characters?.B?.name]
+              .filter(Boolean)
+              .forEach((charName, index) => {
+                if (charName && !initializedPositions[charName]) {
+                  // Alternate positions: first character left, second right
+                  initializedPositions[charName] = defaultPositions[charName] || (index === 0 ? 'left' : 'right');
+                }
+              });
+            
+            return (
+              <CharacterSizeControls
+                characterSizes={initializedSizes}
               onCharacterSizesChange={(sizes) => {
                 updateDraft({ characterSizes: sizes });
                 // Auto-save to project if it exists
@@ -719,13 +773,7 @@ export default function PreviewPage() {
                   updateProject(projectId, { characterSizes: sizes } as any).catch(() => {});
                 }
               }}
-              characterPositions={draft?.characterPositions || {
-                Peter: 'left',
-                Stewie: 'right',
-                Rick: 'left',
-                Brian: 'right',
-                Morty: 'right',
-              }}
+                characterPositions={initializedPositions}
               onCharacterPositionsChange={(positions) => {
                 updateDraft({ characterPositions: positions });
                 // Auto-save to project if it exists
@@ -741,7 +789,8 @@ export default function PreviewPage() {
               defaultExpanded={isCharacterSettingsExpanded}
               disabled={isInitialState}
             />
-          ) : null}
+            );
+          })() : null}
           
           {/* Beta Notice for Subtitles */}
           {captionsGenerated && (

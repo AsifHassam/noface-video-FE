@@ -27,6 +27,7 @@ export function BackgroundCard({
   onSelect,
 }: BackgroundCardProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [videoError, setVideoError] = useState(false);
 
   return (
     <div
@@ -47,14 +48,28 @@ export function BackgroundCard({
       
       {/* Video Preview */}
       <div className="relative aspect-video w-full overflow-hidden bg-black">
-        {background.previewUrl ? (
+        {background.previewUrl && !videoError ? (
           <video
+            key={background.previewUrl} // Force re-render when URL changes
             src={background.previewUrl}
             className="h-full w-full object-cover"
             muted
             loop
             playsInline
-            preload="metadata"
+            autoPlay
+            preload="auto"
+            onError={(e) => {
+              console.error('Video load error for', background.name, background.previewUrl, e);
+              setVideoError(true);
+            }}
+            onLoadedMetadata={(e) => {
+              // Reset error state if video loads successfully
+              setVideoError(false);
+              // Try to play the video to show the first frame
+              e.currentTarget.play().catch(() => {
+                // Autoplay may be blocked, that's okay
+              });
+            }}
           />
         ) : (
           <div className="flex h-full items-center justify-center bg-gradient-to-br from-muted to-muted/50">
@@ -108,6 +123,9 @@ export function BackgroundCard({
                     controls
                     className="h-full w-full"
                     autoPlay
+                    onError={(e) => {
+                      console.error('Video preview error for', background.name, background.previewUrl, e);
+                    }}
                   >
                     <source src={background.previewUrl} type="video/mp4" />
                   </video>

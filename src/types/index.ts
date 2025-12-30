@@ -77,7 +77,7 @@ export type ImageOverlay = {
   };
 };
 
-export type BackgroundId = "minecraft" | "subway" | "mine_2_cfr" | "subway_surfers" | "asmr1";
+export type BackgroundId = string; // Now dynamic from database
 
 export type Background = {
   id: BackgroundId;
@@ -126,19 +126,11 @@ export type SubtitleFontFamily = 'bebas-neue' | 'impact' | 'montserrat' | 'poppi
 export type CharacterPosition = 'left' | 'center' | 'right';
 
 export type CharacterSizes = {
-  Peter?: { width: number; height: number };
-  Stewie?: { width: number; height: number };
-  Rick?: { width: number; height: number };
-  Brian?: { width: number; height: number };
-  Morty?: { width: number; height: number };
+  [characterName: string]: { width: number; height: number };
 };
 
 export type CharacterPositions = {
-  Peter?: CharacterPosition;
-  Stewie?: CharacterPosition;
-  Rick?: CharacterPosition;
-  Brian?: CharacterPosition;
-  Morty?: CharacterPosition;
+  [characterName: string]: CharacterPosition;
 };
 
 export type Project = {

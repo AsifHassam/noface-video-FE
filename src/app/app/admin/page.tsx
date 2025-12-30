@@ -129,6 +129,15 @@ export default function AdminDashboardPage() {
             Manage users and monitor video creation activity
           </p>
         </div>
+        <div className="flex gap-3">
+          <Button
+            onClick={() => router.push("/app/admin/backgrounds")}
+            variant="outline"
+            className="rounded-2xl"
+          >
+            <Video className="h-4 w-4 mr-2" />
+            Background Videos
+          </Button>
         <Button
           onClick={handleRefresh}
           disabled={refreshing}
@@ -138,6 +147,7 @@ export default function AdminDashboardPage() {
           <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
           Refresh
         </Button>
+        </div>
       </div>
 
       {/* Statistics Cards */}

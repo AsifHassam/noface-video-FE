@@ -248,7 +248,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           name: charA.name,
           voice_id: charA.voiceId ?? undefined,
           voice_provider: "elevenlabs",
-          avatar_url: (charA as any).imageUrl || (charA as any).avatar || '',
+          avatar_url: charA.avatarUrl || '',
           position: 0,
         });
         characters.A = {
@@ -263,7 +263,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           name: charB.name,
           voice_id: charB.voiceId ?? undefined,
           voice_provider: "elevenlabs",
-          avatar_url: (charB as any).imageUrl || (charB as any).avatar || '',
+          avatar_url: charB.avatarUrl || '',
           position: 1,
         });
         characters.B = {
@@ -1084,6 +1084,51 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         fromMetadata: !!finalRedditTitle && !draft.redditTitle,
         draftKeys: Object.keys(draft),
       });
+      // Initialize character sizes for custom characters if missing
+      const defaultSizes: Record<string, { width: number; height: number }> = {
+        Peter: { width: 320, height: 400 },
+        Stewie: { width: 280, height: 360 },
+        Rick: { width: 480, height: 600 },
+        Brian: { width: 280, height: 360 },
+        Morty: { width: 400, height: 520 },
+      };
+      const DEFAULT_CUSTOM_SIZE = { width: 400, height: 500 };
+      
+      const initializedCharacterSizes = {
+        ...draft.characterSizes || {},
+      };
+      
+      // Ensure selected characters have sizes
+      [draft.characters?.A?.name, draft.characters?.B?.name]
+        .filter(Boolean)
+        .forEach((charName) => {
+          if (charName && !initializedCharacterSizes[charName]) {
+            initializedCharacterSizes[charName] = defaultSizes[charName] || DEFAULT_CUSTOM_SIZE;
+          }
+        });
+      
+      // Initialize character positions for custom characters if missing
+      const defaultPositions: Record<string, 'left' | 'right' | 'center'> = {
+        Peter: 'left',
+        Stewie: 'right',
+        Rick: 'left',
+        Brian: 'right',
+        Morty: 'right',
+      };
+      
+      const initializedCharacterPositions = {
+        ...draft.characterPositions || {},
+      };
+      
+      // Ensure selected characters have positions
+      [draft.characters?.A?.name, draft.characters?.B?.name]
+        .filter(Boolean)
+        .forEach((charName, index) => {
+          if (charName && !initializedCharacterPositions[charName]) {
+            initializedCharacterPositions[charName] = defaultPositions[charName] || (index === 0 ? 'left' : 'right');
+          }
+        });
+      
       // Build the request payload
       const requestPayload: any = {
         textOverlays: draft.textOverlays,
@@ -1100,8 +1145,8 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         srtText: draft.srtText,
         imageOverlays: draft.imageOverlays,
         playbackRate: draft.playbackRate || 1, // Include playback rate
-        characterSizes: draft.characterSizes, // Include character sizes
-        characterPositions: draft.characterPositions, // Include character positions
+        characterSizes: initializedCharacterSizes, // Include initialized character sizes (with custom characters)
+        characterPositions: initializedCharacterPositions, // Include initialized character positions (with custom characters)
         characterCustomPositions: draft.characterCustomPositions, // Include custom character positions
       };
       

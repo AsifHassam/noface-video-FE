@@ -23,6 +23,7 @@ import { SaveTemplateDialog } from "@/components/create/save-template-dialog";
 import { templatesApi } from "@/lib/api/projects";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { subscriptionApi } from "@/lib/api/subscription";
+import { getBackgrounds } from "@/lib/data/backgrounds-api";
 
 const steps = [
   { label: "Step 1", description: "Write narration" },
@@ -209,19 +210,25 @@ export default function StoryPreviewPage() {
     updateDraft({ playbackRate: rate });
   }, [updateDraft]);
 
-  // Helper function to get background video URL (for browser preview mode)
-  // Helper function to get background video URL from S3
+  // State to cache background videos
+  const [backgroundVideos, setBackgroundVideos] = useState<Array<{ id: string; s3_url: string }>>([]);
+  
+  // Load background videos on mount
+  useEffect(() => {
+    getBackgrounds()
+      .then((backgrounds) => {
+        setBackgroundVideos(backgrounds.map(bg => ({ id: bg.id, s3_url: bg.previewUrl || '' })));
+      })
+      .catch((error) => {
+        console.error('Error loading background videos:', error);
+      });
+  }, []);
+  
+  // Helper function to get background video URL from API
   const getBackgroundVideoUrl = (backgroundId: string | null | undefined): string | null => {
     if (!backgroundId) return null;
-    const S3_BUCKET_NAME = process.env.NEXT_PUBLIC_BACKGROUND_VIDEOS_BUCKET || "remotion-background-videos";
-    const S3_REGION = process.env.NEXT_PUBLIC_AWS_REGION || "us-east-1";
-    const backgroundMap: Record<string, string> = {
-      minecraft: "mine_converted.mp4",
-      subway: "Subway.mp4",
-      mine_2_cfr: "mine_2_cfr.mp4",
-    };
-    const fileName = backgroundMap[backgroundId] || backgroundMap.mine_2_cfr;
-    return `https://${S3_BUCKET_NAME}.s3.${S3_REGION}.amazonaws.com/videos/${fileName}`;
+    const background = backgroundVideos.find(bg => bg.id === backgroundId);
+    return background?.s3_url || null;
   };
 
   const handleGeneratePreview = async () => {

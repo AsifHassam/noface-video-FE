@@ -48,8 +48,6 @@ const NAV_ITEMS: NavItem[] = [
     label: "Settings",
     href: "/app/settings",
     icon: Settings2,
-    disabled: true,
-    tooltip: "Coming soon",
   },
 ];
 

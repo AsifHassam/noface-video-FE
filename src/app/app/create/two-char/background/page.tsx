@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { Loader2 } from "lucide-react";
 import { Stepper } from "@/components/create/stepper";
 import { BackgroundCard } from "@/components/create/background-card";
 import { useProjectStore } from "@/lib/stores/project-store";
-import { BACKGROUNDS, getBackgroundDuration } from "@/lib/data/backgrounds";
+import { getBackgrounds, getBackgroundDuration } from "@/lib/data/backgrounds";
 import { estimateDurationFromScriptLines } from "@/lib/utils/duration-estimator";
 import type { Background } from "@/types";
 import { toast } from "sonner";
@@ -21,19 +22,38 @@ const steps = [
 export default function BackgroundPage() {
   const router = useRouter();
   const { draft, updateDraft } = useProjectStore();
+  const [backgrounds, setBackgrounds] = useState<Background[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!draft?.script?.length) {
       toast.info("Write a script before choosing a background.");
       router.replace("/app/create/two-char/script");
+      return;
     }
+
+    // Load backgrounds from API
+    const loadBackgrounds = async () => {
+      try {
+        setLoading(true);
+        const data = await getBackgrounds();
+        setBackgrounds(data);
+      } catch (error) {
+        console.error("Error loading backgrounds:", error);
+        toast.error("Failed to load backgrounds. Please try again.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadBackgrounds();
   }, [draft?.script?.length, router]);
 
   const handleSelect = (background: Background) => {
     updateDraft({ backgroundId: background.id });
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (!draft?.backgroundId) {
       toast.error("Please select a gameplay background");
       return;
@@ -42,7 +62,7 @@ export default function BackgroundPage() {
     // Check video duration - must be less than background video length (with 10% buffer)
     // Use the same calculation as the script editor (uses scriptInput to match exactly)
     const estimatedDuration = estimateDurationFromScriptLines(draft?.script, draft?.scriptInput);
-    const backgroundDuration = getBackgroundDuration(draft.backgroundId);
+    const backgroundDuration = await getBackgroundDuration(draft.backgroundId);
     
     if (backgroundDuration) {
       const maxAllowedDuration = backgroundDuration * 0.9; // 10% buffer
@@ -70,8 +90,13 @@ export default function BackgroundPage() {
             We&apos;ll sync your script timing to the clip you pick.
           </p>
         </header>
+        {loading ? (
+          <div className="flex items-center justify-center min-h-[400px]">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
         <div className="grid gap-4 md:grid-cols-3">
-          {BACKGROUNDS.map((background) => (
+            {backgrounds.map((background) => (
             <BackgroundCard
               key={background.id}
               background={background}
@@ -80,6 +105,7 @@ export default function BackgroundPage() {
             />
           ))}
         </div>
+        )}
         <div className="flex justify-end gap-3">
           <Button
             variant="ghost"
