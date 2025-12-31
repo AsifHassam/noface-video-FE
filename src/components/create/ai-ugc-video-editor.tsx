@@ -79,6 +79,7 @@ import { SubtitleStyleSelector } from "./subtitle-style-selector";
 import { getSubtitleStyle, OUTLINED_STYLE, STYLE_KARAOKE_PINK, STYLE_MAGIC_LOOPS, STYLE_BOLD_GREEN } from "@/lib/data/subtitle-styles";
 import { SubtitlesEditor } from "./subtitles-editor";
 import { serializeSrt, parseSrtText } from "@/lib/utils/srt";
+import { bRollsApi, type BRoll } from "@/lib/api/b-rolls";
 import {
   createUGCProject,
   getUGCProject,
@@ -167,7 +168,7 @@ type CanvasElement = {
   audioStartOffset?: number; // Offset in milliseconds - where in the audio file to start playing from (for trimming)
 };
 
-type SidebarSection = "avatars" | "media" | "templates" | "elements" | "audio" | "text" | "captions";
+type SidebarSection = "avatars" | "media" | "templates" | "elements" | "audio" | "text" | "captions" | "brolls";
 
 type Avatar = {
   id: string;
@@ -583,6 +584,12 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   const [uploadedAudios, setUploadedAudios] = useState<Array<{ id: string; url: string; name: string; storage_path: string; created_at: string }>>([]);
   const [loadingAudios, setLoadingAudios] = useState(false);
   const [audioDialogOpen, setAudioDialogOpen] = useState(false);
+  // B-rolls state
+  const [bRolls, setBRolls] = useState<BRoll[]>([]);
+  const [loadingBRolls, setLoadingBRolls] = useState(false);
+  const [selectedBRollIds, setSelectedBRollIds] = useState<string[]>([]); // Max 5 selected
+  const [jumpCutInterval, setJumpCutInterval] = useState<number | null>(null); // In seconds
+  const [fillJumpCutsDialogOpen, setFillJumpCutsDialogOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadingFileName, setUploadingFileName] = useState<string | null>(null);
   const [generatedVideos, setGeneratedVideos] = useState<UGCGeneratedVideo[]>([]);
@@ -740,7 +747,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   // Store original media durations for hard stop enforcement
   const originalMediaDurationsRef = useRef<Map<string, number>>(new Map());
   const [isDraggingPlayhead, setIsDraggingPlayhead] = useState(false);
-  const [resizeStart, setResizeStart] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const [resizeStart, setResizeStart] = useState({ x: 0, y: 0, width: 0, height: 0, imageOffsetX: 50, imageOffsetY: 50 });
   const [panStart, setPanStart] = useState({ x: 0, y: 0 }); // Initial pan position
   const [timelineHeight, setTimelineHeight] = useState(160); // Timeline height in pixels (default: 160px = h-40)
   const [isResizingTimeline, setIsResizingTimeline] = useState(false);
@@ -1460,6 +1467,115 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       console.error("Error deleting audio:", error);
       alert('Failed to delete audio. Please try again.');
     }
+  };
+
+  const loadBRolls = useCallback(async () => {
+    setLoadingBRolls(true);
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), 30000)
+      );
+      
+      const result = await Promise.race([
+        bRollsApi.list(),
+        timeoutPromise
+      ]);
+      
+      console.log("Loaded B-rolls:", result.bRolls);
+      setBRolls(result.bRolls || []);
+    } catch (error: any) {
+      console.error("Error loading B-rolls:", error);
+      setBRolls([]);
+      if (error.message !== 'Request timeout') {
+        console.warn("Failed to load B-rolls, continuing with empty list");
+      }
+    } finally {
+      setLoadingBRolls(false);
+    }
+  }, []);
+
+  // Load B-rolls when B-rolls section is activated
+  useEffect(() => {
+    if (activeSidebarSection === "brolls" && bRolls.length === 0 && !loadingBRolls) {
+      loadBRolls();
+    }
+  }, [activeSidebarSection, bRolls.length, loadingBRolls, loadBRolls]);
+
+  /**
+   * Generate B-roll clips at specified intervals
+   * @param totalDurationMs - Total video duration in milliseconds
+   * @param intervalSeconds - Jump cut interval in seconds
+   * @param selectedBRolls - Array of selected B-roll objects
+   * @returns Array of CanvasElement objects for B-roll clips
+   */
+  const generateBRollClips = (
+    totalDurationMs: number,
+    intervalSeconds: number,
+    selectedBRolls: BRoll[]
+  ): CanvasElement[] => {
+    console.log('🔍 generateBRollClips called with:', {
+      totalDurationMs,
+      intervalSeconds,
+      selectedBRollsCount: selectedBRolls.length,
+      selectedBRolls: selectedBRolls.map(b => ({ id: b.id, name: b.name, url: b.url, durationSeconds: b.durationSeconds }))
+    });
+
+    if (selectedBRolls.length === 0 || intervalSeconds <= 0) {
+      console.warn('⚠️ generateBRollClips: Invalid input - selectedBRolls.length:', selectedBRolls.length, 'intervalSeconds:', intervalSeconds);
+      return [];
+    }
+
+    const clips: CanvasElement[] = [];
+    const intervalMs = intervalSeconds * 1000;
+    const clipDurationMs = 3000; // 3 seconds per clip
+    const totalDurationSeconds = totalDurationMs / 1000;
+
+    console.log('📊 Generating clips:', {
+      totalDurationSeconds,
+      intervalSeconds,
+      expectedClips: Math.floor((totalDurationSeconds - intervalSeconds) / intervalSeconds) + 1
+    });
+
+    // Generate clips at each interval (start from intervalSeconds, end before totalDurationSeconds)
+    for (let time = intervalSeconds; time < totalDurationSeconds; time += intervalSeconds) {
+      console.log(`🔄 Generating clip at ${time}s`);
+      // Randomly select a B-roll from the selected ones
+      const randomBRoll = selectedBRolls[Math.floor(Math.random() * selectedBRolls.length)];
+      
+      if (!randomBRoll || !randomBRoll.url) {
+        console.warn('⚠️ B-roll missing URL:', randomBRoll);
+        continue;
+      }
+
+      // Calculate random start offset within the B-roll video
+      // Ensure we can play at least 3 seconds from the start point
+      const bRollDurationSeconds = randomBRoll.durationSeconds || 10; // Default 10s if not available
+      const maxStartOffsetSeconds = Math.max(0, bRollDurationSeconds - 3); // Leave 3s for clip
+      const randomStartOffsetSeconds = Math.random() * maxStartOffsetSeconds;
+      const videoStartOffsetMs = randomStartOffsetSeconds * 1000;
+
+      // Create clip element
+      const clip: CanvasElement = {
+        id: uuid(),
+        type: "video",
+        url: randomBRoll.url,
+        x: 0, // Full screen overlay
+        y: 0,
+        width: 100,
+        height: 100,
+        rotation: 0,
+        opacity: 1,
+        zIndex: 1000 + clips.length, // High z-index to be on top
+        startTime: time * 1000, // Start at the interval time
+        duration: clipDurationMs, // 3 seconds
+        videoStartOffset: videoStartOffsetMs, // Random start point in the B-roll video
+        muted: true, // B-rolls are overlays, typically muted
+      };
+
+      clips.push(clip);
+    }
+
+    return clips;
   };
 
   // Toggle playback
@@ -3262,6 +3378,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     { id: "audio", label: "Audio", icon: Music },
     { id: "text", label: "Text", icon: Type },
     { id: "captions", label: "Captions", icon: FileText },
+    { id: "brolls", label: "B-rolls", icon: VideoIcon },
   ];
 
   // Calculate active subtitle based on current time
@@ -3983,7 +4100,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     let x = 50;
     let y = 50;
     
-    // For images, fill the entire canvas initially
+    // For images, fill the canvas (100%) - user can resize/expand beyond canvas bounds (like Canva)
     if (type === "image") {
       width = 100;
       height = 100;
@@ -4119,6 +4236,16 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     updateCanvasElement(id, { zIndex: newZIndex });
   };
 
+  // Fill canvas with video (set to 100% width and height, centered)
+  const fillCanvas = (id: string) => {
+    updateCanvasElement(id, {
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+    });
+  };
+
   // Download exported video
   const handleDownloadVideo = useCallback(async () => {
     // Always read from ref first (most up-to-date), then fallback to state
@@ -4237,6 +4364,9 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
         showSubtitles: showSubtitles,
         karaokePillColor: karaokePillColor,
         boldGreenColor: boldGreenColor,
+        // B-roll state
+        selectedBRollIds: selectedBRollIds,
+        jumpCutInterval: jumpCutInterval,
         savedAt: new Date().toISOString()
       };
 
@@ -4278,7 +4408,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       
       alert(`Failed to save project: ${errorMessage}`);
     }
-  }, [currentProject, canvasElements, duration, currentTime, playbackRate, isMuted, subtitleSegments, subtitleStyle, subtitlePosition, subtitleFontSize, subtitleFontFamily, subtitleSingleLine, subtitleSingleWord, showSubtitles, karaokePillColor, boldGreenColor]);
+  }, [currentProject, canvasElements, duration, currentTime, playbackRate, isMuted, subtitleSegments, subtitleStyle, subtitlePosition, subtitleFontSize, subtitleFontFamily, subtitleSingleLine, subtitleSingleWord, showSubtitles, karaokePillColor, boldGreenColor, selectedBRollIds, jumpCutInterval]);
 
   // Autosave function (silent, no alerts)
   const handleAutosave = useCallback(async () => {
@@ -4312,6 +4442,9 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
         showSubtitles: showSubtitles,
         karaokePillColor: karaokePillColor,
         boldGreenColor: boldGreenColor,
+        // B-roll state
+        selectedBRollIds: selectedBRollIds,
+        jumpCutInterval: jumpCutInterval,
         savedAt: new Date().toISOString()
       };
 
@@ -4337,7 +4470,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       // Silently fail for autosave - don't show alerts
       console.warn('[Autosave] ⚠️ Autosave failed (silent):', error.message);
     }
-  }, [currentProject, canvasElements, duration, currentTime, playbackRate, isMuted, subtitleSegments, subtitleStyle, subtitlePosition, subtitleFontSize, subtitleFontFamily, subtitleSingleLine, subtitleSingleWord, showSubtitles, karaokePillColor, boldGreenColor]);
+  }, [currentProject, canvasElements, duration, currentTime, playbackRate, isMuted, subtitleSegments, subtitleStyle, subtitlePosition, subtitleFontSize, subtitleFontFamily, subtitleSingleLine, subtitleSingleWord, showSubtitles, karaokePillColor, boldGreenColor, selectedBRollIds, jumpCutInterval]);
 
   // Autosave every 60 seconds
   useEffect(() => {
@@ -4418,6 +4551,16 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
         }
         if (canvasState.boldGreenColor) {
           setBoldGreenColor(canvasState.boldGreenColor);
+        }
+
+        // Restore B-roll state
+        if (canvasState.selectedBRollIds && Array.isArray(canvasState.selectedBRollIds)) {
+          setSelectedBRollIds(canvasState.selectedBRollIds);
+          console.log('[Load] Restored B-roll selections:', canvasState.selectedBRollIds.length);
+        }
+        if (canvasState.jumpCutInterval !== undefined && canvasState.jumpCutInterval !== null) {
+          setJumpCutInterval(canvasState.jumpCutInterval);
+          console.log('[Load] Restored jump cut interval:', canvasState.jumpCutInterval);
         }
 
         console.log('[Load] Project state loaded successfully');
@@ -4857,8 +5000,47 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     if (direction) {
       setIsResizing(true);
       setResizeDirection(direction);
-      // Store element's position and size, plus initial mouse position for delta calculation
-      setResizeStart({ x: elementX, y: elementY, width: elementW, height: elementH });
+      
+      // For images, determine the anchor point based on resize direction
+      // Store initial offsets to maintain anchor during resize
+      let initialImageOffsetX = element.imageOffsetX ?? 50;
+      let initialImageOffsetY = element.imageOffsetY ?? 50;
+      
+      if (element.type === "image") {
+        // Set anchor point based on resize direction (opposite edge)
+        // This ensures cropping happens only from the direction being resized
+        if (direction.includes('e')) {
+          // Resizing from right (east) - anchor image to left edge (0%)
+          // This means the left part of the image stays visible, right gets cropped
+          initialImageOffsetX = 0;
+        } else if (direction.includes('w')) {
+          // Resizing from left (west) - anchor image to right edge (100%)
+          // This means the right part of the image stays visible, left gets cropped
+          initialImageOffsetX = 100;
+        }
+        // If resizing from both sides (shouldn't happen with single direction), keep current offset
+        
+        if (direction.includes('s')) {
+          // Resizing from bottom (south) - anchor image to top edge (0%)
+          // This means the top part of the image stays visible, bottom gets cropped
+          initialImageOffsetY = 0;
+        } else if (direction.includes('n')) {
+          // Resizing from top (north) - anchor image to bottom edge (100%)
+          // This means the bottom part of the image stays visible, top gets cropped
+          initialImageOffsetY = 100;
+        }
+        // If resizing from both top/bottom (shouldn't happen), keep current offset
+      }
+      
+      // Store element's position, size, and image offsets for resize calculation
+      setResizeStart({ 
+        x: elementX, 
+        y: elementY, 
+        width: elementW, 
+        height: elementH,
+        imageOffsetX: initialImageOffsetX,
+        imageOffsetY: initialImageOffsetY
+      });
       // Store initial mouse position separately for delta calculation
       setDragStart({ x: mouseX, y: mouseY });
     } else if (element.type === "image" && e.ctrlKey) {
@@ -4969,39 +5151,61 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       
       const minSize = 5; // Minimum size in percentage
       
+      // For images, use the anchor point stored at resize start
+      // This ensures the image stays anchored to the opposite edge throughout the resize
+      // The anchor point is set once at resize start and never changes during resize
+      let newImageOffsetX = resizeStart.imageOffsetX;
+      let newImageOffsetY = resizeStart.imageOffsetY;
+      
       // Handle different resize directions
       // Horizontal resizing
       if (resizeDirection.includes('e')) {
         // East (right) edge or corner - resize width from right, keep left edge fixed
+        // Image is anchored to left (imageOffsetX = 0), so only right side gets cropped
         newWidth = Math.max(minSize, resizeStart.width + deltaX);
+        // Keep imageOffsetX at 0 (left anchor) - don't change it
       }
       if (resizeDirection.includes('w')) {
         // West (left) edge or corner - resize width from left, adjust x to keep right edge fixed
+        // Image is anchored to right (imageOffsetX = 100), so only left side gets cropped
         newX = resizeStart.x + deltaX;
         newWidth = Math.max(minSize, resizeStart.width - deltaX);
+        // Keep imageOffsetX at 100 (right anchor) - don't change it
       }
       
       // Vertical resizing
       if (resizeDirection.includes('s')) {
         // South (bottom) edge or corner - resize height from bottom, keep top edge fixed
+        // Image is anchored to top (imageOffsetY = 0), so only bottom side gets cropped
         newHeight = Math.max(minSize, resizeStart.height + deltaY);
+        // Keep imageOffsetY at 0 (top anchor) - don't change it
       }
       if (resizeDirection.includes('n')) {
         // North (top) edge or corner - resize height from top, adjust y to keep bottom edge fixed
+        // Image is anchored to bottom (imageOffsetY = 100), so only top side gets cropped
         newY = resizeStart.y + deltaY;
         newHeight = Math.max(minSize, resizeStart.height - deltaY);
+        // Keep imageOffsetY at 100 (bottom anchor) - don't change it
       }
       
       // Ensure minimum size
       newWidth = Math.max(minSize, newWidth);
       newHeight = Math.max(minSize, newHeight);
       
-      updateCanvasElement(selectedElementId, { 
-        x: newX, 
-        y: newY, 
-        width: newWidth, 
-        height: newHeight 
-      });
+      // Update element with position, size, and image offset (for images)
+      const updates: Partial<CanvasElement> = {
+        x: newX,
+        y: newY,
+        width: newWidth,
+        height: newHeight
+      };
+      
+      if (element.type === "image") {
+        updates.imageOffsetX = newImageOffsetX;
+        updates.imageOffsetY = newImageOffsetY;
+      }
+      
+      updateCanvasElement(selectedElementId, updates);
     }
   };
 
@@ -6187,6 +6391,73 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
             </div>
           )}
 
+          {activeSidebarSection === "brolls" && (
+            <div className="border-t border-border/60 flex flex-col overflow-hidden" style={{ height: "40%", minHeight: 0, maxHeight: "40%" }}>
+              <div className="p-4 space-y-2">
+                {/* Upload B-roll Button */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => document.getElementById("broll-upload")?.click()}
+                  disabled={isUploading && uploadingFileName?.endsWith('.mp4')}
+                >
+                  {isUploading && uploadingFileName?.endsWith('.mp4') ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Uploading...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="h-4 w-4 mr-2" />
+                      Upload B-roll
+                    </>
+                  )}
+                </Button>
+                <Input
+                  id="broll-upload"
+                  type="file"
+                  accept="video/*"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    
+                    setIsUploading(true);
+                    setUploadingFileName(file.name);
+                    
+                    try {
+                      const result = await bRollsApi.upload(file);
+                      await loadBRolls(); // Reload B-rolls list
+                      setUploadingFileName(null);
+                    } catch (error) {
+                      console.error("Error uploading B-roll:", error);
+                      alert(`Failed to upload B-roll: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                    } finally {
+                      setIsUploading(false);
+                      setUploadingFileName(null);
+                      // Reset file input
+                      if (e.target) e.target.value = '';
+                    }
+                  }}
+                  className="hidden"
+                />
+
+                {/* Fill Jump Cuts Button */}
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => {
+                    setFillJumpCutsDialogOpen(true);
+                    loadBRolls(); // Load B-rolls when opening modal
+                  }}
+                >
+                  Fill Jump cuts
+                </Button>
+              </div>
+            </div>
+          )}
+
           {activeSidebarSection === "media" && (
             <div className="border-t border-border/60 flex flex-col" style={{ height: "40%" }}>
               <div className="p-4 space-y-2">
@@ -6828,6 +7099,14 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                           <div className="absolute inset-0" style={{ pointerEvents: 'none' }} />
                         </DropdownMenuTrigger>
                         <DropdownMenuContent>
+                          {element.type === "video" && (
+                            <DropdownMenuItem onClick={() => {
+                              fillCanvas(element.id);
+                              setContextMenuElementId(null);
+                            }}>
+                              Fill canvas
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem onClick={() => {
                             bringToFront(element.id);
                             setContextMenuElementId(null);
@@ -7457,7 +7736,9 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
               x: 0, 
               y: e.clientY, 
               width: 0, 
-              height: timelineHeight 
+              height: timelineHeight,
+              imageOffsetX: 50,
+              imageOffsetY: 50
             });
           }}
           title="Drag to resize timeline"
@@ -7816,8 +8097,24 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                           
                           // Determine border color and label based on element type
                           const isImage = element.type === "image";
-                          const borderColor = isImage ? "border-purple-300 hover:border-purple-500" : "border-blue-300 hover:border-blue-500";
-                          const trimHandleColor = isImage ? "bg-purple-500 hover:bg-purple-600" : "bg-blue-500 hover:bg-blue-600";
+                          // Check if this is a B-roll clip (muted video overlay with videoStartOffset)
+                          const isBRollClip = element.type === "video" && 
+                            element.muted === true && 
+                            element.videoStartOffset !== undefined &&
+                            element.x === 0 && 
+                            element.y === 0 && 
+                            element.width === 100 && 
+                            element.height === 100;
+                          const borderColor = isImage 
+                            ? "border-purple-300 hover:border-purple-500" 
+                            : isBRollClip 
+                            ? "border-green-300 hover:border-green-500" 
+                            : "border-blue-300 hover:border-blue-500";
+                          const trimHandleColor = isImage 
+                            ? "bg-purple-500 hover:bg-purple-600" 
+                            : isBRollClip 
+                            ? "bg-green-500 hover:bg-green-600" 
+                            : "bg-blue-500 hover:bg-blue-600";
                           
                           return (
                             <div
@@ -7846,7 +8143,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                                   startTime: elementStartTime
                                 });
                               }}
-                              title={`${isImage ? 'Image' : 'Video'} - Drag to move on timeline`}
+                              title={`${isImage ? 'Image' : isBRollClip ? 'B-roll' : 'Video'} - Drag to move on timeline`}
                             >
                               {/* Render video or image content */}
                               <div className="h-full flex items-center overflow-hidden rounded relative pointer-events-none" style={{ width: '100%' }}>
@@ -9171,6 +9468,242 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
               </div>
             </ScrollArea>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Fill Jump Cuts Dialog */}
+      <Dialog open={fillJumpCutsDialogOpen} onOpenChange={setFillJumpCutsDialogOpen}>
+        <DialogContent className="!w-[900px] !max-w-[900px] overflow-hidden p-6 flex flex-col max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle>Fill Jump Cuts</DialogTitle>
+            <DialogDescription>
+              Select B-rolls and set the interval to automatically fill jump cuts
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto space-y-6 py-4">
+            {/* Jump Cut Interval Input */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Jump Cut Interval (seconds)</Label>
+              <Input
+                type="number"
+                step="0.1"
+                min="0.1"
+                placeholder="e.g., 5 (B-rolls every 5 seconds)"
+                value={jumpCutInterval ?? ''}
+                onChange={(e) => {
+                  const value = parseFloat(e.target.value);
+                  setJumpCutInterval(isNaN(value) || value <= 0 ? null : value);
+                }}
+              />
+              {jumpCutInterval && (
+                <div className="text-xs text-muted-foreground">
+                  B-rolls will appear every {jumpCutInterval}s
+                </div>
+              )}
+            </div>
+
+            {/* B-rolls Selection */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-medium">Select B-rolls (up to 5)</Label>
+                {selectedBRollIds.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSelectedBRollIds([])}
+                    className="h-6 text-xs"
+                  >
+                    Clear
+                  </Button>
+                )}
+              </div>
+              {selectedBRollIds.length > 0 && (
+                <div className="text-xs text-muted-foreground">
+                  {selectedBRollIds.length} of 5 selected
+                </div>
+              )}
+              {loadingBRolls ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : bRolls.length === 0 ? (
+                <div className="text-center text-sm text-muted-foreground py-12 border rounded-lg">
+                  No B-rolls uploaded yet. Upload B-rolls first.
+                </div>
+              ) : (
+                <ScrollArea className="max-h-[500px] border rounded-lg p-4">
+                  <div className="grid grid-cols-3 gap-4">
+                    {bRolls.map((bRoll) => {
+                      const isSelected = selectedBRollIds.includes(bRoll.id);
+                      const canSelect = isSelected || selectedBRollIds.length < 5;
+                      
+                      return (
+                        <div
+                          key={bRoll.id}
+                          className={cn(
+                            "relative group cursor-pointer rounded-lg border-2 overflow-hidden transition-all",
+                            isSelected ? "border-primary ring-2 ring-primary/20" : "border-border hover:border-primary/50"
+                          )}
+                          onClick={() => {
+                            if (canSelect) {
+                              if (isSelected) {
+                                setSelectedBRollIds(selectedBRollIds.filter(id => id !== bRoll.id));
+                              } else {
+                                setSelectedBRollIds([...selectedBRollIds, bRoll.id]);
+                              }
+                            }
+                          }}
+                        >
+                          {/* Video Preview */}
+                          <div className="relative aspect-video w-full overflow-hidden bg-black">
+                            {bRoll.url ? (
+                              <video
+                                src={bRoll.url}
+                                className="h-full w-full object-cover"
+                                muted
+                                loop
+                                playsInline
+                                preload="metadata"
+                              />
+                            ) : (
+                              <div className="flex h-full items-center justify-center bg-gradient-to-br from-muted to-muted/50">
+                                <VideoIcon className="h-8 w-8 text-muted-foreground/50" />
+                              </div>
+                            )}
+                            {/* Overlay with play icon */}
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/20 transition-opacity group-hover:bg-black/10">
+                              <div className="rounded-full bg-black/60 p-2 backdrop-blur-sm transition-transform group-hover:scale-110">
+                                <Play className="h-4 w-4 text-white" fill="white" />
+                              </div>
+                            </div>
+                            {/* Checkbox overlay */}
+                            <div className="absolute top-2 left-2">
+                              <div className={cn(
+                                "w-6 h-6 rounded border-2 flex items-center justify-center transition-all",
+                                isSelected 
+                                  ? "bg-primary border-primary" 
+                                  : "bg-black/60 border-white/80 backdrop-blur-sm"
+                              )}>
+                                {isSelected && (
+                                  <CheckCircle2 className="h-4 w-4 text-white" />
+                                )}
+                              </div>
+                            </div>
+                            {/* Delete button */}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="absolute top-2 right-2 h-7 w-7 p-0 bg-red-500/80 hover:bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if (confirm(`Delete ${bRoll.name}?`)) {
+                                  try {
+                                    await bRollsApi.delete(bRoll.id);
+                                    setSelectedBRollIds(selectedBRollIds.filter(id => id !== bRoll.id));
+                                    await loadBRolls();
+                                  } catch (error) {
+                                    console.error("Error deleting B-roll:", error);
+                                    alert(`Failed to delete B-roll: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                                  }
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                          {/* Video Info */}
+                          <div className="p-3 bg-background">
+                            <div className="text-sm font-medium truncate">{bRoll.name}</div>
+                            {bRoll.durationSeconds && (
+                              <div className="text-xs text-muted-foreground">
+                                {bRoll.durationSeconds.toFixed(1)}s
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
+              )}
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-4 border-t">
+            <Button
+              variant="outline"
+              onClick={() => setFillJumpCutsDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!jumpCutInterval || selectedBRollIds.length === 0) {
+                  console.warn('⚠️ Apply button clicked but missing required data:', { jumpCutInterval, selectedBRollIds });
+                  return;
+                }
+
+                console.log('🚀 Apply button clicked:', {
+                  jumpCutInterval,
+                  selectedBRollIds,
+                  bRollsCount: bRolls.length,
+                  duration,
+                  canvasElementsCount: canvasElements.length
+                });
+
+                // Get selected B-roll objects
+                const selectedBRolls = bRolls.filter(b => selectedBRollIds.includes(b.id));
+                console.log('📋 Selected B-rolls:', selectedBRolls.map(b => ({ id: b.id, name: b.name, url: b.url, durationSeconds: b.durationSeconds })));
+                
+                if (selectedBRolls.length === 0) {
+                  console.error('❌ No B-rolls found for selected IDs:', selectedBRollIds);
+                  alert('No B-rolls found. Please refresh and try again.');
+                  return;
+                }
+                
+                // Remove existing B-roll clips (identified by muted=true, videoStartOffset set, and full screen overlay)
+                const existingBRollClips = canvasElements.filter(el => 
+                  el.type === "video" && 
+                  el.muted === true && 
+                  el.videoStartOffset !== undefined &&
+                  el.x === 0 && 
+                  el.y === 0 && 
+                  el.width === 100 && 
+                  el.height === 100
+                );
+                
+                console.log('🗑️ Removing existing B-roll clips:', existingBRollClips.length);
+                
+                // Remove existing B-roll clips from canvas
+                const elementsWithoutBRolls = canvasElements.filter(el => 
+                  !existingBRollClips.some(bRollClip => bRollClip.id === el.id)
+                );
+
+                // Generate new B-roll clips
+                const newBRollClips = generateBRollClips(
+                  duration, // Total duration in ms
+                  jumpCutInterval, // Interval in seconds
+                  selectedBRolls
+                );
+
+                console.log('✅ B-roll clips generated:', {
+                  interval: jumpCutInterval,
+                  selectedBRollIds,
+                  clipsGenerated: newBRollClips.length,
+                  totalDuration: duration / 1000 + 's',
+                  newClips: newBRollClips.map(c => ({ startTime: c.startTime, duration: c.duration, url: c.url?.substring(0, 50) + '...' }))
+                });
+
+                // Add new clips to canvas
+                const updatedElements = [...elementsWithoutBRolls, ...newBRollClips];
+                setCanvasElements(updatedElements);
+
+                setFillJumpCutsDialogOpen(false);
+              }}
+              disabled={!jumpCutInterval || selectedBRollIds.length === 0}
+            >
+              Apply
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 
