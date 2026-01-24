@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
-import { Sparkles, MessageCircle, Video } from "lucide-react";
+import { Sparkles, MessageCircle, Video, MessageSquare } from "lucide-react";
 import { subscriptionApi } from "@/lib/api/subscription";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { toast } from "sonner";
@@ -39,6 +39,13 @@ const cards = [
     description: "Traditional storytelling with one narrator and visual accents.",
     icon: Sparkles,
     href: "/app/create/story/script",
+    disabled: false,
+  },
+  {
+    title: "Texting Video",
+    description: "Create engaging texting videos with iMessage-style animations and typing effects.",
+    icon: MessageSquare,
+    href: "/app/create/texting/script",
     disabled: false,
   },
 ];
@@ -183,7 +190,7 @@ export default function CreatePage() {
         </div>
       )}
       
-      <section className="grid gap-6 grid-cols-1 md:grid-cols-3">
+      <section className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
         {cards.map((card) => {
           const isDisabled = card.disabled || (checkingLimit || (!canCreateVideo && !!user?.id));
           

@@ -704,76 +704,92 @@ export async function uploadAudioToStorage(
 
 /**
  * Upload image file to Supabase Storage and save metadata to database
+ * Uses backend endpoint to bypass RLS policies (backend has service role access)
  */
 export async function uploadImageToStorage(
   file: File | Blob,
   fileName: string
 ): Promise<string> {
-  const { data: { session } } = await supabase.auth.getSession();
+  // Import config and token cache dynamically to avoid circular dependencies
+  const { config } = await import('@/lib/config');
+  const { getCachedToken, refreshToken } = await import('@/lib/utils/token-cache');
   
-  if (!session?.user) {
-    throw new Error('Authentication required');
+  // Get auth token (use cached token like AI UGC editor does)
+  let token = await getCachedToken();
+  
+  if (!token) {
+    throw new Error('Authentication required. Please log in and try again.');
   }
 
-  const storagePath = `user-uploads/${session.user.id}/${fileName}`;
-  const mimeType = file instanceof File ? file.type : 'image/jpeg';
+  // Use backend endpoint instead of direct Supabase storage upload
+  // This bypasses RLS since backend uses service role key
+  const formData = new FormData();
+  formData.append('image', file instanceof File ? file : new File([file], fileName, { type: file.type || 'image/jpeg' }));
 
-  console.log('Uploading image to storage:', {
-    bucket: 'images',
-    path: storagePath,
+  console.log('Uploading image via backend endpoint:', {
+    fileName,
     fileSize: (file.size / 1024).toFixed(2) + ' KB',
-    contentType: mimeType
+    contentType: file instanceof File ? file.type : 'image/jpeg',
+    endpoint: `${config.remotionServerUrl}/user/upload-image`
   });
 
-  const { data, error } = await supabase.storage
-    .from('images')
-    .upload(storagePath, file, {
-      contentType: mimeType,
-      upsert: true,
-      cacheControl: '3600'
+  const makeRequest = async (authToken: string) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+    
+    try {
+      const response = await fetch(`${config.remotionServerUrl}/user/upload-image`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          // Don't set Content-Type - browser will set it with boundary for multipart/form-data
+        },
+        body: formData,
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      return response;
+    } catch (err) {
+      clearTimeout(timeoutId);
+      throw err;
+    }
+  };
+
+  let response = await makeRequest(token);
+
+  // Handle 401 - refresh token and retry
+  if (response.status === 401) {
+    console.log('Token expired, refreshing...');
+    const refreshedToken = await refreshToken();
+    if (refreshedToken) {
+      token = refreshedToken;
+      response = await makeRequest(token);
+    } else {
+      throw new Error('Authentication expired. Please log in again.');
+    }
+  }
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}: ${response.statusText}` }));
+    console.error('❌ Error uploading image:', {
+      status: response.status,
+      statusText: response.statusText,
+      error: errorData
     });
-
-  if (error) {
-    console.error('❌ Error uploading image:', error);
-    throw new Error(`Failed to upload image: ${error.message}`);
+    throw new Error(errorData.error || `Failed to upload image: ${response.statusText}`);
   }
 
-  console.log('✅ Image uploaded successfully:', data.path);
+  const data = await response.json();
+  
+  if (!data.success || !data.url) {
+    throw new Error(data.error || 'Failed to upload image: No URL returned');
+    }
 
-  // Get public URL
-  const { data: urlData } = supabase.storage
-    .from('images')
-    .getPublicUrl(storagePath);
-
-  if (!urlData?.publicUrl) {
-    throw new Error('Failed to get public URL');
-  }
-
-  console.log('✅ Public URL:', urlData.publicUrl);
-
-  // Save metadata to database
-  const { error: dbError } = await supabase
-    .from('user_uploads')
-    .insert({
-      user_id: session.user.id,
-      file_name: fileName,
-      file_type: 'image',
-      storage_path: storagePath,
-      storage_url: urlData.publicUrl,
-      file_size: file.size,
-      mime_type: mimeType,
-      metadata: {}
-    });
-
-  if (dbError) {
-    console.error('❌ Error saving upload metadata:', dbError);
-    // Don't throw - the file is uploaded, just metadata failed
-    console.warn('⚠️  File uploaded but metadata not saved to database');
-  } else {
-    console.log('✅ Upload metadata saved to database');
-  }
-
-  return urlData.publicUrl;
+  console.log('✅ Image uploaded successfully:', data.url);
+  
+  // Backend endpoint already saves metadata, so we just return the URL
+  return data.url;
 }
 
 /**

@@ -70,6 +70,7 @@ type DraftProject = {
   mergedDurationMs?: number;
   audioTotalDurationMs?: number;
   redditTitle?: string;
+  metadata?: any; // Full metadata object (needed for texting videos, UGC, etc.)
   updatedAt: string;
 };
 
@@ -834,6 +835,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         mergedDurationMs: mergedDurationMs || null,
         audioFiles: audioFilesMetadata || undefined,
         redditTitle: redditTitle,
+        metadata: projectMetadata, // Preserve full metadata object (needed for texting videos)
         updatedAt: new Date().toISOString(),
       };
 

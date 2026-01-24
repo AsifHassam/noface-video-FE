@@ -93,7 +93,8 @@ export type ProjectType =
   | "TWO_CHAR_CONVO"
   | "NORMAL_STORY"
   | "story"
-  | "AI_UGC";
+  | "AI_UGC"
+  | "TEXTING_VIDEO";
 
 export type RenderStatus = "QUEUED" | "RENDERING" | "READY" | "FAILED";
 

@@ -87,8 +87,12 @@ export const VideoCard = ({ project, onDelete }: { project: Project; onDelete: (
       });
       
       // Prioritize explicit type over inferred type
-      // Check if it's explicitly a TWO_CHAR_CONVO project first
-      if (effectiveType === "TWO_CHAR_CONVO" || project.type === "TWO_CHAR_CONVO") {
+      // Check if it's explicitly a TEXTING_VIDEO project first
+      if (effectiveType === "TEXTING_VIDEO" || metadataType === "TEXTING_VIDEO" || project.type === "TEXTING_VIDEO") {
+        previewRoute = `/app/create/texting/preview?projectId=${project.id}`;
+      }
+      // Check if it's explicitly a TWO_CHAR_CONVO project
+      else if (effectiveType === "TWO_CHAR_CONVO" || project.type === "TWO_CHAR_CONVO") {
         previewRoute = "/app/create/two-char/preview?editing=true";
       } 
       // Check if it's explicitly a story narration project
