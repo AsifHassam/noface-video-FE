@@ -178,6 +178,45 @@
   }
 }
 
+@keyframes videoCarouselScroll {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(calc(-140px * 9 - 0.75rem * 9));
+  }
+}
+
+@media (min-width: 640px) {
+  @keyframes videoCarouselScroll {
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(calc(-224px * 9 - 1.5rem * 9));
+    }
+  }
+}
+
+@media (min-width: 768px) {
+  @keyframes videoCarouselScroll {
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(calc(-256px * 9 - 1.5rem * 9));
+    }
+  }
+}
+
+.animate-video-carousel {
+  animation: videoCarouselScroll 70s linear infinite;
+}
+
+.animate-video-carousel:hover {
+  animation-play-state: paused;
+}
+
 /* ZY Resolve font - Update the src path to point to your font file */
 @font-face {
   font-family: 'ZY Resolve';

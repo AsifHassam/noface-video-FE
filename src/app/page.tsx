@@ -169,7 +169,7 @@ export default function HomePage() {
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_right,_rgba(236,72,153,0.1),_transparent_50%)]" />
 
       {/* Header with Logo and Navbar */}
-      <header className="relative z-10 mx-auto max-w-7xl px-4 sm:px-6 pt-4 sm:pt-6">
+      <header className="relative z-10 mx-auto max-w-7xl px-3 sm:px-6 pt-3 sm:pt-6">
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -177,7 +177,7 @@ export default function HomePage() {
           className="flex items-center justify-between"
         >
           <Link href="/" className="flex items-center gap-2">
-            <div className="text-xl sm:text-2xl font-bold text-foreground">
+            <div className="text-lg sm:text-2xl font-bold text-foreground">
               noface.video
             </div>
           </Link>
@@ -256,101 +256,147 @@ export default function HomePage() {
 
       <main className="relative">
         {/* Hero Section */}
-        <section className="relative mx-auto flex min-h-screen max-w-7xl flex-col items-center justify-center gap-6 sm:gap-8 px-4 sm:px-6 pt-12 sm:pt-24 pb-8 sm:pb-12 text-center">
+        <section className="relative mx-auto flex min-h-[60vh] sm:min-h-[70vh] max-w-7xl flex-col items-center justify-center gap-3 sm:gap-6 px-3 sm:px-6 pt-4 sm:pt-12 pb-3 sm:pb-6 text-center">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6 }}
-            className="space-y-6"
+            className="space-y-3 sm:space-y-6 w-full"
           >
-            <Badge className="w-fit rounded-full bg-primary/15 px-4 py-1.5 text-primary mx-auto">
-              <Rocket className="mr-2 h-3 w-3" />
+            <Badge className="w-fit rounded-full bg-primary/15 px-3 sm:px-4 py-1 sm:py-1.5 text-xs sm:text-sm text-primary mx-auto">
+              <Rocket className="mr-1.5 sm:mr-2 h-3 w-3" />
               Create Viral Videos in Minutes
             </Badge>
-            <h1 className="text-3xl sm:text-5xl font-bold leading-tight tracking-tight text-foreground lg:text-6xl xl:text-7xl">
+            <h1 className="text-2xl sm:text-5xl font-bold leading-tight tracking-tight text-foreground lg:text-6xl xl:text-7xl px-2">
               Create Faceless Viral Videos
               <br />
               <span className="bg-gradient-to-r from-purple-600 via-pink-600 to-orange-500 bg-clip-text text-transparent">
                 That Get Millions of Views
               </span>
             </h1>
-            <p className="mx-auto max-w-2xl text-base sm:text-xl text-muted-foreground lg:text-2xl px-4">
+            <p className="mx-auto max-w-2xl text-sm sm:text-xl text-muted-foreground lg:text-2xl px-3">
               The #1 platform for creating faceless videos that go viral on TikTok,
               Shorts, and Instagram. Attract brand collaborations and grow your
               audience—no face required.
             </p>
-            <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
+            <div className="flex flex-col items-center justify-center gap-3 sm:gap-4 sm:flex-row px-3">
               <Button
                 size="lg"
-                className="h-12 sm:h-14 rounded-2xl px-6 sm:px-8 text-base sm:text-lg font-semibold shadow-lg shadow-primary/25 hover:shadow-xl hover:shadow-primary/30 w-full sm:w-auto"
+                className="h-11 sm:h-14 rounded-2xl px-5 sm:px-8 text-sm sm:text-lg font-semibold shadow-lg shadow-primary/25 hover:shadow-xl hover:shadow-primary/30 w-full sm:w-auto"
                 onClick={() => setSignInDialogOpen(true)}
               >
                 Sign in
                 <ArrowRight className="ml-2 h-4 w-4 sm:h-5 sm:w-5" />
               </Button>
-              <Button
+              {/* <Button
                 asChild
                 variant="outline"
                 size="lg"
-                className="h-12 sm:h-14 rounded-2xl px-6 sm:px-8 text-base sm:text-lg font-semibold border-2 w-full sm:w-auto"
+                className="h-11 sm:h-14 rounded-2xl px-5 sm:px-8 text-sm sm:text-lg font-semibold border-2 w-full sm:w-auto"
               >
                 <Link href="#demo">
-                  <Play className="mr-2 h-5 w-5" />
+                  <Play className="mr-2 h-4 w-4 sm:h-5 sm:w-5" />
                   Watch Demo
                 </Link>
-              </Button>
+              </Button> */}
             </div>
           </motion.div>
         </section>
 
+        {/* Video Carousel Section */}
+        <section className="relative w-full py-6 sm:py-12 overflow-hidden">
+          <div className="flex gap-3 sm:gap-6 animate-video-carousel">
+            {/* Videos array - shuffled and duplicated for seamless loop */}
+            {[
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapTik.Cx_1769327353.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a88e28e7-2c7a-4e31-87a4-b1c4e71c591c.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/Check%20out%20the%20incredible%20work%20of%20Bohlale%20Mphahlele!%20This%20young%20inventor%20is%20revolutionizing%20safet.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a49d79ac-1aac-46c7-b9c8-0087254e6b08.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapInsta.to_AQP2in0u-jcD43wusT7bKR1sSZ0ZW0oHVJkBkiWwpP35xP3aZot4nGL5HDqDBfgkSWC3O0N6vo6q080FEkP1Ma9Y.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/compiler-vs-intepreter-broll.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapInsta.to_AQPWx9yTSLn4v2C-GRyTZvuenYwuYgg06TSvnINaFJszuxLNLBobtw4FeZBMi-56FTu8AeYWlfW1_2ywuVGsFg8R.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a7a07848-b9dc-4b3d-a986-f7fff3c0f46e.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapTik.Cx_1769327304.mp4",
+              // Duplicate for seamless loop
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapTik.Cx_1769327353.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a88e28e7-2c7a-4e31-87a4-b1c4e71c591c.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/Check%20out%20the%20incredible%20work%20of%20Bohlale%20Mphahlele!%20This%20young%20inventor%20is%20revolutionizing%20safet.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a49d79ac-1aac-46c7-b9c8-0087254e6b08.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapInsta.to_AQP2in0u-jcD43wusT7bKR1sSZ0ZW0oHVJkBkiWwpP35xP3aZot4nGL5HDqDBfgkSWC3O0N6vo6q080FEkP1Ma9Y.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/compiler-vs-intepreter-broll.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapInsta.to_AQPWx9yTSLn4v2C-GRyTZvuenYwuYgg06TSvnINaFJszuxLNLBobtw4FeZBMi-56FTu8AeYWlfW1_2ywuVGsFg8R.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a7a07848-b9dc-4b3d-a986-f7fff3c0f46e.mp4",
+              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapTik.Cx_1769327304.mp4",
+            ].map((videoUrl, i) => (
+              <div
+                key={i}
+                className="flex-shrink-0 w-[140px] sm:w-[224px] md:w-[256px]"
+              >
+                <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl sm:rounded-2xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 shadow-lg">
+                  <video
+                    className="h-full w-full object-cover"
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                  >
+                    <source
+                      src={videoUrl}
+                      type="video/mp4"
+                    />
+                    Your browser does not support the video tag.
+                  </video>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
         {/* Case Studies Section */}
-        <section id="case-studies" className="relative mx-auto max-w-7xl px-4 sm:px-6 pt-8 sm:pt-12 pb-16 sm:pb-24">
+        <section id="case-studies" className="relative mx-auto max-w-7xl px-3 sm:px-6 pt-6 sm:pt-12 pb-12 sm:pb-24">
           <div className="text-center">
-            <h2 className="text-3xl sm:text-4xl font-bold text-foreground lg:text-5xl">
+            <h2 className="text-2xl sm:text-4xl font-bold text-foreground lg:text-5xl">
               Case Studies
             </h2>
-            <p className="mx-auto mt-4 max-w-2xl text-base sm:text-lg text-muted-foreground px-4">
+            <p className="mx-auto mt-3 sm:mt-4 max-w-2xl text-sm sm:text-lg text-muted-foreground px-3">
               Real results from creators and businesses using noface.video to
               achieve their goals.
             </p>
           </div>
-          <div className="mt-16">
+          <div className="mt-8 sm:mt-16">
             <Tabs defaultValue="saas" className="w-full">
-              <TabsList className="mx-auto mb-8 sm:mb-12 h-auto sm:h-12 w-full sm:w-fit rounded-full bg-white/70 p-1 shadow-lg flex flex-col sm:flex-row gap-1">
+              <TabsList className="mx-auto mb-6 sm:mb-12 h-10 sm:h-12 w-fit rounded-full bg-white/70 p-1 shadow-lg flex flex-row gap-0.5 sm:gap-1">
                 <TabsTrigger
                   value="saas"
-                  className="rounded-full px-4 sm:px-6 py-2 text-sm sm:text-base data-[state=active]:bg-primary data-[state=active]:text-primary-foreground w-full sm:w-auto"
+                  className="rounded-full px-3 sm:px-6 py-1.5 sm:py-2 text-xs sm:text-base data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
                 >
-                  <Briefcase className="mr-2 h-4 w-4" />
-                  <span className="hidden sm:inline">SaaS Marketing</span>
-                  <span className="sm:hidden">SaaS</span>
+                  <Briefcase className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />
+                  SaaS
                 </TabsTrigger>
                 <TabsTrigger
                   value="viral"
-                  className="rounded-full px-4 sm:px-6 py-2 text-sm sm:text-base data-[state=active]:bg-primary data-[state=active]:text-primary-foreground w-full sm:w-auto"
+                  className="rounded-full px-3 sm:px-6 py-1.5 sm:py-2 text-xs sm:text-base data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
                 >
-                  <TrendingUp className="mr-2 h-4 w-4" />
-                  <span className="hidden sm:inline">Viral Videos</span>
-                  <span className="sm:hidden">Viral</span>
+                  <TrendingUp className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />
+                  Viral
                 </TabsTrigger>
                 <TabsTrigger
                   value="brand"
-                  className="rounded-full px-4 sm:px-6 py-2 text-sm sm:text-base data-[state=active]:bg-primary data-[state=active]:text-primary-foreground w-full sm:w-auto"
+                  className="rounded-full px-3 sm:px-6 py-1.5 sm:py-2 text-xs sm:text-base data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
                 >
-                  <Target className="mr-2 h-4 w-4" />
-                  <span className="hidden sm:inline">Brand Collabs</span>
-                  <span className="sm:hidden">Brand</span>
+                  <Target className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />
+                  Brand
                 </TabsTrigger>
               </TabsList>
 
-              <TabsContent value="saas" className="mt-8">
+              <TabsContent value="saas" className="mt-6 sm:mt-8">
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.6 }}
-                  className="grid gap-6 sm:gap-12 lg:grid-cols-2 lg:items-center"
+                  className="grid gap-4 sm:gap-12 lg:grid-cols-2 lg:items-center"
                 >
-                  <div className="relative aspect-[9/16] w-full max-w-[280px] sm:max-w-sm overflow-hidden rounded-2xl bg-gradient-to-br shadow-2xl mx-auto lg:mx-0">
+                  <div className="relative aspect-[9/16] w-full max-w-[240px] sm:max-w-sm overflow-hidden rounded-xl sm:rounded-2xl bg-gradient-to-br shadow-2xl mx-auto lg:mx-0">
                     {CASE_STUDIES.saas.isTikTok ? (
                       <iframe
                         className="h-full w-full"
@@ -382,36 +428,36 @@ export default function HomePage() {
                       </>
                     )}
                   </div>
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-3">
+                  <div className="space-y-4 sm:space-y-6 mt-4 sm:mt-0">
+                    <div className="flex items-center gap-2 sm:gap-3">
                       <div
                         className={cn(
-                          "flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br shadow-lg",
+                          "flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-xl bg-gradient-to-br shadow-lg",
                           CASE_STUDIES.saas.gradient,
                         )}
                       >
-                        <Briefcase className="h-6 w-6 text-white" />
+                        <Briefcase className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
                       </div>
                       <Badge
                         variant="secondary"
-                        className="rounded-full bg-green-50 text-green-700"
+                        className="rounded-full bg-green-50 text-green-700 text-xs sm:text-sm"
                       >
                         {CASE_STUDIES.saas.result}
                       </Badge>
                     </div>
-                    <h3 className="text-2xl sm:text-3xl font-bold text-foreground">
+                    <h3 className="text-xl sm:text-3xl font-bold text-foreground">
                       {CASE_STUDIES.saas.company}
                     </h3>
-                    <p className="text-base sm:text-lg text-muted-foreground">
+                    <p className="text-sm sm:text-lg text-muted-foreground">
                       {CASE_STUDIES.saas.description}
                     </p>
-                    <ul className="space-y-3">
+                    <ul className="space-y-2 sm:space-y-3">
                       {CASE_STUDIES.saas.results.map((result, index) => (
                         <li
                           key={index}
-                          className="flex items-start gap-3 text-muted-foreground"
+                          className="flex items-start gap-2 sm:gap-3 text-sm sm:text-base text-muted-foreground"
                         >
-                          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-green-500" />
+                          <CheckCircle2 className="mt-0.5 h-4 w-4 sm:h-5 sm:w-5 shrink-0 text-green-500" />
                           <span>{result}</span>
                         </li>
                       ))}
@@ -420,14 +466,14 @@ export default function HomePage() {
                 </motion.div>
               </TabsContent>
 
-              <TabsContent value="viral" className="mt-8">
+              <TabsContent value="viral" className="mt-6 sm:mt-8">
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.6 }}
-                  className="grid gap-6 sm:gap-12 lg:grid-cols-2 lg:items-center"
+                  className="grid gap-4 sm:gap-12 lg:grid-cols-2 lg:items-center"
                 >
-                  <div className="relative aspect-[9/16] w-full max-w-[280px] sm:max-w-sm overflow-hidden rounded-2xl bg-gradient-to-br shadow-2xl mx-auto lg:mx-0">
+                  <div className="relative aspect-[9/16] w-full max-w-[240px] sm:max-w-sm overflow-hidden rounded-xl sm:rounded-2xl bg-gradient-to-br shadow-2xl mx-auto lg:mx-0">
                     {CASE_STUDIES.viral.isTikTok ? (
                       <iframe
                         className="h-full w-full"
@@ -459,36 +505,36 @@ export default function HomePage() {
                       </>
                     )}
                   </div>
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-3">
+                  <div className="space-y-4 sm:space-y-6 mt-4 sm:mt-0">
+                    <div className="flex items-center gap-2 sm:gap-3">
                       <div
                         className={cn(
-                          "flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br shadow-lg",
+                          "flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-xl bg-gradient-to-br shadow-lg",
                           CASE_STUDIES.viral.gradient,
                         )}
                       >
-                        <TrendingUp className="h-6 w-6 text-white" />
+                        <TrendingUp className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
                       </div>
                       <Badge
                         variant="secondary"
-                        className="rounded-full bg-pink-50 text-pink-700"
+                        className="rounded-full bg-pink-50 text-pink-700 text-xs sm:text-sm"
                       >
                         {CASE_STUDIES.viral.result}
                       </Badge>
                     </div>
-                    <h3 className="text-2xl sm:text-3xl font-bold text-foreground">
+                    <h3 className="text-xl sm:text-3xl font-bold text-foreground">
                       {CASE_STUDIES.viral.company}
                     </h3>
-                    <p className="text-base sm:text-lg text-muted-foreground">
+                    <p className="text-sm sm:text-lg text-muted-foreground">
                       {CASE_STUDIES.viral.description}
                     </p>
-                    <ul className="space-y-3">
+                    <ul className="space-y-2 sm:space-y-3">
                       {CASE_STUDIES.viral.results.map((result, index) => (
                         <li
                           key={index}
-                          className="flex items-start gap-3 text-muted-foreground"
+                          className="flex items-start gap-2 sm:gap-3 text-sm sm:text-base text-muted-foreground"
                         >
-                          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-green-500" />
+                          <CheckCircle2 className="mt-0.5 h-4 w-4 sm:h-5 sm:w-5 shrink-0 text-green-500" />
                           <span>{result}</span>
                         </li>
                       ))}
@@ -497,14 +543,14 @@ export default function HomePage() {
                 </motion.div>
               </TabsContent>
 
-              <TabsContent value="brand" className="mt-8">
+              <TabsContent value="brand" className="mt-6 sm:mt-8">
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.6 }}
-                  className="grid gap-6 sm:gap-12 lg:grid-cols-2 lg:items-center"
+                  className="grid gap-4 sm:gap-12 lg:grid-cols-2 lg:items-center"
                 >
-                  <div className="relative aspect-[9/16] w-full max-w-[280px] sm:max-w-sm overflow-hidden rounded-2xl bg-gradient-to-br shadow-2xl mx-auto lg:mx-0">
+                  <div className="relative aspect-[9/16] w-full max-w-[240px] sm:max-w-sm overflow-hidden rounded-xl sm:rounded-2xl bg-gradient-to-br shadow-2xl mx-auto lg:mx-0">
                     {CASE_STUDIES.brand.isInstagram ? (
                       <iframe
                         className="h-full w-full"
@@ -536,36 +582,36 @@ export default function HomePage() {
                       </>
                     )}
                   </div>
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-3">
+                  <div className="space-y-4 sm:space-y-6 mt-4 sm:mt-0">
+                    <div className="flex items-center gap-2 sm:gap-3">
                       <div
                         className={cn(
-                          "flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br shadow-lg",
+                          "flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-xl bg-gradient-to-br shadow-lg",
                           CASE_STUDIES.brand.gradient,
                         )}
                       >
-                        <Target className="h-6 w-6 text-white" />
+                        <Target className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
                       </div>
                       <Badge
                         variant="secondary"
-                        className="rounded-full bg-orange-50 text-orange-700"
+                        className="rounded-full bg-orange-50 text-orange-700 text-xs sm:text-sm"
                       >
                         {CASE_STUDIES.brand.result}
                       </Badge>
                     </div>
-                    <h3 className="text-2xl sm:text-3xl font-bold text-foreground">
+                    <h3 className="text-xl sm:text-3xl font-bold text-foreground">
                       {CASE_STUDIES.brand.company}
                     </h3>
-                    <p className="text-base sm:text-lg text-muted-foreground">
+                    <p className="text-sm sm:text-lg text-muted-foreground">
                       {CASE_STUDIES.brand.description}
                     </p>
-                    <ul className="space-y-3">
+                    <ul className="space-y-2 sm:space-y-3">
                       {CASE_STUDIES.brand.results.map((result, index) => (
                         <li
                           key={index}
-                          className="flex items-start gap-3 text-muted-foreground"
+                          className="flex items-start gap-2 sm:gap-3 text-sm sm:text-base text-muted-foreground"
                         >
-                          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-green-500" />
+                          <CheckCircle2 className="mt-0.5 h-4 w-4 sm:h-5 sm:w-5 shrink-0 text-green-500" />
                           <span>{result}</span>
                         </li>
                       ))}
@@ -578,17 +624,17 @@ export default function HomePage() {
         </section>
 
         {/* Pricing Section */}
-        <section id="pricing" className="relative mx-auto max-w-7xl px-4 sm:px-6 py-16 sm:py-24">
+        <section id="pricing" className="relative mx-auto max-w-7xl px-3 sm:px-6 py-12 sm:py-24">
           <div className="text-center">
-            <h2 className="text-3xl sm:text-4xl font-bold text-foreground lg:text-5xl">
+            <h2 className="text-2xl sm:text-4xl font-bold text-foreground lg:text-5xl">
               Pricing
             </h2>
-            <p className="mx-auto mt-4 max-w-2xl text-base sm:text-lg text-muted-foreground px-4">
+            <p className="mx-auto mt-3 sm:mt-4 max-w-2xl text-sm sm:text-lg text-muted-foreground px-3">
               Choose the perfect plan for your video creation needs. Start free
               and upgrade when you&apos;re ready to scale.
             </p>
           </div>
-          <div className="mt-16 grid gap-8 lg:grid-cols-2 lg:max-w-5xl lg:mx-auto">
+          <div className="mt-8 sm:mt-16 grid gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3">
             {PRICING_PLANS.map((plan, index) => (
               <motion.div
                 key={plan.name}
@@ -606,47 +652,48 @@ export default function HomePage() {
                   )}
                 >
                   {plan.popular && (
-                    <div className="absolute right-4 top-4">
-                      <Badge className="rounded-full bg-primary text-primary-foreground">
-                        <Crown className="mr-1 h-3 w-3" />
-                        Most Popular
+                    <div className="absolute right-2 sm:right-4 top-2 sm:top-4">
+                      <Badge className="rounded-full bg-primary text-primary-foreground text-xs">
+                        <Crown className="mr-1 h-2.5 w-2.5 sm:h-3 sm:w-3" />
+                        <span className="hidden sm:inline">Most Popular</span>
+                        <span className="sm:hidden">Popular</span>
                       </Badge>
                     </div>
                   )}
-                  <CardContent className="relative p-8">
-                    <div className="mb-6">
-                      <h3 className="text-2xl font-bold text-foreground">
+                  <CardContent className="relative p-4 sm:p-6">
+                    <div className="mb-3 sm:mb-4">
+                      <h3 className="text-lg sm:text-xl font-bold text-foreground">
                         {plan.name}
                       </h3>
-                      <p className="mt-2 text-sm text-muted-foreground">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {plan.description}
                       </p>
                     </div>
-                    <div className="mb-6">
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-5xl font-bold text-foreground">
+                    <div className="mb-3 sm:mb-4">
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-3xl sm:text-4xl font-bold text-foreground">
                           {plan.price}
                         </span>
                         {plan.period !== "forever" && (
-                          <span className="text-muted-foreground">
+                          <span className="text-xs sm:text-sm text-muted-foreground">
                             /{plan.period}
                           </span>
                         )}
                       </div>
                       {plan.period === "forever" && (
-                        <span className="text-sm text-muted-foreground">
+                        <span className="text-xs text-muted-foreground">
                           {plan.period}
-                        </span>
+                      </span>
                       )}
                     </div>
-                    <ul className="mb-8 space-y-3">
+                    <ul className="mb-4 sm:mb-6 space-y-1.5 sm:space-y-2">
                       {plan.features.map((feature, featureIndex) => (
                         <li
                           key={featureIndex}
-                          className="flex items-start gap-3 text-sm"
+                          className="flex items-start gap-2 text-xs"
                         >
-                          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-green-500" />
-                          <span className="text-muted-foreground">
+                          <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0 text-green-500" />
+                          <span className="text-muted-foreground leading-relaxed">
                             {feature}
                           </span>
                         </li>
@@ -654,17 +701,17 @@ export default function HomePage() {
                     </ul>
                     <Button
                       className={cn(
-                        "w-full",
+                        "w-full text-xs sm:text-sm",
                         plan.popular
                           ? "bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700"
                           : "",
                       )}
                       variant={plan.popular ? "default" : "outline"}
-                      size="lg"
+                      size="sm"
                       onClick={() => setSignInDialogOpen(true)}
                     >
                       {plan.cta}
-                      <ArrowRight className="ml-2 h-4 w-4" />
+                      <ArrowRight className="ml-1.5 sm:ml-2 h-3 w-3 sm:h-4 sm:w-4" />
                     </Button>
                   </CardContent>
                 </Card>
@@ -674,17 +721,17 @@ export default function HomePage() {
         </section>
 
         {/* Testimonials Section */}
-        <section id="testimonials" className="relative mx-auto max-w-7xl px-4 sm:px-6 py-16 sm:py-24">
+        <section id="testimonials" className="relative mx-auto max-w-7xl px-3 sm:px-6 py-12 sm:py-24">
           <div className="text-center">
-            <h2 className="text-3xl sm:text-4xl font-bold text-foreground lg:text-5xl">
+            <h2 className="text-2xl sm:text-4xl font-bold text-foreground lg:text-5xl">
               Loved by Creators Worldwide
             </h2>
-            <p className="mx-auto mt-4 max-w-2xl text-base sm:text-lg text-muted-foreground px-4">
+            <p className="mx-auto mt-3 sm:mt-4 max-w-2xl text-sm sm:text-lg text-muted-foreground px-3">
               Join thousands of creators who are building viral audiences with
               noface.video
             </p>
           </div>
-          <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-8 sm:mt-16 grid gap-4 sm:gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {TESTIMONIALS.map((testimonial, index) => (
               <motion.div
                 key={testimonial.name}
@@ -694,23 +741,23 @@ export default function HomePage() {
                 transition={{ duration: 0.5, delay: index * 0.1 }}
               >
                 <Card className="h-full border-none bg-white/70 shadow-lg">
-                  <CardContent className="p-6">
-                    <div className="mb-4 flex gap-1">
+                  <CardContent className="p-4 sm:p-6">
+                    <div className="mb-3 sm:mb-4 flex gap-1">
                       {Array.from({ length: testimonial.rating }).map((_, i) => (
                         <Star
                           key={i}
-                          className="h-4 w-4 fill-yellow-400 text-yellow-400"
+                          className="h-3.5 w-3.5 sm:h-4 sm:w-4 fill-yellow-400 text-yellow-400"
                         />
                       ))}
                     </div>
-                    <p className="mb-4 text-muted-foreground">
+                    <p className="mb-3 sm:mb-4 text-sm sm:text-base text-muted-foreground">
                       &quot;{testimonial.content}&quot;
                     </p>
                     <div>
-                      <div className="font-semibold text-foreground">
+                      <div className="text-sm sm:text-base font-semibold text-foreground">
                         {testimonial.name}
                       </div>
-                      <div className="text-sm text-muted-foreground">
+                      <div className="text-xs sm:text-sm text-muted-foreground">
                         {testimonial.role}
                       </div>
                     </div>
@@ -722,30 +769,30 @@ export default function HomePage() {
         </section>
 
         {/* CTA Section */}
-        <section className="relative mx-auto max-w-7xl px-6 py-24">
+        <section className="relative mx-auto max-w-7xl px-3 sm:px-6 py-12 sm:py-24">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.6 }}
-            className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 p-8 sm:p-12 text-center text-white shadow-2xl"
+            className="relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 p-6 sm:p-12 text-center text-white shadow-2xl"
           >
             <div className="absolute inset-0 opacity-10" style={{
               backgroundImage: `repeating-linear-gradient(0deg, rgba(255,255,255,0.1) 0px, transparent 1px, transparent 40px, rgba(255,255,255,0.1) 41px),
                                 repeating-linear-gradient(90deg, rgba(255,255,255,0.1) 0px, transparent 1px, transparent 40px, rgba(255,255,255,0.1) 41px)`
             }} />
             <div className="relative z-10">
-              <h2 className="text-3xl sm:text-4xl font-bold lg:text-5xl">
+              <h2 className="text-2xl sm:text-4xl font-bold lg:text-5xl">
                 Ready to Go Viral?
               </h2>
-              <p className="mx-auto mt-4 max-w-2xl text-base sm:text-lg text-white/90 px-4">
+              <p className="mx-auto mt-3 sm:mt-4 max-w-2xl text-sm sm:text-lg text-white/90 px-3">
                 Start creating faceless videos that get millions of views and
                 attract brand collaborations today. No credit card required.
               </p>
-              <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row w-full sm:w-auto">
+              <div className="mt-6 sm:mt-8 flex flex-col items-center justify-center gap-3 sm:gap-4 sm:flex-row w-full sm:w-auto">
                 <Button
                   size="lg"
-                  className="h-12 sm:h-14 rounded-2xl bg-white px-6 sm:px-8 text-base sm:text-lg font-semibold text-purple-600 shadow-lg hover:bg-white/90 w-full sm:w-auto"
+                  className="h-11 sm:h-14 rounded-2xl bg-white px-5 sm:px-8 text-sm sm:text-lg font-semibold text-purple-600 shadow-lg hover:bg-white/90 w-full sm:w-auto"
                   onClick={() => setSignInDialogOpen(true)}
                 >
                   Get Started Free
@@ -755,7 +802,7 @@ export default function HomePage() {
                   asChild
                   variant="outline"
                   size="lg"
-                  className="h-12 sm:h-14 rounded-2xl border-2 border-white/30 bg-white/10 px-6 sm:px-8 text-base sm:text-lg font-semibold text-white backdrop-blur-sm hover:bg-white/20 w-full sm:w-auto"
+                  className="h-11 sm:h-14 rounded-2xl border-2 border-white/30 bg-white/10 px-5 sm:px-8 text-sm sm:text-lg font-semibold text-white backdrop-blur-sm hover:bg-white/20 w-full sm:w-auto"
                 >
                   <Link href="#features">Learn More</Link>
                 </Button>
