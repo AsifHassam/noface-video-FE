@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Crown, Video, Calendar, CheckCircle2, XCircle, Coins } from "lucide-react";
-import { subscriptionApi, type SubscriptionInfo } from "@/lib/api/subscription";
+import { subscriptionApi, type SubscriptionInfo, type OutstandingItem } from "@/lib/api/subscription";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { useAuthStore } from "@/lib/stores/auth-store";
@@ -13,14 +13,19 @@ import { useAuthStore } from "@/lib/stores/auth-store";
 export const SubscriptionCard = () => {
   const { user, loading: authLoading } = useAuthStore();
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
+  const [outstandingList, setOutstandingList] = useState<OutstandingItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
 
   const loadSubscriptionInfo = useCallback(async () => {
     try {
       setLoading(true);
-      const result = await subscriptionApi.getSubscriptionInfo();
-      setSubscription(result.subscription);
+      const [subResult, outResult] = await Promise.all([
+        subscriptionApi.getSubscriptionInfo(),
+        subscriptionApi.getOutstanding().catch(() => ({ success: true, outstanding: [] })),
+      ]);
+      setSubscription(subResult.subscription);
+      setOutstandingList(outResult.outstanding || []);
     } catch (error: any) {
       console.error("Error loading subscription:", error);
       
@@ -105,15 +110,44 @@ export const SubscriptionCard = () => {
     window.location.href = paystackUrl;
   };
 
-  const handleDowngrade = async () => {
+  const handleCancelSubscription = async () => {
+    if (!confirm("Cancel your subscription? You will keep your current credits until the end of the billing period, then move to Free. You can resubscribe anytime.")) {
+      return;
+    }
     try {
       setUpdating(true);
-      await subscriptionApi.updateSubscription('free');
-      toast.success("Downgraded to Free plan");
-      await loadSubscriptionInfo();
+      const result = await subscriptionApi.cancelSubscription();
+      if (result.success) {
+        toast.success("Subscription cancelled. You’re now on the Free plan.");
+        await loadSubscriptionInfo();
+      } else {
+        toast.error(result.error || "Failed to cancel subscription");
+      }
     } catch (error) {
-      console.error("Error downgrading:", error);
-      toast.error("Failed to downgrade subscription");
+      console.error("Error cancelling subscription:", error);
+      toast.error("Failed to cancel subscription");
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleUpgradeToPremium = async () => {
+    try {
+      setUpdating(true);
+      const result = await subscriptionApi.upgradeToPremium();
+      if (result.success) {
+        if (result.alreadyPremium) {
+          toast.success("You’re already on Premium.");
+        } else {
+          toast.success(result.message || "Upgraded to Premium. Your billing day stays the same.");
+        }
+        await loadSubscriptionInfo();
+      } else {
+        toast.error(result.error || "Upgrade failed");
+      }
+    } catch (error) {
+      console.error("Error upgrading to Premium:", error);
+      toast.error("Failed to upgrade to Premium");
     } finally {
       setUpdating(false);
     }
@@ -173,6 +207,50 @@ export const SubscriptionCard = () => {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Payment overdue: block access until outstanding is paid (list or single from profile) */}
+        {subscription.paymentBlocked && (outstandingList.length > 0 || subscription.outstandingPaymentLink) && (
+          <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 space-y-2">
+            <p className="text-sm font-medium text-destructive">
+              A recurring payment failed. Your access is paused until the outstanding amount(s) are paid.
+            </p>
+            {outstandingList.length > 0 ? (
+              <ul className="space-y-2">
+                {outstandingList.map((item) => (
+                  <li key={item.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
+                    <span className="text-muted-foreground">
+                      ~${Math.round(item.amountCents / 100 / 18)} USD
+                      {item.createdAt && (
+                        <span className="ml-2 text-xs">({new Date(item.createdAt).toLocaleDateString()})</span>
+                      )}
+                    </span>
+                    <Button
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      onClick={() => window.location.href = item.paymentLink}
+                    >
+                      Pay outstanding amount
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <>
+                {subscription.outstandingAmountCents != null && (
+                  <p className="text-xs text-muted-foreground">
+                    Amount due: ~${Math.round(subscription.outstandingAmountCents / 100 / 18)} USD
+                  </p>
+                )}
+                <Button
+                  size="sm"
+                  className="w-full sm:w-auto"
+                  onClick={() => subscription.outstandingPaymentLink && (window.location.href = subscription.outstandingPaymentLink)}
+                >
+                  Pay outstanding amount
+                </Button>
+              </>
+            )}
+          </div>
+        )}
         {/* Credits Balance */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-sm">
@@ -183,16 +261,6 @@ export const SubscriptionCard = () => {
             <span className="font-semibold text-lg">
               {credits.toFixed(2)}
             </span>
-          </div>
-          <div className="rounded-lg bg-muted/50 p-3 space-y-1">
-            <div className="text-xs text-muted-foreground">
-              Credit rates:
-            </div>
-            <div className="text-xs space-y-0.5">
-              <div>• Flash speech: 0.2 credits/sec</div>
-              <div>• Alpha speech: 0.35 credits/sec</div>
-              <div>• Lip sync: 16 credits</div>
-            </div>
           </div>
         </div>
 
@@ -216,21 +284,42 @@ export const SubscriptionCard = () => {
         {/* Action buttons */}
         <div className="pt-2 space-y-2">
           {isPaid ? (
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={handleDowngrade}
-              disabled={updating}
-            >
-              {updating ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                "Downgrade to Free"
+            <>
+              {!isPremium && (
+                <Button
+                  className="w-full border-yellow-500 bg-yellow-500/10 text-yellow-700 hover:bg-yellow-500/20"
+                  onClick={handleUpgradeToPremium}
+                  disabled={updating}
+                >
+                  {updating ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <Crown className="mr-2 h-4 w-4" />
+                      Upgrade to Premium ($60/mo)
+                    </>
+                  )}
+                </Button>
               )}
-            </Button>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={handleCancelSubscription}
+                disabled={updating}
+              >
+                {updating ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  "Cancel subscription"
+                )}
+              </Button>
+            </>
           ) : (
             <>
             <Button

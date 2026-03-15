@@ -43,7 +43,8 @@ import {
   Save,
   ChevronUp,
   ChevronDown,
-  GripVertical
+  GripVertical,
+  Pencil
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -99,6 +100,7 @@ import {
   base64ToBlob
 } from "@/lib/api/ugc-videos";
 import { subscriptionApi } from "@/lib/api/subscription";
+import { listCharacters } from "@/lib/api/avatar";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { useProjectStore } from "@/lib/stores/project-store";
 import type { UGCVideoProject, UGCGeneratedVideo } from "@/lib/supabase";
@@ -166,6 +168,7 @@ type CanvasElement = {
   muted?: boolean; // Mute state for video elements
   videoStartOffset?: number; // Offset in milliseconds - where in the video file to start playing from (for trimming)
   audioStartOffset?: number; // Offset in milliseconds - where in the audio file to start playing from (for trimming)
+  circleFrame?: boolean; // When true, clip video/image to a circular frame (e.g. PiP style)
 };
 
 type SidebarSection = "avatars" | "media" | "templates" | "elements" | "audio" | "text" | "captions" | "brolls";
@@ -175,6 +178,8 @@ type Avatar = {
   name: string;
   url: string;
 };
+
+const DEFAULT_AVATAR_IDS = new Set(["avatar_1", "avatar_2", "avatar_3", "avatar_4", "avatar_5", "avatar_6", "avatar_7"]);
 
 // Component to generate thumbnail for videos that don't have one yet
 const VideoThumbnailGenerator = ({ 
@@ -504,7 +509,10 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   const mainVideoPlayerRef = useRef<HTMLVideoElement>(null);
   const [activeSidebarSection, setActiveSidebarSection] = useState<SidebarSection>("captions");
   const [avatarsDialogOpen, setAvatarsDialogOpen] = useState(false);
+  const [savedAvatars, setSavedAvatars] = useState<Avatar[]>([]);
   const [selectedAvatar, setSelectedAvatar] = useState<Avatar | null>(null);
+  const [creatingProjectFromAvatar, setCreatingProjectFromAvatar] = useState(false);
+  const [avatarNextError, setAvatarNextError] = useState<string | null>(null);
   const [showSpeechGeneration, setShowSpeechGeneration] = useState(false);
   const [currentStep, setCurrentStep] = useState<"speech" | "lipsync">("speech");
   const [selectedVoice, setSelectedVoice] = useState<string>("");
@@ -619,7 +627,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       loadProject();
     }
   }, [initialProjectId]); // Only run when initialProjectId changes
-
+  
   // Measure timeline container width to ensure it fits on screen
   useEffect(() => {
     const updateContainerWidth = () => {
@@ -2374,9 +2382,29 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     };
   }, [selectedElementId]);
 
-  // Available avatars - using video files
-  // Avatars are served from the remotion server's public folder
-  const avatars: Avatar[] = [
+  // Load saved characters when avatar dialog opens
+  useEffect(() => {
+    if (!avatarsDialogOpen) return;
+    let cancelled = false;
+    listCharacters()
+      .then(({ characters }) => {
+        if (cancelled) return;
+        const list: Avatar[] = (characters || [])
+          .map((c: Record<string, unknown>) => {
+            const videoUrl = (c.animationVideoUrl as string) || (c.selectedAvatarUrl as string) || "";
+            const url = !videoUrl ? "" : videoUrl.startsWith("http") ? videoUrl : `${config.remotionServerUrl}${videoUrl}`;
+            return { id: (c._id as string) || `char-${c.createdAt}`, name: (c.characterName as string) || "My avatar", url };
+          })
+          .filter((a: Avatar) => a.url);
+        setSavedAvatars(list);
+      })
+      .catch((err) => {
+        if (!cancelled) console.warn("[Avatars] Failed to load saved characters:", err);
+      });
+    return () => { cancelled = true; };
+  }, [avatarsDialogOpen]);
+
+  const defaultAvatars: Avatar[] = [
     { id: "avatar_1", name: "Avatar 1", url: `${config.remotionServerUrl}/avatars/Avatar_1.mp4` },
     { id: "avatar_2", name: "Avatar 2", url: `${config.remotionServerUrl}/avatars/Avatar_2.mp4` },
     { id: "avatar_3", name: "Avatar 3", url: `${config.remotionServerUrl}/avatars/Avatar_3.mp4` },
@@ -2385,6 +2413,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     { id: "avatar_6", name: "Avatar 6", url: `${config.remotionServerUrl}/avatars/Avatar_6.mp4` },
     { id: "avatar_7", name: "Avatar 7", url: `${config.remotionServerUrl}/avatars/Avatar_7.mp4` },
   ];
+  const avatars: Avatar[] = [...savedAvatars, ...defaultAvatars];
 
   // Handle avatar selection
   const handleAvatarSelect = (avatar: Avatar) => {
@@ -2393,34 +2422,49 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   };
 
   // Handle Next button - go to speech generation screen
+  const AVATAR_NEXT_TIMEOUT_MS = 20000; // 20s so we don't stay stuck on "Creating…"
   const handleNextToSpeechGeneration = async () => {
-    if (selectedAvatar) {
-      try {
-        // Create a new UGC project in the database
+    if (!selectedAvatar) return;
+    setAvatarNextError(null);
+    setCreatingProjectFromAvatar(true);
+    try {
+      const createAndUpdate = async () => {
         const project = await createUGCProject(
           `UGC Video - ${new Date().toLocaleDateString()}`,
           `Avatar: ${selectedAvatar.name}`
         );
+        if (!project?.id) {
+          throw new Error("Project was not created");
+        }
         console.log('[Project] Created project:', project.id, project.title);
-        
-        // Update project with avatar info
         const updatedProject = await updateUGCProject(project.id, {
           avatar_id: selectedAvatar.id,
-          avatar_url: selectedAvatar.url
+          avatar_url: selectedAvatar.url,
         });
-        
-        // Set the updated project in state
-        setCurrentProject(updatedProject);
-        setProjectTitle(updatedProject.title || updatedProject.id);
-        console.log('[Project] Project set in state:', updatedProject.id);
-        
-        setAvatarsDialogOpen(false);
-        setShowSpeechGeneration(true);
-        setCurrentStep("speech");
-      } catch (error: any) {
-        console.error("Error creating project:", error);
-        alert(`Failed to create project: ${error.message}`);
-      }
+        if (!updatedProject) {
+          throw new Error("Failed to update project with avatar");
+        }
+        return updatedProject;
+      };
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("Request timed out. Check your connection and try again.")), AVATAR_NEXT_TIMEOUT_MS);
+      });
+      const updatedProject = await Promise.race([createAndUpdate(), timeoutPromise]);
+
+      setCurrentProject(updatedProject);
+      setProjectTitle(updatedProject.title || updatedProject.id);
+      console.log('[Project] Project set in state:', updatedProject.id);
+
+      setAvatarsDialogOpen(false);
+      setShowSpeechGeneration(true);
+      setCurrentStep("speech");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to create project";
+      console.error("[Avatar] Next error:", error);
+      setAvatarNextError(message);
+      alert(`Failed to continue: ${message}. Please try again or refresh the page.`);
+    } finally {
+      setCreatingProjectFromAvatar(false);
     }
   };
 
@@ -2452,7 +2496,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       const cachedToken = await getCachedToken();
       
       const headers: HeadersInit = {
-        'Content-Type': 'application/json',
+          'Content-Type': 'application/json',
       };
       
       // Add authorization header if user is authenticated
@@ -2562,31 +2606,31 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
         if (currentProject) {
           // Run database save in background without blocking UI
           (async () => {
-            try {
-              console.log("Saving voice generation to database...", {
-                projectId: currentProject.id,
-                voiceId: selectedVoice,
-                scriptLength: speechText.length
-              });
-              
-              // Convert base64 to blob and upload to storage
-              console.log("Converting base64 to blob...");
-              const audioBlob = base64ToBlob(data.audio, 'audio/mpeg');
-              console.log("Audio blob size:", (audioBlob.size / 1024).toFixed(2), "KB");
-              
-              const audioFileName = `voice-${uuid()}.mp3`;
-              console.log("Uploading audio to Supabase Storage...");
-              const audioStorageUrl = await uploadAudioToStorage(
-                audioBlob,
-                currentProject.id,
-                audioFileName
-              );
-              
-              if (!audioStorageUrl) {
-                throw new Error("Failed to upload audio to storage");
-              }
-              
-              console.log("Audio uploaded to storage:", audioStorageUrl);
+          try {
+            console.log("Saving voice generation to database...", {
+              projectId: currentProject.id,
+              voiceId: selectedVoice,
+              scriptLength: speechText.length
+            });
+            
+            // Convert base64 to blob and upload to storage
+            console.log("Converting base64 to blob...");
+            const audioBlob = base64ToBlob(data.audio, 'audio/mpeg');
+            console.log("Audio blob size:", (audioBlob.size / 1024).toFixed(2), "KB");
+            
+            const audioFileName = `voice-${uuid()}.mp3`;
+            console.log("Uploading audio to Supabase Storage...");
+            const audioStorageUrl = await uploadAudioToStorage(
+              audioBlob,
+              currentProject.id,
+              audioFileName
+            );
+            
+            if (!audioStorageUrl) {
+              throw new Error("Failed to upload audio to storage");
+            }
+            
+            console.log("Audio uploaded to storage:", audioStorageUrl);
               
               // Save to user_uploads table so it appears in "My Audio" using REST API
               const { getCachedToken, refreshToken } = await import('@/lib/utils/token-cache');
@@ -2664,37 +2708,37 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   // Continue even if metadata save fails
                 }
               }
-              
-              // Get voice name from the list
-              const voiceName = elevenLabsVoices.find(v => v.voice_id === selectedVoice)?.name || null;
-              
-              // Calculate duration (rough estimate from audio size or use API response)
-              const durationSeconds = data.duration_seconds || null;
-              
-              // Save to database
-              console.log("Saving voice generation to database...");
-              const voiceGen = await saveVoiceGeneration(
-                currentProject.id,
-                selectedVoice,
-                voiceName,
-                speechText,
-                audioStorageUrl, // Use storage URL instead of base64
-                `ugc-audio/${currentProject.id}/${audioFileName}`,
-                durationSeconds
-              );
-              
-              setVoiceGenerationId(voiceGen.id);
-              console.log("✅ Voice generation saved to database:", voiceGen.id);
-            } catch (error: any) {
-              console.error("❌ Error saving voice generation:", error);
-              console.error("Error details:", {
-                message: error.message,
-                stack: error.stack,
-                projectId: currentProject?.id
-              });
+            
+            // Get voice name from the list
+            const voiceName = elevenLabsVoices.find(v => v.voice_id === selectedVoice)?.name || null;
+            
+            // Calculate duration (rough estimate from audio size or use API response)
+            const durationSeconds = data.duration_seconds || null;
+            
+            // Save to database
+            console.log("Saving voice generation to database...");
+            const voiceGen = await saveVoiceGeneration(
+              currentProject.id,
+              selectedVoice,
+              voiceName,
+              speechText,
+              audioStorageUrl, // Use storage URL instead of base64
+              `ugc-audio/${currentProject.id}/${audioFileName}`,
+              durationSeconds
+            );
+            
+            setVoiceGenerationId(voiceGen.id);
+            console.log("✅ Voice generation saved to database:", voiceGen.id);
+          } catch (error: any) {
+            console.error("❌ Error saving voice generation:", error);
+            console.error("Error details:", {
+              message: error.message,
+              stack: error.stack,
+              projectId: currentProject?.id
+            });
               // Show alert so user knows there was an issue
-              alert(`Voice generated successfully, but failed to save to database: ${error.message}\n\nCheck console for details.`);
-            }
+            alert(`Voice generated successfully, but failed to save to database: ${error.message}\n\nCheck console for details.`);
+          }
           })();
         } else {
           console.warn("Cannot save voice generation - no current project");
@@ -2779,10 +2823,14 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     setLipSyncStatus('Initializing lip sync generation...');
     setLipSyncProgress(5);
 
+    // Saved avatars (UUID id): send avatarCharacterId so server fetches video server-side and never receives Supabase URL
+    const isSavedAvatar = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selectedAvatar.id);
+
     try {
       console.log("[Lip Sync] Preparing API call...", {
         audio: generatedSpeechUrl.substring(0, 50) + "...",
-        video: selectedAvatar.url,
+        isSavedAvatar,
+        ...(isSavedAvatar ? { avatarCharacterId: selectedAvatar.id } : { video: selectedAvatar.url }),
         serverUrl: config.remotionServerUrl
       });
 
@@ -2800,23 +2848,27 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       }
 
       const headers: HeadersInit = {
-        'Content-Type': 'application/json',
+          'Content-Type': 'application/json',
       };
       if (cachedToken) {
         headers['Authorization'] = `Bearer ${cachedToken}`;
       }
 
-      const requestBody = {
-        audio: generatedSpeechUrl, // Base64 data URL
-        video: selectedAvatar.url, // Avatar video URL
-        seed: 0,
-        guidance_scale: 1
+      const requestBody: Record<string, unknown> = {
+          audio: generatedSpeechUrl, // Base64 data URL
+          seed: 0,
+          guidance_scale: 1
       };
+      if (isSavedAvatar) {
+        requestBody.avatarCharacterId = selectedAvatar.id;
+      } else {
+        requestBody.video = selectedAvatar.url;
+      }
 
       console.log("[Lip Sync] Making API call to:", `${config.remotionServerUrl}/lipsync/generate`);
       console.log("[Lip Sync] Request body:", {
-        audioLength: requestBody.audio.length,
-        video: requestBody.video,
+        audioLength: typeof requestBody.audio === 'string' ? requestBody.audio.length : 0,
+        ...(isSavedAvatar ? { avatarCharacterId: requestBody.avatarCharacterId } : { video: requestBody.video }),
         hasHeaders: !!headers['Authorization']
       });
 
@@ -3097,7 +3149,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
             : data.output.url || data.output;
           setLipSyncVideoUrl(videoUrl);
           generatingLipSyncRef.current = false;
-        setGeneratingLipSync(false);
+          setGeneratingLipSync(false);
           setLipSyncStatus('Lip sync completed!');
           setLipSyncProgress(100);
           console.log("Lip sync completed:", videoUrl);
@@ -3246,13 +3298,13 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
           }
         } else if (data.status === 'failed' || data.error) {
           generatingLipSyncRef.current = false;
-        setGeneratingLipSync(false);
+          setGeneratingLipSync(false);
           setLipSyncStatus(`Failed: ${data.error || 'Unknown error'}`);
           setLipSyncProgress(0);
           alert(`Lip sync generation failed: ${data.error || 'Unknown error'}`);
         } else if (data.status === 'canceled') {
           generatingLipSyncRef.current = false;
-        setGeneratingLipSync(false);
+          setGeneratingLipSync(false);
           setLipSyncStatus('Canceled');
           setLipSyncProgress(0);
           alert("Lip sync generation was canceled.");
@@ -3263,7 +3315,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
             setTimeout(poll, 5000);
           } else {
             generatingLipSyncRef.current = false;
-        setGeneratingLipSync(false);
+            setGeneratingLipSync(false);
             setLipSyncStatus('Timeout - taking longer than expected');
             setLipSyncProgress(0);
             alert("Lip sync generation is taking longer than expected. Please check back later.");
@@ -3275,7 +3327,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
             setTimeout(poll, 5000);
           } else {
             generatingLipSyncRef.current = false;
-        setGeneratingLipSync(false);
+            setGeneratingLipSync(false);
             setLipSyncStatus(`Unknown status: ${data.status}`);
             setLipSyncProgress(0);
             alert(`Lip sync generation status: ${data.status}. Please check back later.`);
@@ -3385,7 +3437,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   const activeSubtitle = useMemo(() => {
     try {
       if (!showSubtitles || !subtitleSegments || subtitleSegments.length === 0) return null;
-      return subtitleSegments.find(
+    return subtitleSegments.find(
         (segment) => segment && currentTime >= segment.startMs && currentTime < segment.endMs
       ) || null;
     } catch (error) {
@@ -4214,6 +4266,38 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     }
   };
 
+  // Split video/image element at current playhead time
+  const splitElementAtPlayhead = (elementId: string) => {
+    const element = canvasElements.find(el => el.id === elementId);
+    if (!element || (element.type !== "video" && element.type !== "image")) return;
+    const startTime = element.startTime ?? 0;
+    const elementDuration = element.duration ?? 5000;
+    const endTime = startTime + elementDuration;
+    if (currentTime <= startTime || currentTime >= endTime) return; // playhead must be inside clip
+    const leftDuration = currentTime - startTime;
+    const rightDuration = endTime - currentTime;
+    const videoStartOffset = element.videoStartOffset ?? 0;
+    const audioStartOffset = element.audioStartOffset ?? 0;
+    const rightVideoStartOffset = videoStartOffset + leftDuration;
+    const rightAudioStartOffset = audioStartOffset + leftDuration;
+    setCanvasElements(prev => {
+      const idx = prev.findIndex(el => el.id === elementId);
+      if (idx === -1) return prev;
+      const el = prev[idx];
+      const left: CanvasElement = { ...el, duration: leftDuration };
+      const right: CanvasElement = {
+        ...el,
+        id: uuid(),
+        startTime: currentTime,
+        duration: rightDuration,
+        videoStartOffset: rightVideoStartOffset,
+        audioStartOffset: rightAudioStartOffset,
+      };
+      return [...prev.slice(0, idx), left, right, ...prev.slice(idx + 1)];
+    });
+    setSelectedElementId(null); // deselect so user can click the new clip if needed
+  };
+
   // Bring element to front (highest z-index)
   const bringToFront = (id: string) => {
     if (canvasElements.length === 0) return;
@@ -4681,6 +4765,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
           cropY: el.cropY,
           cropWidth: el.cropWidth,
           cropHeight: el.cropHeight,
+          circleFrame: el.circleFrame || false,
           fontSize: el.fontSize,
           fontColor: el.fontColor,
           fontFamily: el.fontFamily,
@@ -5194,10 +5279,10 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       
       // Update element with position, size, and image offset (for images)
       const updates: Partial<CanvasElement> = {
-        x: newX,
-        y: newY,
-        width: newWidth,
-        height: newHeight
+        x: newX, 
+        y: newY, 
+        width: newWidth, 
+        height: newHeight 
       };
       
       if (element.type === "image") {
@@ -5370,39 +5455,39 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       // If trim would exceed original length, don't allow the drag to work at all
       if (!isImage && maxMediaDuration !== Infinity) {
         if (isAudio) {
-          // For audio: Check if trim would exceed original audio duration
           const wouldExceed = newAudioStartOffset + newDuration > maxAudioDuration;
-          const startMaxedOut = newAudioStartOffset === 0;
-          const tryingToIncrease = newDuration > initialDuration;
-          
-          // If start is maxed out and trying to increase duration, block the drag
-          if (startMaxedOut && tryingToIncrease) {
-            console.log('❌ TRIM MOVE - Blocked: Start maxed out, can only trim inwards');
-            return; // Don't update - drag doesn't work
-          }
-          
-          // If trim would exceed original audio duration, block the drag
           if (wouldExceed) {
             console.log('❌ TRIM MOVE - Blocked: Would exceed original audio duration');
-            return; // Don't update - drag doesn't work
+            return;
           }
         } else {
-          // For videos: Check if trim would exceed original video duration
           const wouldExceed = newVideoStartOffset + newDuration > maxVideoDuration;
-          const startMaxedOut = newVideoStartOffset === 0;
-          const tryingToIncrease = newDuration > initialDuration;
-          
-          // If start is maxed out and trying to increase duration, block the drag
-          if (startMaxedOut && tryingToIncrease) {
-            console.log('❌ TRIM MOVE - Blocked: Start maxed out, can only trim inwards');
-            return; // Don't update - drag doesn't work
-          }
-          
-          // If trim would exceed original video duration, block the drag
           if (wouldExceed) {
             console.log('❌ TRIM MOVE - Blocked: Would exceed original video duration');
-            return; // Don't update - drag doesn't work
+            return;
           }
+        }
+      }
+      
+      // Don't extend past the previous clip's end (add-back is limited by adjacent clip)
+      const prevClips = canvasElements.filter(el =>
+        el.id !== trimElementId && (el.type === "video" || el.type === "image" || el.type === "audio") &&
+        (el.startTime || 0) + (el.duration || 5000) <= initialStartTime + 50
+      );
+      const prevEnd = prevClips.length ? Math.max(...prevClips.map(el => (el.startTime || 0) + (el.duration || 5000))) : 0;
+      newStartTime = Math.max(newStartTime, prevEnd);
+      newDuration = Math.max(100, initialStartTime + initialDuration - newStartTime);
+      // When extending left we show more from start of media, so offset decreases
+      if (!isImage && !isAudio) newVideoStartOffset = Math.max(0, initialVideoStartOffset - (initialStartTime - newStartTime));
+      if (isAudio) newAudioStartOffset = Math.max(0, initialAudioStartOffset - (initialStartTime - newStartTime));
+      // Clamp to media duration after adjacent-clip cap
+      if (!isImage && maxMediaDuration !== Infinity) {
+        if (isAudio) {
+          const maxDur = maxAudioDuration - newAudioStartOffset;
+          if (newDuration > maxDur) newDuration = Math.max(100, maxDur);
+        } else {
+          const maxDur = maxVideoDuration - newVideoStartOffset;
+          if (newDuration > maxDur) newDuration = Math.max(100, maxDur);
         }
       }
       
@@ -5562,73 +5647,26 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       if (!isImage && maxMediaDuration !== Infinity) {
         if (isAudio) {
           const initialAudioStartOffset = trimStartRef.current.audioStartOffset || 0;
-          // Check if trim would exceed original audio duration
-          const wouldExceed = initialAudioStartOffset + newDuration > maxAudioDuration;
-          const startMaxedOut = initialAudioStartOffset === 0;
-          const tryingToIncrease = newDuration > initialDuration;
-          
-          console.log('🔍 RIGHT TRIM - Audio check:', {
-            initialAudioStartOffset,
-            newDuration,
-            maxAudioDuration,
-            sum: initialAudioStartOffset + newDuration,
-            wouldExceed,
-            startMaxedOut,
-            tryingToIncrease,
-            initialDuration
-          });
-          
-          // If start is maxed out and trying to increase duration, block the drag
-          if (startMaxedOut && tryingToIncrease) {
-            console.log('❌ TRIM MOVE - Blocked: Start maxed out, can only trim inwards');
-            return; // Don't update - drag doesn't work
-          }
-          
-          // If trim would exceed original audio duration, block the drag
-          if (wouldExceed) {
-            console.log('❌ TRIM MOVE - Blocked: Would exceed original audio duration', {
-              initialAudioStartOffset,
-              newDuration,
-              maxAudioDuration,
-              sum: initialAudioStartOffset + newDuration
-            });
-            return; // Don't update - drag doesn't work
+          if (initialAudioStartOffset + newDuration > maxAudioDuration) {
+            console.log('❌ TRIM MOVE - Blocked: Would exceed original audio duration');
+            return;
           }
         } else {
-          // Check if trim would exceed original video duration
-          const wouldExceed = initialVideoStartOffset + newDuration > maxVideoDuration;
-          const startMaxedOut = initialVideoStartOffset === 0;
-          const tryingToIncrease = newDuration > initialDuration;
-          
-          console.log('🔍 RIGHT TRIM - Video check:', {
-            initialVideoStartOffset,
-            newDuration,
-            maxVideoDuration,
-            sum: initialVideoStartOffset + newDuration,
-            wouldExceed,
-            startMaxedOut,
-            tryingToIncrease,
-            initialDuration
-          });
-          
-          // If start is maxed out and trying to increase duration, block the drag
-          if (startMaxedOut && tryingToIncrease) {
-            console.log('❌ TRIM MOVE - Blocked: Start maxed out, can only trim inwards');
-            return; // Don't update - drag doesn't work
-          }
-          
-          // If trim would exceed original video duration, block the drag
-          if (wouldExceed) {
-            console.log('❌ TRIM MOVE - Blocked: Would exceed original video duration', {
-              initialVideoStartOffset,
-              newDuration,
-              maxVideoDuration,
-              sum: initialVideoStartOffset + newDuration
-            });
-            return; // Don't update - drag doesn't work
+          if (initialVideoStartOffset + newDuration > maxVideoDuration) {
+            console.log('❌ TRIM MOVE - Blocked: Would exceed original video duration');
+            return;
           }
         }
       }
+      
+      // Don't extend past the next clip's start (add-back is limited by adjacent clip)
+      const nextClips = canvasElements.filter(el =>
+        el.id !== trimElementId && (el.type === "video" || el.type === "image" || el.type === "audio") &&
+        (el.startTime || 0) >= initialStartTime + initialDuration - 50
+      );
+      const nextStart = nextClips.length ? Math.min(...nextClips.map(el => el.startTime || 0)) : duration;
+      const maxEndTime = Math.min(duration, nextStart);
+      newDuration = Math.min(newDuration, Math.max(100, maxEndTime - initialStartTime));
       
       console.log('📐 TRIM MOVE - Right edge values:', {
         newDuration,
@@ -5850,9 +5888,9 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       }
     }
     
-    updateCanvasElement(draggingTimelineElementId, {
-      startTime: newStartTime
-    });
+      updateCanvasElement(draggingTimelineElementId, {
+        startTime: newStartTime
+      });
   };
 
   // Handle timeline drag mouse up
@@ -6225,18 +6263,18 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                 // Always call handleExportVideo - it has its own guard for isExporting
                 // This ensures the function is called even if state appears stale
                 await handleExportVideo();
-              }}
-              disabled={isExporting || canvasElements.length === 0}
-            >
+            }}
+            disabled={isExporting || canvasElements.length === 0}
+          >
               {isExporting || renderStatus === 'RENDERING' || renderStatus === 'QUEUED' ? (
-                <>
-                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+              <>
+                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                   {renderStatus === 'QUEUED' ? 'Queued...' : renderStatus === 'RENDERING' ? `Rendering... ${renderProgress}%` : 'Exporting...'}
-                </>
-              ) : (
-                'Export'
-              )}
-            </Button>
+              </>
+            ) : (
+              'Export'
+            )}
+          </Button>
           )}
         </div>
         
@@ -6255,9 +6293,9 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   }}
                 >
                   View Render Queue
-                </Button>
+          </Button>
               )}
-            </div>
+        </div>
             <span className={`text-xs ${
               renderStatus === "FAILED" ? "text-destructive font-medium" 
               : renderStatus === "READY" ? "text-green-600 font-medium"
@@ -6273,9 +6311,9 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                 ? "Ready - Click Download"
                 : renderStatus ?? "IDLE"}
             </span>
-          </div>
-        )}
       </div>
+        )}
+          </div>
 
       <div className="flex flex-1 overflow-hidden min-h-0">
         {/* Left Sidebar - Main App Style */}
@@ -6386,10 +6424,10 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
 
                     </>
                   )}
-                </div>
+                                </div>
               </ScrollArea>
-            </div>
-          )}
+                        </div>
+                      )}
 
           {activeSidebarSection === "brolls" && (
             <div className="border-t border-border/60 flex flex-col overflow-hidden" style={{ height: "40%", minHeight: 0, maxHeight: "40%" }}>
@@ -6454,7 +6492,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                 >
                   Fill Jump cuts
                 </Button>
-              </div>
+                </div>
             </div>
           )}
 
@@ -6475,8 +6513,8 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                     </>
                   ) : (
                     <>
-                      <Upload className="h-4 w-4 mr-2" />
-                      Upload
+                  <Upload className="h-4 w-4 mr-2" />
+                  Upload
                     </>
                   )}
                 </Button>
@@ -6965,7 +7003,68 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                     }}
                   >
                     {/* Element Content Container - Clips content but allows buttons to show */}
-                    <div className="w-full h-full overflow-hidden rounded">
+                    {/* When circleFrame: use a square (min dimension) centered wrapper so we get a true circle, not an oval */}
+                    <div className={cn(
+                      "w-full h-full overflow-hidden",
+                      !element.circleFrame && "rounded"
+                    )}>
+                      {element.circleFrame ? (
+                        <div className="w-full h-full flex items-center justify-center min-w-0 min-h-0">
+                          {/* Square wrapper (flex + aspect-ratio so side = min(width, height)) then rounded-full = true circle */}
+                          <div className="rounded-full overflow-hidden min-w-0 min-h-0" style={{ flex: '1 1 0', aspectRatio: '1', maxWidth: '100%', maxHeight: '100%' }}>
+                            {element.type === "video" && element.url && (
+                              <video
+                                id={`canvas-video-${element.id}`}
+                                src={element.url}
+                                className="w-full h-full object-cover"
+                                loop={false}
+                                muted={(element.muted ?? false) || isMuted}
+                                playsInline
+                                ref={(videoEl) => {
+                                  if (videoEl) {
+                                    if ('preservesPitch' in videoEl) (videoEl as any).preservesPitch = true;
+                                    try { videoEl.setAttribute('preservespitch', 'true'); } catch (_) {}
+                                  }
+                                }}
+                                onTimeUpdate={(e) => {
+                                  if (isPlaying) {
+                                    const video = e.currentTarget;
+                                    const elementStartTime = element.startTime || 0;
+                                    const elementDuration = element.duration || 5000;
+                                    const videoStartOffset = element.videoStartOffset || 0;
+                                    const trimmedEndTime = (videoStartOffset + elementDuration) / 1000;
+                                    if (video.currentTime >= trimmedEndTime - 0.1) video.pause();
+                                  }
+                                }}
+                                onLoadedMetadata={(e) => {
+                                  const video = e.currentTarget;
+                                  if (video.playbackRate !== playbackRate) setVideoPlaybackRate(video, playbackRate);
+                                  if (duration === 0 && video.duration) setDuration(video.duration * 1000);
+                                }}
+                                onEnded={(e) => {
+                                  const elementEndTime = (element.startTime || 0) + (element.duration || 5000);
+                                  if (currentTime >= elementEndTime - 100) e.currentTarget.pause();
+                                }}
+                              />
+                            )}
+                            {element.type === "image" && element.url && (
+                              <img
+                                src={element.url}
+                                alt=""
+                                className="w-full h-full object-cover"
+                                draggable={false}
+                                style={{
+                                  objectPosition: `${element.imageOffsetX || 50}% ${element.imageOffsetY || 50}%`,
+                                  clipPath: element.cropX !== undefined && element.cropY !== undefined && element.cropWidth !== undefined && element.cropHeight !== undefined
+                                    ? `inset(${element.cropY}% ${100 - (element.cropX + element.cropWidth)}% ${100 - (element.cropY + element.cropHeight)}% ${element.cropX}%)`
+                                    : undefined
+                                }}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                      <>
                       {element.type === "video" && element.url && (
                         <video
                           id={`canvas-video-${element.id}`}
@@ -7043,12 +7142,12 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                     )}
                     {element.type === "image" && element.url && (
                       <>
-                        <img
-                          src={element.url}
-                          alt=""
-                          className="w-full h-full object-cover rounded"
-                          draggable={false}
-                          style={{
+                      <img
+                        src={element.url}
+                        alt=""
+                        className={cn("w-full h-full object-cover", element.circleFrame ? "rounded-full" : "rounded")}
+                        draggable={false}
+                        style={{
                             objectPosition: `${element.imageOffsetX || 50}% ${element.imageOffsetY || 50}%`,
                             clipPath: element.cropX !== undefined && element.cropY !== undefined && element.cropWidth !== undefined && element.cropHeight !== undefined
                               ? `inset(${element.cropY}% ${100 - (element.cropX + element.cropWidth)}% ${100 - (element.cropY + element.cropHeight)}% ${element.cropX}%)`
@@ -7074,6 +7173,8 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                           </div>
                         )}
                       </>
+                    )}
+                    </>
                     )}
                     {element.type === "text" && (
                       <div
@@ -7105,6 +7206,14 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                               setContextMenuElementId(null);
                             }}>
                               Fill canvas
+                            </DropdownMenuItem>
+                          )}
+                          {(element.type === "video" || element.type === "image") && (
+                            <DropdownMenuItem onClick={() => {
+                              updateCanvasElement(element.id, { circleFrame: !element.circleFrame });
+                              setContextMenuElementId(null);
+                            }}>
+                              {element.circleFrame ? "Remove circle frame" : "Circle frame"}
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuItem onClick={() => {
@@ -7680,6 +7789,20 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                       />
                     </div>
                     
+                    {/* Circle frame (video / image only) */}
+                    {(element.type === "video" || element.type === "image") && (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="circle-frame"
+                          checked={!!element.circleFrame}
+                          onChange={(e) => updateCanvasElement(selectedElementId, { circleFrame: e.target.checked })}
+                          className="rounded border-gray-300"
+                        />
+                        <Label htmlFor="circle-frame" className="text-xs text-gray-600 cursor-pointer">Circle frame</Label>
+                      </div>
+                    )}
+                    
                     {/* Text Properties (if text element) */}
                     {element.type === "text" && (
                       <>
@@ -8119,7 +8242,11 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                           return (
                             <div
                               key={element.id}
-                              className={`group absolute top-2 bottom-2 rounded overflow-visible cursor-move hover:opacity-90 transition-opacity border-2 ${borderColor} bg-gray-100 z-20`}
+                              className={cn(
+                                "group absolute top-2 bottom-2 overflow-visible cursor-move hover:opacity-90 transition-opacity border-2 bg-gray-100 z-20",
+                                element.circleFrame ? "rounded-full" : "rounded",
+                                borderColor
+                              )}
                               style={{ 
                                 left: `${trackLeft}%`,
                                 width: `${trackWidth}%`,
@@ -8146,14 +8273,14 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                               title={`${isImage ? 'Image' : isBRollClip ? 'B-roll' : 'Video'} - Drag to move on timeline`}
                             >
                               {/* Render video or image content */}
-                              <div className="h-full flex items-center overflow-hidden rounded relative pointer-events-none" style={{ width: '100%' }}>
+                              <div className={cn("h-full flex items-center overflow-hidden relative pointer-events-none", element.circleFrame ? "rounded-full" : "rounded")} style={{ width: '100%' }}>
                                 {isImage ? (
                                   // Image element
                                   element.url ? (
                                     <img
                                       src={element.url}
                                       alt={`Image`}
-                                      className="h-full w-full object-cover"
+                                      className={cn("h-full w-full object-cover", element.circleFrame && "rounded-full")}
                                       draggable={false}
                                     />
                                   ) : (
@@ -8167,7 +8294,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                                     {element.thumbnail ? (
                                       // Use repeating background pattern for CapCut-like effect
                                       <div 
-                                        className="h-full w-full pointer-events-none"
+                                        className={cn("h-full w-full pointer-events-none", element.circleFrame && "rounded-full")}
                                         style={{ 
                                           backgroundImage: `url(${element.thumbnail})`,
                                           backgroundSize: `${thumbnailWidth}px 100%`,
@@ -8197,6 +8324,33 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                                   {isImage ? 'Image' : 'Video'}
                                 </div>
                               </div>
+                              
+                              {/* Split at playhead - only when this clip is selected and playhead is inside */}
+                              {selectedElementId === element.id && (() => {
+                                const elStart = elementStartTime;
+                                const elEnd = elementStartTime + elementDuration;
+                                const canSplit = currentTime > elStart && currentTime < elEnd;
+                                return (
+                                  <button
+                                    type="button"
+                                    className={cn(
+                                      "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 w-7 h-7 rounded-full flex items-center justify-center shadow-lg transition-all pointer-events-auto",
+                                      canSplit
+                                        ? "bg-amber-500 hover:bg-amber-600 text-white"
+                                        : "bg-gray-400 cursor-not-allowed text-white/80"
+                                    )}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      e.preventDefault();
+                                      if (canSplit) splitElementAtPlayhead(element.id);
+                                    }}
+                                    disabled={!canSplit}
+                                    title={canSplit ? "Split at playhead" : "Move playhead inside this clip to split"}
+                                  >
+                                    <Scissors className="h-3.5 w-3.5" />
+                                  </button>
+                                );
+                              })()}
                               
                               {/* Left Trim Handle - Always visible, more prominent when selected */}
                               <div
@@ -8376,7 +8530,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                         </div>
                         {/* Mute button for first audio in track */}
                         {audioElements.length > 0 && (
-                          <button
+                        <button
                             onClick={(e) => {
                               e.stopPropagation();
                               e.preventDefault();
@@ -8390,8 +8544,8 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                               <VolumeX className="h-3 w-3 text-gray-600" />
                             ) : (
                               <Volume2 className="h-3 w-3 text-gray-600" />
-                            )}
-                          </button>
+                          )}
+                        </button>
                         )}
                       </div>
                       
@@ -8443,7 +8597,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                                 {/* Label overlay */}
                                 <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white text-[8px] px-1 py-0.5 truncate pointer-events-none z-10">
                                   Audio
-                                </div>
+                              </div>
                               </div>
                               
                               {/* Left Trim Handle */}
@@ -8493,10 +8647,10 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                                       {audioEndSeconds !== null ? (
                                         <> | End: {audioEndSeconds.toFixed(2)}s</>
                                       ) : null}
-                                    </div>
-                                  );
+                            </div>
+                          );
                                 })()}
-                              </div>
+                          </div>
                               
                               {/* Right Trim Handle */}
                               <div
@@ -8554,8 +8708,8 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                     <div className="w-16 flex-shrink-0 border-r border-gray-200 bg-gray-50 flex items-center justify-center">
                       <div className="text-xs text-gray-600 font-medium">
                         Track (0)
-                      </div>
-                    </div>
+            </div>
+          </div>
                     <div className="flex-1 h-full relative overflow-hidden flex items-center justify-center text-xs text-gray-400">
                       No media tracks
                     </div>
@@ -8580,8 +8734,8 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
             // Only sync if there are no canvas videos (canvas videos drive timeline via animation frame)
             // When canvas videos exist, let the animation frame loop drive the timeline
             if (canvasElements.filter(el => el.type === "video" && el.url).length === 0) {
-              const video = e.currentTarget;
-              setCurrentTime(video.currentTime * 1000);
+            const video = e.currentTarget;
+            setCurrentTime(video.currentTime * 1000);
             }
           }}
           onLoadedMetadata={(e) => {
@@ -8617,14 +8771,34 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       )}
 
       {/* Avatar Selection Dialog */}
-      <Dialog open={avatarsDialogOpen} onOpenChange={setAvatarsDialogOpen}>
+      <Dialog
+        open={avatarsDialogOpen}
+        onOpenChange={(open) => {
+          if (open) setAvatarNextError(null);
+          setAvatarsDialogOpen(open);
+        }}
+      >
         <DialogContent className="!w-[80vw] !h-[80vh] !max-w-[80vw] !max-h-[80vh] !sm:max-w-[80vw] overflow-y-auto p-6">
           <DialogHeader>
             <DialogTitle>Select AI Avatar</DialogTitle>
             <DialogDescription>
-              Choose an avatar to use in your video
+              Choose an avatar to use in your video, or create your own
             </DialogDescription>
           </DialogHeader>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-primary/30 bg-primary/5 p-4">
+            <p className="text-sm text-muted-foreground">
+              Create a custom avatar with the wizard (selfie or studio style, generate, animate, then save).
+            </p>
+            <Button
+              variant="default"
+              onClick={() => {
+                setAvatarsDialogOpen(false);
+                router.push("/app/create/avatar");
+              }}
+            >
+              Create Avatar
+            </Button>
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-8 py-6">
             {avatars.map((avatar) => (
               <div
@@ -8650,25 +8824,51 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   />
                 </div>
                 <div className="text-base font-semibold text-center">{avatar.name}</div>
-                <Button
-                  onClick={() => handleAvatarSelect(avatar)}
-                  className="w-full h-10 text-base"
-                  variant={selectedAvatar?.id === avatar.id ? "default" : "outline"}
-                >
-                  {selectedAvatar?.id === avatar.id ? "Selected" : "Select"}
-                </Button>
+                <div className="flex gap-2 w-full">
+                  <Button
+                    onClick={() => handleAvatarSelect(avatar)}
+                    className="flex-1 h-10 text-base"
+                    variant={selectedAvatar?.id === avatar.id ? "default" : "outline"}
+                  >
+                    {selectedAvatar?.id === avatar.id ? "Selected" : "Select"}
+                  </Button>
+                  {DEFAULT_AVATAR_IDS.has(avatar.id) ? null : (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-10 w-10 shrink-0"
+                      onClick={() => {
+                        setAvatarsDialogOpen(false);
+                        router.push(`/app/create/avatar?characterId=${encodeURIComponent(avatar.id)}`);
+                      }}
+                      title="Edit avatar (e.g. crop video)"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
+          {avatarNextError && (
+            <p className="text-sm text-destructive pt-2">{avatarNextError}</p>
+          )}
           {selectedAvatar && (
             <div className="flex justify-end pt-4 border-t">
               <Button
                 onClick={handleNextToSpeechGeneration}
                 className="px-8"
                 size="lg"
-                disabled={!selectedAvatar}
+                disabled={!selectedAvatar || creatingProjectFromAvatar}
               >
-                Next
+                {creatingProjectFromAvatar ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creating…
+                  </>
+                ) : (
+                  "Next"
+                )}
               </Button>
             </div>
           )}
@@ -8983,29 +9183,29 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                           )}
                         </div>
                       )}
-                      <div className="flex items-center gap-2">
-                        <Button
-                          onClick={handleGenerateSpeech}
+                    <div className="flex items-center gap-2">
+                      <Button
+                        onClick={handleGenerateSpeech}
                           disabled={!selectedVoice || !speechText || generatingSpeech || (userCredits !== null && !hasEnoughCredits)}
-                          className="flex-1"
-                          size="lg"
+                        className="flex-1"
+                        size="lg"
                           variant={!hasEnoughCredits && userCredits !== null ? "destructive" : "default"}
-                        >
-                          <Mic className="h-4 w-4 mr-2" />
+                      >
+                        <Mic className="h-4 w-4 mr-2" />
                           {generatingSpeech 
                             ? "Generating..." 
                             : speechText && speechText.trim().length > 0
                             ? `Generate Speech (${calculateEstimatedCredits.toFixed(2)} credits)`
                             : "Generate Speech"
                           }
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="lg"
-                          className="h-12 w-12 p-0"
-                        >
-                          <Plus className="h-4 w-4" />
-                        </Button>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="lg"
+                        className="h-12 w-12 p-0"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
                       </div>
                     </div>
                   </>

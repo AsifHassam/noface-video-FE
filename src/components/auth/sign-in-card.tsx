@@ -45,7 +45,12 @@ export const SignInCard = () => {
       const { error } = await signInWithMagicLink(values.email);
       
       if (error) {
-        toast.error("Failed to send magic link. Please try again.");
+        const msg = error?.message ?? "";
+        if (msg.includes("only request this after") || msg.includes("8 seconds") || msg.includes("429")) {
+          toast.error("Please wait a few seconds before requesting another magic link.");
+        } else {
+          toast.error("Failed to send magic link. Please try again.");
+        }
         console.error("Sign in error:", error);
       } else {
         setEmailSent(true);

@@ -5,10 +5,9 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { VideoCard } from "@/components/dashboard/video-card";
-import { SubscriptionCard } from "@/components/dashboard/subscription-card";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { useAuthStore } from "@/lib/stores/auth-store";
-import { subscriptionApi } from "@/lib/api/subscription";
+import { subscriptionApi, type OutstandingItem } from "@/lib/api/subscription";
 import { toast } from "sonner";
 import { Loader2, ChevronLeft, ChevronRight, FileText } from "lucide-react";
 import { useRouter, usePathname } from "next/navigation";
@@ -26,6 +25,10 @@ export const DashboardView = () => {
   const [canCreateVideo, setCanCreateVideo] = useState(true);
   const [checkingLimit, setCheckingLimit] = useState(false);
   const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'paid' | 'premium' | null>(null);
+  const [paymentBlocked, setPaymentBlocked] = useState(false);
+  const [outstandingPaymentLink, setOutstandingPaymentLink] = useState<string | null>(null);
+  const [outstandingAmountCents, setOutstandingAmountCents] = useState<number | null>(null);
+  const [outstandingList, setOutstandingList] = useState<OutstandingItem[]>([]);
   const [isTemplateSelectorOpen, setIsTemplateSelectorOpen] = useState(false);
   const [selectedProjectType, setSelectedProjectType] = useState<"story" | "TWO_CHAR_CONVO">("TWO_CHAR_CONVO");
 
@@ -76,9 +79,16 @@ export const DashboardView = () => {
       
       try {
         setCheckingLimit(true);
-        const result = await subscriptionApi.getSubscriptionInfo();
-        setCanCreateVideo(result.subscription.canCreateVideo);
-        setSubscriptionTier(result.subscription.tier);
+        const [subResult, outResult] = await Promise.all([
+          subscriptionApi.getSubscriptionInfo(),
+          subscriptionApi.getOutstanding().catch(() => ({ success: true, outstanding: [] })),
+        ]);
+        setCanCreateVideo(subResult.subscription.canCreateVideo);
+        setSubscriptionTier(subResult.subscription.tier);
+        setPaymentBlocked(!!subResult.subscription.paymentBlocked);
+        setOutstandingPaymentLink(subResult.subscription.outstandingPaymentLink ?? null);
+        setOutstandingAmountCents(subResult.subscription.outstandingAmountCents ?? null);
+        setOutstandingList(outResult.outstanding || []);
       } catch (error) {
         console.error("Error checking subscription:", error);
         // On error, allow creation (don't block users)
@@ -232,7 +242,7 @@ export const DashboardView = () => {
                 setSelectedProjectType("TWO_CHAR_CONVO"); // Default, but we'll show all
                 setIsTemplateSelectorOpen(true);
               }}
-              disabled={authLoading || checkingLimit}
+              disabled={authLoading || checkingLimit || paymentBlocked}
             >
               <FileText className="mr-2 h-4 w-4" />
               Create with Template
@@ -241,18 +251,62 @@ export const DashboardView = () => {
         <Button 
           className="rounded-2xl"
           onClick={handleCreateNewVideo}
-          disabled={authLoading || checkingLimit || (!canCreateVideo && !!user?.id && !authLoading)}
+          disabled={authLoading || checkingLimit || paymentBlocked || (!canCreateVideo && !!user?.id && !authLoading)}
         >
           {authLoading ? "Loading..." : checkingLimit ? "Checking..." : "Create new video"}
         </Button>
         </div>
       </div>
-      
-      {/* Subscription Card */}
-      {user && <SubscriptionCard />}
+
+      {/* Failed payment: block access until outstanding is paid (list from payment_transactions or single from profile) */}
+      {user && paymentBlocked && !checkingLimit && (outstandingList.length > 0 || outstandingPaymentLink) && (
+        <div className="rounded-2xl border border-destructive/50 bg-destructive/10 p-6 space-y-4">
+          <h3 className="text-lg font-semibold text-destructive">
+            A recurring payment failed
+          </h3>
+          <p className="text-sm text-muted-foreground">
+            Your access is paused until the outstanding amount(s) are paid. Pay below to restore access.
+          </p>
+          {outstandingList.length > 0 ? (
+            <ul className="space-y-2">
+              {outstandingList.map((item) => (
+                <li key={item.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
+                  <span className="text-muted-foreground">
+                    ~${Math.round(item.amountCents / 100 / 18)} USD
+                    {item.createdAt && (
+                      <span className="ml-2 text-xs">({new Date(item.createdAt).toLocaleDateString()})</span>
+                    )}
+                  </span>
+                  <Button
+                    size="sm"
+                    className="rounded-2xl whitespace-nowrap shrink-0 w-full sm:w-auto"
+                    onClick={() => window.location.href = item.paymentLink}
+                  >
+                    Pay now
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              {outstandingAmountCents != null && (
+                <span className="font-medium text-foreground">
+                  Amount due: ~${Math.round(outstandingAmountCents / 100 / 18)} USD
+                </span>
+              )}
+              <Button
+                className="rounded-2xl whitespace-nowrap shrink-0"
+                onClick={() => outstandingPaymentLink && (window.location.href = outstandingPaymentLink)}
+              >
+                Pay now
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
       
       {/* Upgrade Prompt when limit reached (only for free tier) */}
-      {user && !canCreateVideo && !checkingLimit && subscriptionTier === 'free' && (
+      {user && !paymentBlocked && !canCreateVideo && !checkingLimit && subscriptionTier === 'free' && (
         <div className="rounded-2xl border border-primary/20 bg-gradient-to-r from-primary/10 to-primary/5 p-6">
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
@@ -282,7 +336,7 @@ export const DashboardView = () => {
       )}
       
       {/* Limit reached message for paid tier (no upgrade option) */}
-      {user && !canCreateVideo && !checkingLimit && subscriptionTier === 'paid' && (
+      {user && !paymentBlocked && !canCreateVideo && !checkingLimit && subscriptionTier === 'paid' && (
         <div className="rounded-2xl border border-orange-200 bg-orange-50 p-6">
           <div className="flex items-center gap-4">
             <div className="flex-1">

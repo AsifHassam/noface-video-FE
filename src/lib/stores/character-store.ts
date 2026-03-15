@@ -3,11 +3,13 @@
 import { create } from "zustand";
 import { CHARACTERS } from "@/lib/data/characters";
 import { getCustomCharacters, deleteCustomCharacter, type CustomCharacter as ApiCustomCharacter } from "@/lib/api/custom-characters";
+import { getGlobalCharacters, type GlobalCharacter } from "@/lib/api/global-characters";
 import type { Character } from "@/types";
 
 type CharacterState = {
   characters: Character[];
   customCharacters: Character[];
+  globalCharacters: Character[];
   isLoading: boolean;
   loadCustomCharacters: () => Promise<void>;
   refreshCharacters: () => Promise<void>;
@@ -29,20 +31,49 @@ function convertCustomCharacter(apiChar: ApiCustomCharacter): Character {
   };
 }
 
+/**
+ * Convert global character (admin-created) to app Character type
+ */
+function convertGlobalCharacter(apiChar: GlobalCharacter): Character {
+  return {
+    id: apiChar.id,
+    slug: `global-${apiChar.id}`,
+    name: apiChar.name,
+    avatarUrl: apiChar.avatar_url,
+    enabled: true,
+    isPlaceholder: !!apiChar.is_placeholder_voice,
+    voiceId: apiChar.voice_id,
+    voiceSampleUrl: apiChar.voice_sample_url ?? undefined,
+  };
+}
+
 export const useCharacterStore = create<CharacterState>()((set, get) => ({
-      characters: CHARACTERS,
+  characters: CHARACTERS,
   customCharacters: [],
+  globalCharacters: [],
   isLoading: false,
 
   loadCustomCharacters: async () => {
     set({ isLoading: true });
     try {
-      const apiChars = await getCustomCharacters();
+      const [apiChars, globalApiChars] = await Promise.all([
+        getCustomCharacters(),
+        getGlobalCharacters().catch((err) => {
+          console.error("Error loading global characters:", err);
+          return [];
+        }),
+      ]);
       const customChars = apiChars.map(convertCustomCharacter);
-      set({ customCharacters: customChars });
+      const globalChars = globalApiChars.map(convertGlobalCharacter);
+      set({ customCharacters: customChars, globalCharacters: globalChars });
     } catch (error) {
       console.error("Error loading custom characters:", error);
-      // Don't throw - just log and continue with default characters
+      try {
+        const globalApiChars = await getGlobalCharacters();
+        set((s) => ({ ...s, globalCharacters: globalApiChars.map(convertGlobalCharacter) }));
+      } catch (_) {
+        // ignore
+      }
     } finally {
       set({ isLoading: false });
     }
@@ -53,13 +84,15 @@ export const useCharacterStore = create<CharacterState>()((set, get) => ({
   },
 
   deleteCharacter: async (characterId: string) => {
+    const state = get();
+    if (state.globalCharacters.some((c) => c.id === characterId)) {
+      throw new Error("Global characters cannot be deleted here.");
+    }
     try {
       await deleteCustomCharacter(characterId);
-      // Remove from local state and reload
-      set((state) => ({
-        customCharacters: state.customCharacters.filter((char) => char.id !== characterId),
+      set((s) => ({
+        customCharacters: s.customCharacters.filter((char) => char.id !== characterId),
       }));
-      // Reload to ensure consistency
       await get().loadCustomCharacters();
     } catch (error) {
       console.error("Error deleting character:", error);
@@ -69,11 +102,12 @@ export const useCharacterStore = create<CharacterState>()((set, get) => ({
 }));
 
 /**
- * Hook to get all characters (default + custom) combined
+ * Hook to get all characters (global + custom + default) combined
  * This is a computed getter that should be used in components
  */
 export function useAllCharacters(): Character[] {
   const characters = useCharacterStore((state) => state.characters);
   const customCharacters = useCharacterStore((state) => state.customCharacters);
-  return [...customCharacters, ...characters];
+  const globalCharacters = useCharacterStore((state) => state.globalCharacters);
+  return [...globalCharacters, ...customCharacters, ...characters];
 }

@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
-import { Sparkles, MessageCircle, Video, MessageSquare } from "lucide-react";
+import { Sparkles, MessageCircle, Video, MessageSquare, Crown } from "lucide-react";
 import { subscriptionApi } from "@/lib/api/subscription";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { toast } from "sonner";
@@ -26,6 +26,7 @@ const cards = [
     href: "/app/create/ai-ugc/editor",
     disabled: false,
     mostPopular: true, // Mark as most popular
+    premiumOnly: true, // Only available on Premium plan
   },
   {
     title: "2 Characters Having a Conversation",
@@ -90,6 +91,22 @@ export default function CreatePage() {
 
   const handleCardClick = async (card: typeof cards[0]) => {
     if (card.disabled) {
+      return;
+    }
+
+    // AI UGC is Premium only
+    const isUgcPremiumOnly = (card as { premiumOnly?: boolean }).premiumOnly === true;
+    if (isUgcPremiumOnly && user?.id && subscriptionTier !== 'premium') {
+      toast.error("AI UGC videos are available on the Premium plan.", {
+        description: "Upgrade to Premium ($60/mo) to unlock the AI UGC editor.",
+        action: user?.email ? {
+          label: "Upgrade to Premium",
+          onClick: () => {
+            const redirectUrl = `${window.location.origin}/app/payment/success`;
+            window.location.href = `https://paystack.shop/pay/noface-premium?email=${encodeURIComponent(user.email)}&callback_url=${encodeURIComponent(redirectUrl)}`;
+          },
+        } : undefined,
+      });
       return;
     }
 
@@ -192,7 +209,8 @@ export default function CreatePage() {
       
       <section className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
         {cards.map((card) => {
-          const isDisabled = card.disabled || (checkingLimit || (!canCreateVideo && !!user?.id));
+          const isUgcPremiumLocked = (card as { premiumOnly?: boolean }).premiumOnly === true && !!user?.id && subscriptionTier !== 'premium';
+          const isDisabled = card.disabled || (checkingLimit || (!canCreateVideo && !!user?.id)) || isUgcPremiumLocked;
           
           const content = (
             <Card className={`group h-full rounded-3xl border-none bg-white/70 p-6 shadow-lg shadow-primary/5 transition ${
@@ -216,6 +234,11 @@ export default function CreatePage() {
                   <Badge variant="outline" className="rounded-full">
                     Coming soon
                   </Badge>
+                ) : isUgcPremiumLocked ? (
+                  <Badge className="rounded-full border-amber-500/50 bg-amber-500/10 text-amber-700">
+                    <Crown className="mr-1 h-3 w-3" />
+                    Premium
+                  </Badge>
                 ) : (card as any).mostPopular ? (
                   <Badge className="rounded-full bg-primary/10 text-primary">
                     Most popular
@@ -227,7 +250,7 @@ export default function CreatePage() {
                   disabled={isDisabled}
                   onClick={() => handleCardClick(card)}
                 >
-                  {card.disabled ? "Locked" : checkingLimit ? "Checking..." : "Start"}
+                  {card.disabled ? "Locked" : isUgcPremiumLocked ? "Premium only" : checkingLimit ? "Checking..." : "Start"}
                 </Button>
               </CardContent>
             </Card>

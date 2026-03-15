@@ -6,6 +6,8 @@ export type Character = {
   enabled: boolean;
   isPlaceholder: boolean;
   voiceId?: string | null;
+  /** URL to voice sample audio (e.g. for global characters from Supabase) */
+  voiceSampleUrl?: string | null;
 };
 
 export type OverlayPosition =

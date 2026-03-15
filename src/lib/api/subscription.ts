@@ -94,6 +94,34 @@ export type SubscriptionInfo = {
   }; // Legacy field for display purposes
   limit: number | null; // No limit with credits system (null)
   lastResetAt: string | null;
+  paymentBlocked?: boolean;
+  outstandingPaymentLink?: string | null;
+  outstandingAmountCents?: number | null;
+};
+
+export type PaymentTransaction = {
+  id: string;
+  reference: string;
+  planCode: string | null;
+  email: string;
+  amountCents: number;
+  currency: string;
+  status: string;
+  eventType: string;
+  isInitialPayment: boolean;
+  paymentLink?: string;
+  paidAt?: string;
+  createdAt: string;
+};
+
+/** One unpaid failed transaction (outstanding amount) from payment_transactions */
+export type OutstandingItem = {
+  id: string;
+  paystackReference: string;
+  amountCents: number;
+  currency: string;
+  paymentLink: string;
+  createdAt: string;
 };
 
 /**
@@ -141,7 +169,7 @@ export const subscriptionApi = {
       let tier: 'free' | 'paid' | 'premium' = 'free';
       
       // Use REST API directly to avoid hanging Supabase client queries
-      const profileUrl = `${supabaseUrl}/rest/v1/profiles?id=eq.${userId}&select=subscription_tier,subscription_started_at,last_video_reset_at,credits`;
+      const profileUrl = `${supabaseUrl}/rest/v1/profiles?id=eq.${userId}&select=subscription_tier,subscription_started_at,last_video_reset_at,credits,payment_blocked,outstanding_payment_link,outstanding_amount_cents`;
       
       const fetchProfile = async (authToken: string) => {
         const controller = new AbortController();
@@ -334,10 +362,12 @@ export const subscriptionApi = {
 
       // Get credits balance (new credits-based system)
       const credits = parseFloat(profile?.credits || 0);
-      
-      // With credits system, user can create videos if they have at least 0.2 credits
-      // (minimum for 1 second of Flash speech)
-      const canCreateVideo = credits >= 0.2;
+      const paymentBlocked = !!profile?.payment_blocked;
+      const outstandingPaymentLink = profile?.outstanding_payment_link ?? null;
+      const outstandingAmountCents = profile?.outstanding_amount_cents ?? null;
+
+      // With credits system, user can create videos if they have at least 0.2 credits and are not payment-blocked
+      const canCreateVideo = !paymentBlocked && credits >= 0.2;
 
       return {
         success: true,
@@ -347,6 +377,9 @@ export const subscriptionApi = {
           credits,
           usage, // Legacy field for display purposes
           limit: null, // No limit with credits system
+          paymentBlocked: paymentBlocked || undefined,
+          outstandingPaymentLink: outstandingPaymentLink || undefined,
+          outstandingAmountCents: outstandingAmountCents ?? undefined,
           lastResetAt: lastResetAt ? lastResetAt.toISOString() : null
         }
       };
@@ -355,6 +388,43 @@ export const subscriptionApi = {
       console.error('❌ Error getting subscription info:', error);
       throw error;
     }
+  },
+
+  /**
+   * Get payment transactions for the current user (billing history)
+   */
+  async getTransactions(): Promise<{ success: boolean; transactions: PaymentTransaction[] }> {
+    const data = await apiRequest<{ success: boolean; transactions: PaymentTransaction[] }>('/api/subscription/transactions');
+    return { success: data.success, transactions: data.transactions || [] };
+  },
+
+  /**
+   * Get list of outstanding (unpaid failed) amounts from payment_transactions
+   */
+  async getOutstanding(): Promise<{ success: boolean; outstanding: OutstandingItem[] }> {
+    const data = await apiRequest<{ success: boolean; outstanding: OutstandingItem[] }>('/api/subscription/outstanding');
+    return { success: data.success, outstanding: data.outstanding || [] };
+  },
+
+  /**
+   * Cancel current Paystack subscription and move to free tier.
+   */
+  async cancelSubscription(): Promise<{ success: boolean; error?: string }> {
+    const data = await apiRequest<{ success: boolean; error?: string }>('/api/subscription/cancel', {
+      method: 'POST',
+    });
+    return { success: !!data.success, error: data.error };
+  },
+
+  /**
+   * Upgrade from Pro to Premium: cancel old subscription, create new Premium with same billing day and existing card.
+   */
+  async upgradeToPremium(): Promise<{ success: boolean; message?: string; alreadyPremium?: boolean; error?: string }> {
+    const data = await apiRequest<{ success: boolean; message?: string; alreadyPremium?: boolean; error?: string }>(
+      '/api/subscription/upgrade-to-premium',
+      { method: 'POST' }
+    );
+    return data;
   },
 
   /**

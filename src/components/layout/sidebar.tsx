@@ -8,6 +8,7 @@ import {
   Settings2,
   Clock,
   Shield,
+  Calendar,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -15,12 +16,15 @@ import { useAuthStore } from "@/lib/stores/auth-store";
 
 const ADMIN_EMAIL = "asifhassam14@gmail.com";
 
+const CALENDLY_BOOKING_URL = "https://calendly.com/asifhassam14/booking";
+
 type NavItem = {
   label: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
   disabled?: boolean;
   tooltip?: string;
+  external?: boolean;
 };
 
 const NAV_ITEMS: NavItem[] = [
@@ -49,6 +53,12 @@ const NAV_ITEMS: NavItem[] = [
     href: "/app/settings",
     icon: Settings2,
   },
+  {
+    label: "Free training",
+    href: CALENDLY_BOOKING_URL,
+    icon: Calendar,
+    external: true,
+  },
 ];
 
 export const Sidebar = () => {
@@ -74,7 +84,7 @@ export const Sidebar = () => {
       </div>
       <nav className="flex flex-1 flex-col gap-2">
         {visibleNavItems.map((item) => {
-          const isActive = pathname.startsWith(item.href);
+          const isActive = !item.external && pathname.startsWith(item.href);
           const content = (
             <span
               className={cn(
@@ -100,6 +110,20 @@ export const Sidebar = () => {
                 </TooltipTrigger>
                 <TooltipContent>{item.tooltip}</TooltipContent>
               </Tooltip>
+            );
+          }
+
+          if (item.external) {
+            return (
+              <a
+                key={item.label}
+                href={item.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full"
+              >
+                {content}
+              </a>
             );
           }
 

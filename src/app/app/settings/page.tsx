@@ -4,10 +4,12 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Eye, EyeOff, CheckCircle2 } from "lucide-react";
+import { Loader2, Eye, EyeOff, CheckCircle2, Receipt } from "lucide-react";
 import { toast } from "sonner";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { saveApiKey, checkApiKey } from "@/lib/api/custom-characters";
+import { SubscriptionCard } from "@/components/dashboard/subscription-card";
+import { subscriptionApi, type PaymentTransaction } from "@/lib/api/subscription";
 
 export default function SettingsPage() {
   const { user } = useAuthStore();
@@ -16,6 +18,8 @@ export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
+  const [transactionsLoading, setTransactionsLoading] = useState(false);
 
   // Load existing API key on mount
   useEffect(() => {
@@ -35,6 +39,24 @@ export default function SettingsPage() {
     };
 
     loadApiKeyStatus();
+  }, [user?.id]);
+
+  // Load payment transactions for billing tab
+  useEffect(() => {
+    const loadTransactions = async () => {
+      if (!user?.id) return;
+      setTransactionsLoading(true);
+      try {
+        const result = await subscriptionApi.getTransactions();
+        setTransactions(result.transactions || []);
+      } catch (e) {
+        console.error("Error loading transactions:", e);
+        setTransactions([]);
+      } finally {
+        setTransactionsLoading(false);
+      }
+    };
+    loadTransactions();
   }, [user?.id]);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -79,6 +101,61 @@ export default function SettingsPage() {
       </header>
 
       <div className="space-y-6">
+        {/* Billing Section */}
+        <section className="space-y-3">
+          <h2 className="text-xl font-semibold text-foreground">Billing</h2>
+          <p className="text-sm text-muted-foreground">
+            Manage your plan, credits, and subscription
+          </p>
+          <SubscriptionCard />
+
+          {/* Payment transactions */}
+          <div className="rounded-3xl border border-border/60 bg-white/80 p-6 shadow-sm">
+            <h3 className="text-base font-semibold text-foreground flex items-center gap-2 mb-4">
+              <Receipt className="h-4 w-4" />
+              Payment history
+            </h3>
+            {transactionsLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : transactions.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4">No payment transactions yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="py-2 pr-4">Date</th>
+                      <th className="py-2 pr-4">Reference</th>
+                      <th className="py-2 pr-4">Type</th>
+                      <th className="py-2 pr-4">Amount</th>
+                      <th className="py-2">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {transactions.map((tx) => (
+                      <tr key={tx.id} className="border-b last:border-0">
+                        <td className="py-3 pr-4 text-muted-foreground">
+                          {tx.createdAt ? new Date(tx.createdAt).toLocaleDateString(undefined, { dateStyle: "short" }) : "—"}
+                        </td>
+                        <td className="py-3 pr-4 font-mono text-xs">{tx.reference}</td>
+                        <td className="py-3 pr-4">
+                          {tx.isInitialPayment ? "Initial" : tx.eventType || "—"}
+                        </td>
+                        <td className="py-3 pr-4">
+                          {(tx.amountCents / 100).toFixed(2)} {tx.currency}
+                        </td>
+                        <td className="py-3">{tx.status}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+
         {/* Eleven Labs API Key Section */}
         <div className="rounded-3xl border border-border/60 bg-white/80 p-6 shadow-sm">
           <div className="space-y-4">

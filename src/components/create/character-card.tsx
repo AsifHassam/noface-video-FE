@@ -26,8 +26,8 @@ type CharacterCardProps = {
   onDelete?: () => void; // Optional callback when character is deleted
 };
 
-// Map character IDs to their voice sample files
-const getVoiceSampleUrl = (characterId: string): string | null => {
+// Map character IDs to their voice sample files (static/built-in characters)
+const getBuiltInVoiceSampleUrl = (characterId: string): string | null => {
   const voiceMap: Record<string, string> = {
     hero1: "/voice_samples/Peter-sample.mp3", // Peter
     hero2: "/voice_samples/Stewie-sample.mp3", // Stewie
@@ -40,11 +40,11 @@ export const CharacterCard = ({ character, selected, onSelect, onDelete }: Chara
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const voiceSampleUrl = getVoiceSampleUrl(character.id);
+  const voiceSampleUrl = getBuiltInVoiceSampleUrl(character.id) ?? character.voiceSampleUrl ?? null;
   const { deleteCharacter } = useCharacterStore();
 
-  // Check if this is a custom character (slug starts with "custom-")
   const isCustomCharacter = character.slug.startsWith("custom-");
+  const isGlobalCharacter = character.slug.startsWith("global-");
 
   // Handle audio playback
   useEffect(() => {
@@ -202,7 +202,7 @@ export const CharacterCard = ({ character, selected, onSelect, onDelete }: Chara
         </div>
         {character.enabled ? (
         <p className="text-xs text-muted-foreground">
-          {isCustomCharacter ? "Custom character" : character.isPlaceholder ? "Placeholder voice" : "Premium voice"}
+          {isGlobalCharacter ? "Global character" : isCustomCharacter ? "Custom character" : character.isPlaceholder ? "Placeholder voice" : "Premium voice"}
         </p>
         ) : (
           <p className="text-xs text-muted-foreground italic">Coming Soon</p>

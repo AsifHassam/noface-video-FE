@@ -18,6 +18,7 @@ import {
   Rocket,
   Crown,
   Menu,
+  Calendar,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -77,6 +78,7 @@ const CASE_STUDIES = {
 
 const PRICING_PLANS = [
   {
+    id: "free",
     name: "Free",
     price: "$0",
     period: "forever",
@@ -91,13 +93,13 @@ const PRICING_PLANS = [
     gradient: "from-gray-500 to-gray-600",
   },
   {
+    id: "pro",
     name: "Pro Plan",
     price: "$29",
     period: "per month",
     description: "Best for individual creators & TikTok pages",
     features: [
       "250 credits per month",
-      "10 AI UGC videos (with lip sync)",
       "~40 story narration videos",
       "~20 2-character videos",
       "Premium templates library",
@@ -111,7 +113,8 @@ const PRICING_PLANS = [
     gradient: "from-purple-500 to-pink-500",
   },
   {
-    name: "Pro Plan",
+    id: "premium",
+    name: "Premium Plan",
     price: "$60",
     period: "per month",
     description: "Best for daily posting & multiple accounts",
@@ -200,12 +203,37 @@ export default function HomePage() {
             >
               Testimonials
             </Link>
+            <a
+              href="https://calendly.com/asifhassam14/booking"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
+            >
+              <Calendar className="h-4 w-4" />
+              Free training
+            </a>
+            <Button
+              size="sm"
+              variant="outline"
+              className="rounded-full"
+              asChild
+            >
+              <a
+                href="https://calendly.com/asifhassam14/booking"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2"
+              >
+                <Calendar className="h-4 w-4" />
+                Book a demo
+              </a>
+            </Button>
             <Button
               size="sm"
               className="rounded-full"
               onClick={() => setSignInDialogOpen(true)}
             >
-              Get Started
+              Sign in
               <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
           </nav>
@@ -238,14 +266,40 @@ export default function HomePage() {
                 >
                   Testimonials
                 </Link>
+                <a
+                  href="https://calendly.com/asifhassam14/booking"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-base font-medium text-foreground hover:text-primary transition-colors flex items-center gap-2"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <Calendar className="h-4 w-4" />
+                  Free training
+                </a>
                 <Button
-                  className="rounded-full mt-4"
+                  variant="outline"
+                  className="rounded-full w-full justify-center"
+                  asChild
+                >
+                  <a
+                    href="https://calendly.com/asifhassam14/booking"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    <Calendar className="h-4 w-4" />
+                    Book a demo
+                  </a>
+                </Button>
+                <Button
+                  className="rounded-full mt-2 w-full"
                   onClick={() => {
                     setMobileMenuOpen(false);
                     setSignInDialogOpen(true);
                   }}
                 >
-                  Get Started
+                  Sign in
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               </nav>
@@ -287,6 +341,22 @@ export default function HomePage() {
               >
                 Sign in
                 <ArrowRight className="ml-2 h-4 w-4 sm:h-5 sm:w-5" />
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-11 sm:h-14 rounded-2xl px-5 sm:px-8 text-sm sm:text-lg font-semibold border-2 w-full sm:w-auto"
+                asChild
+              >
+                <a
+                  href="https://calendly.com/asifhassam14/booking"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2"
+                >
+                  <Calendar className="h-4 w-4 sm:h-5 sm:w-5" />
+                  Book a demo
+                </a>
               </Button>
               {/* <Button
                 asChild
@@ -637,7 +707,7 @@ export default function HomePage() {
           <div className="mt-8 sm:mt-16 grid gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3">
             {PRICING_PLANS.map((plan, index) => (
               <motion.div
-                key={plan.name}
+                key={plan.id ?? plan.name}
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}

@@ -17,87 +17,13 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { createCustomCharacter } from "@/lib/api/custom-characters";
-
-// Stewie's image dimensions (781 x 987)
-const TARGET_IMAGE_WIDTH = 781;
-const TARGET_IMAGE_HEIGHT = 987;
+import { TARGET_IMAGE_WIDTH, TARGET_IMAGE_HEIGHT } from "@/lib/utils/resize-image";
+import { CharacterImageCropEditor } from "./character-image-crop-editor";
 
 type CreateCharacterDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCharacterCreated?: () => void;
-};
-
-/**
- * Resize image to target dimensions using canvas
- */
-const resizeImage = (file: File, targetWidth: number, targetHeight: number): Promise<File> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new window.Image();
-      img.onload = () => {
-        // Create canvas with target dimensions
-        const canvas = document.createElement("canvas");
-        canvas.width = targetWidth;
-        canvas.height = targetHeight;
-        const ctx = canvas.getContext("2d");
-        
-        if (!ctx) {
-          reject(new Error("Could not get canvas context"));
-          return;
-        }
-
-        // Fill with transparent background
-        ctx.clearRect(0, 0, targetWidth, targetHeight);
-
-        // Calculate scaling to fit image while maintaining aspect ratio
-        const imgAspect = img.width / img.height;
-        const targetAspect = targetWidth / targetHeight;
-        
-        let drawWidth = targetWidth;
-        let drawHeight = targetHeight;
-        let drawX = 0;
-        let drawY = 0;
-
-        if (imgAspect > targetAspect) {
-          // Image is wider - fit to height
-          drawHeight = targetHeight;
-          drawWidth = drawHeight * imgAspect;
-          drawX = (targetWidth - drawWidth) / 2;
-        } else {
-          // Image is taller - fit to width
-          drawWidth = targetWidth;
-          drawHeight = drawWidth / imgAspect;
-          drawY = (targetHeight - drawHeight) / 2;
-        }
-
-        // Draw image centered on canvas
-        ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
-
-        // Convert canvas to blob, then to File
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) {
-              reject(new Error("Failed to resize image"));
-              return;
-            }
-            const resizedFile = new File([blob], file.name, {
-              type: "image/png",
-              lastModified: Date.now(),
-            });
-            resolve(resizedFile);
-          },
-          "image/png",
-          1.0 // Maximum quality
-        );
-      };
-      img.onerror = () => reject(new Error("Failed to load image"));
-      img.src = e.target?.result as string;
-    };
-    reader.onerror = () => reject(new Error("Failed to read file"));
-    reader.readAsDataURL(file);
-  });
 };
 
 export const CreateCharacterDialog = ({
@@ -109,58 +35,48 @@ export const CreateCharacterDialog = ({
   const [voiceId, setVoiceId] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageForCrop, setImageForCrop] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isProcessingImage, setIsProcessingImage] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    // Validate file type
     if (!file.type.startsWith("image/")) {
       toast.error("Please upload an image file");
       return;
     }
-
-    // Validate it's PNG (transparent PNG preferred)
     if (file.type !== "image/png") {
       toast.warning("PNG format is recommended for transparent backgrounds");
     }
-
-    // Validate file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
       toast.error("Image size must be less than 5MB");
       return;
     }
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setImageForCrop(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
 
-    setIsProcessingImage(true);
+  const handleCropApply = (file: File) => {
+    setImageFile(file);
+    const reader = new FileReader();
+    reader.onloadend = () => setImagePreview(reader.result as string);
+    reader.readAsDataURL(file);
+    setImageForCrop(null);
+  };
 
-    try {
-      // Resize image to match Stewie's dimensions
-      const resizedFile = await resizeImage(file, TARGET_IMAGE_WIDTH, TARGET_IMAGE_HEIGHT);
-      setImageFile(resizedFile);
-
-      // Create preview of resized image
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-        setIsProcessingImage(false);
-      };
-      reader.readAsDataURL(resizedFile);
-    } catch (error) {
-      console.error("Error processing image:", error);
-      toast.error("Failed to process image. Please try again.");
-      setIsProcessingImage(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-    }
+  const handleCropCancel = () => {
+    setImageForCrop(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleRemoveImage = () => {
     setImageFile(null);
     setImagePreview(null);
+    setImageForCrop(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -219,14 +135,12 @@ export const CreateCharacterDialog = ({
     if (!isSubmitting) {
       onOpenChange(newOpen);
       if (!newOpen) {
-        // Reset form when closing
         setCharacterName("");
         setVoiceId("");
         setImageFile(null);
         setImagePreview(null);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = "";
-        }
+        setImageForCrop(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
       }
     }
   };
@@ -279,11 +193,12 @@ export const CreateCharacterDialog = ({
           <div className="space-y-2">
             <Label>Character Image (PNG with transparent background)</Label>
             <div className="space-y-3">
-              {isProcessingImage ? (
-                <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border/60 bg-muted/40 p-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                  <span className="text-sm text-muted-foreground">Resizing image to {TARGET_IMAGE_WIDTH}x{TARGET_IMAGE_HEIGHT}px...</span>
-                </div>
+              {imageForCrop ? (
+                <CharacterImageCropEditor
+                  imageUrl={imageForCrop}
+                  onApply={handleCropApply}
+                  onCancel={handleCropCancel}
+                />
               ) : imagePreview ? (
                 <div className="relative">
                   <div className="relative w-full max-w-xs mx-auto overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-muted to-muted/50" style={{ aspectRatio: `${TARGET_IMAGE_WIDTH}/${TARGET_IMAGE_HEIGHT}` }}>
@@ -316,12 +231,12 @@ export const CreateCharacterDialog = ({
                   htmlFor="character-image"
                   className={cn(
                     "flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border/60 bg-muted/40 p-8 text-sm font-medium text-muted-foreground transition hover:border-primary/50 hover:text-primary hover:bg-muted/60",
-                    (isSubmitting || isProcessingImage) && "pointer-events-none opacity-50"
+                    isSubmitting && "pointer-events-none opacity-50"
                   )}
                 >
                   <Upload className="h-8 w-8" />
                   <span>Upload transparent PNG image</span>
-                  <span className="text-xs">Max 5MB - Will be resized to {TARGET_IMAGE_WIDTH}×{TARGET_IMAGE_HEIGHT}px</span>
+                  <span className="text-xs">Max 5MB - Crop then resize to {TARGET_IMAGE_WIDTH}×{TARGET_IMAGE_HEIGHT}px</span>
                 </Label>
               )}
               <Input
@@ -331,11 +246,11 @@ export const CreateCharacterDialog = ({
                 accept="image/png,image/*"
                 onChange={handleFileChange}
                 className="hidden"
-                disabled={isSubmitting || isProcessingImage}
+                disabled={isSubmitting}
               />
-              {!imagePreview && !isProcessingImage && (
+              {!imagePreview && !imageForCrop && (
                 <p className="text-xs text-muted-foreground">
-                  Upload a PNG image with a transparent background. It will be automatically resized to match Stewie's image dimensions ({TARGET_IMAGE_WIDTH}×{TARGET_IMAGE_HEIGHT}px).
+                  Upload a PNG image. You can crop to the desired area, then it will be resized to {TARGET_IMAGE_WIDTH}×{TARGET_IMAGE_HEIGHT}px.
                 </p>
               )}
             </div>
