@@ -33,6 +33,7 @@ export function Step3GenerateAvatar({ state }: Props) {
 
   const handleGenerate = async () => {
     if (!mode || !sourceType) return;
+    if (sourceType !== "upload" && sourceType !== "random") return;
     setError(null);
     setLoading(true);
     try {
