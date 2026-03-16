@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { animateAvatar, cropAvatarVideo, fetchLastAnimation } from "@/lib/api/avatar";
@@ -140,9 +141,27 @@ export function Step4AnimateAvatar({ state }: Props) {
                       </Button>
                     </div>
                   </div>
-                  <Button onClick={handleAnimate} disabled={loading || !selectedAvatarUrl}>
-                    {loading ? "Animating…" : "Generate animation (18.97 credits)"}
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button onClick={handleAnimate} disabled={loading || !selectedAvatarUrl}>
+                      {loading ? "Animating…" : "Generate animation (18.97 credits)"}
+                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleFetchLastAnimation}
+                          disabled={recoveryLoading}
+                        >
+                          {recoveryLoading ? "Checking…" : "Fetch my video from server"}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Use this button if animation times out
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
                 </>
               )}
             </div>
@@ -185,21 +204,7 @@ export function Step4AnimateAvatar({ state }: Props) {
             </>
           )}
           {state.error && (
-            <div className="space-y-2">
-              <p className="text-sm text-destructive">{state.error}</p>
-              <p className="text-xs text-muted-foreground">
-                If the request timed out, your animation may have completed. Click below to check.
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleFetchLastAnimation}
-                disabled={recoveryLoading}
-              >
-                {recoveryLoading ? "Checking…" : "Fetch my video from server"}
-              </Button>
-            </div>
+            <p className="text-sm text-destructive">{state.error}</p>
           )}
           <div className="flex justify-between">
             <Button variant="outline" onClick={() => setStep(2)}>Back</Button>
