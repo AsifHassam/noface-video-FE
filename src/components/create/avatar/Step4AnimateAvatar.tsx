@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { animateAvatar, cropAvatarVideo } from "@/lib/api/avatar";
+import { animateAvatar, cropAvatarVideo, fetchLastAnimation } from "@/lib/api/avatar";
 import type { AvatarWizardState } from "./types";
 import { config } from "@/lib/config";
 
@@ -33,7 +33,26 @@ export function Step4AnimateAvatar({ state }: Props) {
   } = state;
   const [loading, setLoading] = useState(false);
   const [cropLoading, setCropLoading] = useState(false);
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [trimEndSeconds, setTrimEndSeconds] = useState(0.5);
+
+  const handleFetchLastAnimation = async () => {
+    setRecoveryLoading(true);
+    setError(null);
+    try {
+      const result = await fetchLastAnimation();
+      if (result?.videoUrl) {
+        setAnimationVideoUrl(result.videoUrl.startsWith("http") ? result.videoUrl : `${config.remotionServerUrl}${result.videoUrl}`);
+        setError(null);
+      } else {
+        setError("No recent animation found. Try generating again.");
+      }
+    } catch {
+      setError("Could not fetch video. Try generating again.");
+    } finally {
+      setRecoveryLoading(false);
+    }
+  };
 
   const handleAnimate = async () => {
     if (!selectedAvatarUrl) return;
@@ -165,7 +184,23 @@ export function Step4AnimateAvatar({ state }: Props) {
               </div>
             </>
           )}
-          {state.error && <p className="text-sm text-destructive">{state.error}</p>}
+          {state.error && (
+            <div className="space-y-2">
+              <p className="text-sm text-destructive">{state.error}</p>
+              <p className="text-xs text-muted-foreground">
+                If the request timed out, your animation may have completed. Click below to check.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleFetchLastAnimation}
+                disabled={recoveryLoading}
+              >
+                {recoveryLoading ? "Checking…" : "Fetch my video from server"}
+              </Button>
+            </div>
+          )}
           <div className="flex justify-between">
             <Button variant="outline" onClick={() => setStep(2)}>Back</Button>
             <Button onClick={() => setStep(4)}>Next</Button>

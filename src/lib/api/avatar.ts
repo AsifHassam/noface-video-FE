@@ -64,6 +64,18 @@ export async function animateAvatar(imageUrl: string, motionStyle: 'calm' | 'exp
 }
 
 /**
+ * Fetch the most recent animation video URL from the server (if animate completed but the request timed out).
+ */
+export async function fetchLastAnimation(): Promise<{ videoUrl: string } | null> {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE}/last-animation`, { headers });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => null);
+  if (!data?.videoUrl) return null;
+  return { videoUrl: data.videoUrl };
+}
+
+/**
  * Crop the end of an avatar video (e.g. remove last N seconds). Returns new video URL.
  */
 export async function cropAvatarVideo(
