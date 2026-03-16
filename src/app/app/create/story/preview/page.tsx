@@ -1340,6 +1340,7 @@ export default function StoryPreviewPage() {
             ? "This may take a few minutes. Play a game while you wait!"
             : "This may take a few minutes. Play a game while you wait!"
         }
+        showRenderQueueButton={isRenderingFinal}
       />
 
       {/* Save Template Dialog */}

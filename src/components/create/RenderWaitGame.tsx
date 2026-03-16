@@ -18,13 +18,16 @@ interface RenderWaitGameProps {
   onClose?: () => void;
   title?: string;
   description?: string;
+  /** Show "Go to Render Queue" button (e.g. when final rendering, not when generating preview) */
+  showRenderQueueButton?: boolean;
 }
 
 export function RenderWaitGame({ 
   open, 
   onClose,
   title = "Your video is rendering...",
-  description = "Play a quick game while you wait!"
+  description = "Play a quick game while you wait!",
+  showRenderQueueButton = false,
 }: RenderWaitGameProps) {
   const router = useRouter();
   const [snake, setSnake] = useState<Position[]>(INITIAL_SNAKE);
@@ -263,16 +266,15 @@ export function RenderWaitGame({
             <div>Press Space to pause</div>
           </div>
 
-          {/* Go to Render Queue Button */}
-          <Button
-            variant="outline"
-            className="w-full rounded-2xl"
-            onClick={() => {
-              router.push("/app/render-queue");
-            }}
-          >
-            Go to Render Queue
-          </Button>
+          {showRenderQueueButton && (
+            <Button
+              variant="outline"
+              className="w-full rounded-2xl"
+              onClick={() => router.push("/app/render-queue")}
+            >
+              Go to Render Queue
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

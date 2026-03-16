@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Sparkles, MessageCircle, Video, MessageSquare, Crown } from "lucide-react";
 import { subscriptionApi } from "@/lib/api/subscription";
 import { useAuthStore } from "@/lib/stores/auth-store";
+import { useProjectStore } from "@/lib/stores/project-store";
 import { toast } from "sonner";
 
 const steps = [
@@ -54,9 +55,15 @@ const cards = [
 export default function CreatePage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuthStore();
+  const clearDraft = useProjectStore((state) => state.clearDraft);
   const [canCreateVideo, setCanCreateVideo] = useState(true);
   const [checkingLimit, setCheckingLimit] = useState(false);
   const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'paid' | 'premium' | null>(null);
+
+  // Clear draft whenever user lands on Create so they don't see previous 2-char/story preview
+  useEffect(() => {
+    clearDraft();
+  }, [clearDraft]);
 
   // Check subscription limits
   const checkSubscription = useCallback(async () => {
