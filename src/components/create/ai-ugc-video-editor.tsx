@@ -106,6 +106,53 @@ import { useProjectStore } from "@/lib/stores/project-store";
 import type { UGCVideoProject, UGCGeneratedVideo } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 
+/** Convert WebM (or other MediaRecorder) blob to WAV data URL for APIs that require mp3/wav/etc. */
+async function convertWebmBlobToWavDataUrl(blob: Blob): Promise<string> {
+  const ctx = new AudioContext();
+  try {
+    const arrayBuffer = await blob.arrayBuffer();
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    const numChannels = audioBuffer.numberOfChannels;
+    const sampleRate = audioBuffer.sampleRate;
+    const dataLength = audioBuffer.length * numChannels * 2;
+    const buffer = new ArrayBuffer(44 + dataLength);
+    const view = new DataView(buffer);
+    const writeStr = (offset: number, str: string) => {
+      for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    };
+    writeStr(0, "RIFF");
+    view.setUint32(4, 36 + dataLength, true);
+    writeStr(8, "WAVE");
+    writeStr(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * numChannels * 2, true);
+    view.setUint16(32, numChannels * 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, "data");
+    view.setUint32(40, dataLength, true);
+    const channels: Float32Array[] = [];
+    for (let c = 0; c < numChannels; c++) channels.push(audioBuffer.getChannelData(c));
+    for (let i = 0; i < audioBuffer.length; i++) {
+      for (let c = 0; c < numChannels; c++) {
+        const s = Math.max(-1, Math.min(1, channels[c][i]));
+        view.setInt16(44 + (i * numChannels + c) * 2, s < 0 ? s * 32768 : s * 32767, true);
+      }
+    }
+    const wavBlob = new Blob([buffer], { type: "audio/wav" });
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(wavBlob);
+    });
+  } finally {
+    await ctx.close();
+  }
+}
+
 // Types
 type Scene = {
   id: string;
@@ -529,6 +576,11 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   const [elevenLabsVoices, setElevenLabsVoices] = useState<Array<{ voice_id: string; name: string; category?: string }>>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
   const [previewAudio, setPreviewAudio] = useState<string | null>(null);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const uploadOwnVoiceInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
   const { user } = useAuthStore();
   const [userCredits, setUserCredits] = useState<number | null>(null);
 
@@ -2427,7 +2479,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     if (!selectedAvatar) return;
     setAvatarNextError(null);
     setCreatingProjectFromAvatar(true);
-    try {
+      try {
       const createAndUpdate = async () => {
         const project = await createUGCProject(
           `UGC Video - ${new Date().toLocaleDateString()}`,
@@ -2454,10 +2506,10 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       setCurrentProject(updatedProject);
       setProjectTitle(updatedProject.title || updatedProject.id);
       console.log('[Project] Project set in state:', updatedProject.id);
-
-      setAvatarsDialogOpen(false);
-      setShowSpeechGeneration(true);
-      setCurrentStep("speech");
+        
+        setAvatarsDialogOpen(false);
+        setShowSpeechGeneration(true);
+        setCurrentStep("speech");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to create project";
       console.error("[Avatar] Next error:", error);
@@ -3423,12 +3475,85 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     }
   };
 
+  // Use own voice: set audio (data URL or URL) and go to lip sync step
+  const applyOwnVoiceAudio = useCallback((audioDataUrlOrUrl: string) => {
+    setGeneratedSpeechUrl(audioDataUrlOrUrl);
+    setGeneratedSpeechVoiceId(null); // not from TTS
+    setCurrentStep("lipsync");
+  }, []);
+
+  const handleOwnVoiceUploadClick = useCallback(() => {
+    uploadOwnVoiceInputRef.current?.click();
+  }, []);
+
+  const onOwnVoiceFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      e.target.value = "";
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result;
+        if (typeof result === "string") applyOwnVoiceAudio(result);
+      };
+      reader.readAsDataURL(file);
+    },
+    [applyOwnVoiceAudio]
+  );
+
+  const handleStartRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      recordedChunksRef.current = [];
+      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (ev) => {
+        if (ev.data.size) recordedChunksRef.current.push(ev.data);
+      };
+      recorder.onstop = async () => {
+        const blob = new Blob(recordedChunksRef.current, { type: mime });
+        stream.getTracks().forEach((t) => t.stop());
+        mediaStreamRef.current = null;
+        mediaRecorderRef.current = null;
+        try {
+          const wavDataUrl = await convertWebmBlobToWavDataUrl(blob);
+          applyOwnVoiceAudio(wavDataUrl);
+        } catch (e) {
+          console.error("Convert recording to WAV failed:", e);
+        }
+      };
+      recorder.start();
+      setIsRecordingVoice(true);
+    } catch (err) {
+      console.error("Failed to start recording:", err);
+    }
+  }, [applyOwnVoiceAudio]);
+
+  const handleStopRecording = useCallback(() => {
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state !== "inactive") {
+      rec.stop();
+      setIsRecordingVoice(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current = null;
+      mediaRecorderRef.current = null;
+    };
+  }, []);
+
   const sidebarSections: { id: SidebarSection; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: "avatars", label: "Avatars", icon: User },
     { id: "media", label: "Media", icon: Film },
     { id: "templates", label: "Templates", icon: Sparkles },
     { id: "audio", label: "Audio", icon: Music },
-    { id: "text", label: "Text", icon: Type },
     { id: "captions", label: "Captions", icon: FileText },
     { id: "brolls", label: "B-rolls", icon: VideoIcon },
   ];
@@ -4301,23 +4426,28 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   // Bring element to front (highest z-index)
   const bringToFront = (id: string) => {
     if (canvasElements.length === 0) return;
-    const maxZIndex = Math.max(...canvasElements.map(el => el.zIndex), 0);
+    const maxZIndex = Math.max(...canvasElements.map(el => el.zIndex ?? 0), 0);
     updateCanvasElement(id, { zIndex: maxZIndex + 1 });
   };
 
-  // Send element to back (lowest z-index, but ensure it's at least 0)
+  // Send element to back (lowest z-index). Use 0 as floor so element stays visible; re-normalize others above it.
   const sendToBack = (id: string) => {
     if (canvasElements.length === 0) return;
-    const otherElements = canvasElements.filter(el => el.id !== id);
-    if (otherElements.length === 0) {
-      // Only one element, just set to 0
+    const others = canvasElements.filter(el => el.id !== id);
+    if (others.length === 0) {
       updateCanvasElement(id, { zIndex: 0 });
       return;
     }
-    const minZIndex = Math.min(...otherElements.map(el => el.zIndex), 0);
-    // Ensure z-index is at least 0, but lower than all other elements
-    const newZIndex = Math.max(0, minZIndex - 1);
-    updateCanvasElement(id, { zIndex: newZIndex });
+    // Sort others by zIndex ascending; assign 1, 2, 3, ... so they stay above the sent element at 0
+    const sorted = [...others].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+    setCanvasElements((prev) => {
+      const next = prev.map((el) => {
+        if (el.id === id) return { ...el, zIndex: 0 };
+        const rank = sorted.findIndex((o) => o.id === el.id);
+        return { ...el, zIndex: rank + 1 };
+      });
+      return next;
+    });
   };
 
   // Fill canvas with video (set to 100% width and height, centered)
@@ -6652,18 +6782,6 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   variant="outline"
                   size="sm"
                   className="w-full"
-                  onClick={() => {
-                    setShowSpeechGeneration(true);
-                    setCurrentStep("speech");
-                  }}
-                >
-                  <Mic className="h-4 w-4 mr-2" />
-                  Create with ElevenLabs
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
                   onClick={async () => {
                     setAudioDialogOpen(true);
                     await loadUploadedAudios();
@@ -6886,9 +7004,10 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                 onDrop={handleCanvasDrop}
                 onDragOver={handleCanvasDragOver}
               >
-              {/* Canvas Elements - Exclude audio elements (they only appear in timeline) */}
-              {canvasElements
+              {/* Canvas Elements - Exclude audio elements (they only appear in timeline); sort by zIndex so stacking order is correct */}
+              {[...canvasElements]
                 .filter(element => element.type !== "audio") // Filter out audio elements from canvas
+                .sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0)) // Lower z-index first so higher renders on top
                 .map((element) => {
                 const isSelected = selectedElementId === element.id;
                 
@@ -6990,7 +7109,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                       height: `${element.height}%`,
                       transform: `rotate(${element.rotation}deg)`,
                       opacity: finalOpacity,
-                      zIndex: element.zIndex,
+                      zIndex: element.zIndex ?? 0,
                       overflow: "visible", // Allow buttons to show outside element bounds
                       transition: element.type === "video" ? "opacity 0.05s linear" : undefined, // Smooth opacity transition for videos
                     }}
@@ -7012,14 +7131,14 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                         <div className="w-full h-full flex items-center justify-center min-w-0 min-h-0">
                           {/* Square wrapper (flex + aspect-ratio so side = min(width, height)) then rounded-full = true circle */}
                           <div className="rounded-full overflow-hidden min-w-0 min-h-0" style={{ flex: '1 1 0', aspectRatio: '1', maxWidth: '100%', maxHeight: '100%' }}>
-                            {element.type === "video" && element.url && (
-                              <video
-                                id={`canvas-video-${element.id}`}
-                                src={element.url}
-                                className="w-full h-full object-cover"
-                                loop={false}
-                                muted={(element.muted ?? false) || isMuted}
-                                playsInline
+                      {element.type === "video" && element.url && (
+                        <video
+                          id={`canvas-video-${element.id}`}
+                          src={element.url}
+                          className="w-full h-full object-cover"
+                          loop={false}
+                          muted={(element.muted ?? false) || isMuted}
+                          playsInline
                                 ref={(videoEl) => {
                                   if (videoEl) {
                                     if ('preservesPitch' in videoEl) (videoEl as any).preservesPitch = true;
@@ -7678,9 +7797,35 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
               {/* Empty State */}
               {canvasElements.length === 0 && (
                 <div className="absolute inset-0 flex items-center justify-center text-gray-400">
-                  <div className="text-center">
+                  <div className="text-center space-y-4">
                     <Film className="w-12 h-12 mx-auto mb-2 opacity-50" />
                     <p className="text-sm">Drag elements from the sidebar to add them to the canvas</p>
+                    <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 rounded-2xl"
+                        onClick={() => {
+                          setActiveSidebarSection("media");
+                          setMediaDialogOpen(true);
+                        }}
+                      >
+                        <VideoIcon className="h-4 w-4" />
+                        Add media
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 rounded-2xl"
+                        onClick={() => {
+                          setActiveSidebarSection("avatars");
+                          setAvatarsDialogOpen(true);
+                        }}
+                      >
+                        <User className="h-4 w-4" />
+                        Create avatar
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -7787,6 +7932,26 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                         onChange={(e) => updateCanvasElement(selectedElementId, { opacity: parseFloat(e.target.value) })}
                         className="w-full"
                       />
+                    </div>
+                    
+                    {/* Layer order */}
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1 text-xs rounded-xl"
+                        onClick={() => bringToFront(selectedElementId)}
+                      >
+                        Bring to Front
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1 text-xs rounded-xl"
+                        onClick={() => sendToBack(selectedElementId)}
+                      >
+                        Send to Back
+                      </Button>
                     </div>
                     
                     {/* Circle frame (video / image only) */}
@@ -8779,11 +8944,28 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
         }}
       >
         <DialogContent className="!w-[80vw] !h-[80vh] !max-w-[80vw] !max-h-[80vh] !sm:max-w-[80vw] overflow-y-auto p-6">
-          <DialogHeader>
+          <DialogHeader className="flex flex-row items-start justify-between gap-4 pr-12">
+            <div>
             <DialogTitle>Select AI Avatar</DialogTitle>
             <DialogDescription>
-              Choose an avatar to use in your video, or create your own
+                Choose an avatar to use in your video, or create your own
             </DialogDescription>
+            </div>
+            <Button
+              onClick={handleNextToSpeechGeneration}
+              className="px-6 shrink-0 mr-2"
+              size="lg"
+              disabled={!selectedAvatar || creatingProjectFromAvatar}
+            >
+              {creatingProjectFromAvatar ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Creating…
+                </>
+              ) : (
+                "Next"
+              )}
+            </Button>
           </DialogHeader>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-primary/30 bg-primary/5 p-4">
             <p className="text-sm text-muted-foreground">
@@ -8825,15 +9007,15 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                 </div>
                 <div className="text-base font-semibold text-center">{avatar.name}</div>
                 <div className="flex gap-2 w-full">
-                  <Button
-                    onClick={() => handleAvatarSelect(avatar)}
+                <Button
+                  onClick={() => handleAvatarSelect(avatar)}
                     className="flex-1 h-10 text-base"
-                    variant={selectedAvatar?.id === avatar.id ? "default" : "outline"}
-                  >
-                    {selectedAvatar?.id === avatar.id ? "Selected" : "Select"}
-                  </Button>
+                  variant={selectedAvatar?.id === avatar.id ? "default" : "outline"}
+                >
+                  {selectedAvatar?.id === avatar.id ? "Selected" : "Select"}
+                </Button>
                   {DEFAULT_AVATAR_IDS.has(avatar.id) ? null : (
-                    <Button
+              <Button
                       variant="ghost"
                       size="icon"
                       className="h-10 w-10 shrink-0"
@@ -8844,33 +9026,14 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                       title="Edit avatar (e.g. crop video)"
                     >
                       <Pencil className="h-4 w-4" />
-                    </Button>
+              </Button>
                   )}
-                </div>
+            </div>
               </div>
             ))}
           </div>
           {avatarNextError && (
             <p className="text-sm text-destructive pt-2">{avatarNextError}</p>
-          )}
-          {selectedAvatar && (
-            <div className="flex justify-end pt-4 border-t">
-              <Button
-                onClick={handleNextToSpeechGeneration}
-                className="px-8"
-                size="lg"
-                disabled={!selectedAvatar || creatingProjectFromAvatar}
-              >
-                {creatingProjectFromAvatar ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Creating…
-                  </>
-                ) : (
-                  "Next"
-                )}
-              </Button>
-            </div>
           )}
         </DialogContent>
       </Dialog>
@@ -8976,9 +9139,62 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
 
               {/* Right Panel - Controls (1/3 width) */}
               <div className="flex-1 flex flex-col p-6 gap-4">
+                <input
+                  ref={uploadOwnVoiceInputRef}
+                  type="file"
+                  accept="audio/*"
+                  className="hidden"
+                  onChange={onOwnVoiceFileChange}
+                  aria-label="Upload your own voice"
+                />
                 {currentStep === "speech" ? (
                   <>
                     {/* Step 1: Generate Speech */}
+                    {/* Use your own voice */}
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold block">Use your own voice</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Upload an audio file or record with your mic, then go to Lip Sync.
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleOwnVoiceUploadClick}
+                          className="flex-1"
+                        >
+                          <Upload className="h-4 w-4 mr-1.5" />
+                          Upload audio
+                        </Button>
+                        {!isRecordingVoice ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handleStartRecording}
+                            className="flex-1"
+                          >
+                            <Mic className="h-4 w-4 mr-1.5" />
+                            Record
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={handleStopRecording}
+                            className="flex-1"
+                          >
+                            <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                            Stop recording
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="border-t pt-4">
+                      <Label className="text-sm font-semibold mb-2 block">Or generate with AI</Label>
+                    </div>
                     {/* Select Voice */}
                     <div>
                       <Label className="text-sm font-semibold mb-2 block">Select voice</Label>
@@ -9328,11 +9544,30 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
         }
       }}>
         <DialogContent className="!w-[90vw] !h-[90vh] !max-w-[90vw] !max-h-[90vh] !sm:max-w-[90vw] overflow-hidden p-6 flex flex-col">
-          <DialogHeader>
+          <DialogHeader className="flex flex-row items-start justify-between gap-4">
+            <div>
             <DialogTitle>All Media</DialogTitle>
             <DialogDescription>
               Select a video or image to use in your project
             </DialogDescription>
+            </div>
+            <Input
+              id="media-dialog-file-upload"
+              type="file"
+              multiple
+              accept="image/*,video/*,audio/*"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 rounded-2xl flex-shrink-0"
+              onClick={() => document.getElementById("media-dialog-file-upload")?.click()}
+            >
+              <Upload className="h-4 w-4" />
+              Upload
+            </Button>
           </DialogHeader>
           {mediaError && (
             <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
@@ -9662,7 +9897,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   <div className="col-span-full text-center text-gray-500 py-12">
                     <Music className="h-12 w-12 mx-auto mb-4 opacity-50" />
                     <p>No audio files yet</p>
-                    <p className="text-sm mt-2">Upload audio files or create with ElevenLabs to see them here</p>
+                    <p className="text-sm mt-2">Upload audio files to see them here</p>
                   </div>
                 )}
               </div>

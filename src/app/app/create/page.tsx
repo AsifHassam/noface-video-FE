@@ -7,7 +7,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
-import { Sparkles, MessageCircle, Video, MessageSquare, Crown, Loader2 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Sparkles, MessageCircle, Video, MessageSquare, Crown, Loader2, Play } from "lucide-react";
 import { subscriptionApi } from "@/lib/api/subscription";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { useProjectStore } from "@/lib/stores/project-store";
@@ -23,12 +29,14 @@ const steps = [
 const cards = [
   {
     title: "AI UGC Video",
+    badgeLabel: "Beta",
     description: "Create professional UGC videos with advanced editing tools, scenes, and AI-powered features.",
     icon: Video,
     href: "/app/create/ai-ugc/editor",
     disabled: false,
     mostPopular: true, // Mark as most popular
     premiumOnly: true, // Only available on Premium plan
+    exampleVideoUrl: "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/ugc-renders/video-34530f63-4bda-4214-b1fb-ee9eff5d61d3.mp4",
   },
   {
     title: "2 Characters Having a Conversation",
@@ -36,13 +44,7 @@ const cards = [
     icon: MessageCircle,
     href: "/app/create/two-char/characters",
     disabled: false,
-  },
-  {
-    title: "Normal Story Narration",
-    description: "Traditional storytelling with one narrator and visual accents.",
-    icon: Sparkles,
-    href: "/app/create/story/script",
-    disabled: false,
+    exampleVideoUrl: "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapTik.Cx_1769327304.mp4",
   },
   {
     title: "Texting Video",
@@ -50,7 +52,15 @@ const cards = [
     icon: MessageSquare,
     href: "/app/create/texting/script",
     disabled: false,
+    exampleVideoUrl: "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapInsta.to_AQPWx9yTSLn4v2C-GRyTZvuenYwuYgg06TSvnINaFJszuxLNLBobtw4FeZBMi-56FTu8AeYWlfW1_2ywuVGsFg8R.mp4 ",
   },
+  {
+    title: "Normal Story Narration",
+    description: "Traditional storytelling with one narrator and visual accents.",
+    icon: Sparkles,
+    href: "/app/create/story/script",
+    disabled: false,
+  }
 ];
 
 export default function CreatePage() {
@@ -62,6 +72,7 @@ export default function CreatePage() {
   const [checkingLimit, setCheckingLimit] = useState(false);
   const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'paid' | 'premium' | null>(null);
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
+  const [exampleVideoUrl, setExampleVideoUrl] = useState<string | null>(null);
 
   // Clear draft whenever user lands on Create so they don't see previous 2-char/story preview
   useEffect(() => {
@@ -234,10 +245,42 @@ export default function CreatePage() {
                 <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                   <card.icon className="h-6 w-6" />
                 </span>
+                {(card as { exampleVideoUrl?: string }).exampleVideoUrl && (
+                  <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+                    <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-muted">
+                      <video
+                        src={(card as { exampleVideoUrl?: string }).exampleVideoUrl}
+                        muted
+                        loop
+                        playsInline
+                        autoPlay
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full rounded-xl"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExampleVideoUrl((card as { exampleVideoUrl?: string }).exampleVideoUrl ?? null);
+                      }}
+                    >
+                      <Play className="mr-1.5 h-4 w-4" />
+                      View example
+                    </Button>
+                  </div>
+                )}
                 <div>
                   <CardTitle className="text-xl font-semibold text-foreground">
                     {card.title}
                   </CardTitle>
+                  {(card as { badgeLabel?: string }).badgeLabel && (
+                    <span className="mt-1 inline-block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {(card as { badgeLabel?: string }).badgeLabel}
+                    </span>
+                  )}
                   <p className="mt-2 text-sm text-muted-foreground">
                     {card.description}
                   </p>
@@ -299,6 +342,24 @@ export default function CreatePage() {
           );
         })}
       </section>
+
+      <Dialog open={!!exampleVideoUrl} onOpenChange={(open) => !open && setExampleVideoUrl(null)}>
+        <DialogContent className="max-w-3xl p-0 overflow-hidden">
+          <DialogHeader className="p-4 pb-0">
+            <DialogTitle>
+              {cards.find((c) => (c as { exampleVideoUrl?: string }).exampleVideoUrl === exampleVideoUrl)?.title ?? "Video"} example
+            </DialogTitle>
+          </DialogHeader>
+          {exampleVideoUrl && (
+            <video
+              src={exampleVideoUrl}
+              controls
+              autoPlay
+              className="w-full aspect-video bg-black"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

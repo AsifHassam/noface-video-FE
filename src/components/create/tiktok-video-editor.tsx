@@ -1762,6 +1762,7 @@ export const TikTokVideoEditor = ({
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">TikTok-Style Editor 🎬</h3>
         <div className="flex gap-2">
+          {false && (
           <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
             <DialogTrigger asChild>
               <Button size="sm" className="gap-2 rounded-2xl">
@@ -1868,6 +1869,7 @@ export const TikTokVideoEditor = ({
             </div>
           </DialogContent>
         </Dialog>
+          )}
         {onImageOverlaysChange && (
           <Dialog open={showAddImageDialog} onOpenChange={setShowAddImageDialog}>
             <DialogTrigger asChild>

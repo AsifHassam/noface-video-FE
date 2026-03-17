@@ -10,8 +10,6 @@ import { TikTokVideoEditor } from "@/components/create/tiktok-video-editor";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { parseSrtText } from "@/lib/utils/srt";
 import { Progress } from "@/components/ui/progress";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Download, ChevronDown, ChevronUp, Info, Save } from "lucide-react";
@@ -1220,31 +1218,10 @@ export default function StoryPreviewPage() {
             <Info className="h-4 w-4 text-blue-600" />
             <AlertTitle className="text-blue-900 font-semibold">Subtitles Feature (Beta)</AlertTitle>
             <AlertDescription className="text-blue-800 mt-1">
-              Our subtitles feature is currently in beta mode. If you want to render your video without subtitles, keep the subtitles toggle OFF and use TikTok or Reels to generate subtitles instead.
+              Our subtitles feature is currently in beta mode. To render without subtitles, use Delete all in the Subtitles editor; you can add subtitles in TikTok or Reels instead.
             </AlertDescription>
           </Alert>
           
-          {/* Subtitle Toggle */}
-          <div className="flex items-center justify-center gap-4 rounded-2xl border border-border/40 bg-white/70 p-4">
-            <div className="flex items-center gap-3">
-              <Switch 
-                id="toggle-subtitles" 
-                checked={showSubtitles} 
-                onCheckedChange={(checked) => {
-                  setShowSubtitles(checked);
-                  updateDraft({ subtitleEnabled: checked });
-                }} 
-              />
-              <Label htmlFor="toggle-subtitles" className="text-sm font-medium cursor-pointer">
-                {showSubtitles ? "Subtitles ON" : "Subtitles OFF"} · Drag subtitles to reposition
-              </Label>
-            </div>
-            {subtitleSegments.length > 0 && (
-              <span className="text-xs text-muted-foreground">
-                {subtitleSegments.length} subtitle{subtitleSegments.length === 1 ? '' : 's'}
-              </span>
-            )}
-          </div>
         </div>
 
         {/* Collapsible Subtitles Section */}

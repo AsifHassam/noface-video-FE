@@ -3,8 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { Stepper } from "@/components/create/stepper";
 import { VideoPreview } from "@/components/create/video-preview";
 import { SubtitlesEditor } from "@/components/create/subtitles-editor";
@@ -803,37 +801,11 @@ export default function PreviewPage() {
               <Info className="h-4 w-4 text-blue-600" />
               <AlertTitle className="text-blue-900 font-semibold">Subtitles Feature (Beta)</AlertTitle>
               <AlertDescription className="text-blue-800 mt-1">
-                Our subtitles feature is currently in beta mode. If you want to render your video without subtitles, keep the subtitles toggle OFF and use TikTok or Reels to generate subtitles instead.
+                Our subtitles feature is currently in beta mode. To render without subtitles, use Delete all in the Subtitles editor; you can add subtitles in TikTok or Reels instead.
               </AlertDescription>
             </Alert>
           )}
           
-          {/* Subtitle Toggle */}
-          {captionsGenerated && (
-          <div className="flex items-center justify-center gap-4 rounded-2xl border border-border/40 bg-white/70 p-4">
-            <div className="flex items-center gap-3">
-              <Switch 
-                id="toggle-subtitles" 
-                checked={showSubtitles} 
-                disabled={isInitialState}
-                onCheckedChange={(checked) => {
-                  if (!isInitialState) {
-                  setShowSubtitles(checked);
-                  updateDraft({ subtitleEnabled: checked });
-                  }
-                }} 
-              />
-              <Label htmlFor="toggle-subtitles" className="text-sm font-medium cursor-pointer">
-                {showSubtitles ? "Subtitles ON" : "Subtitles OFF"} · Drag subtitles to reposition
-              </Label>
-            </div>
-            {subtitleSegments.length > 0 && (
-              <span className="text-xs text-muted-foreground">
-                {subtitleSegments.length} subtitle{subtitleSegments.length === 1 ? '' : 's'}
-              </span>
-            )}
-          </div>
-          )}
         </div>
         )}
 
