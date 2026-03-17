@@ -39,7 +39,7 @@ import {
   Volume2,
   Pencil,
 } from "lucide-react";
-import { adminApi, type AdminUser, type AdminStats, type AdminActivity, type AdminUserTransaction, type GlobalCharacter } from "@/lib/api/admin";
+import { adminApi, type AdminUser, type AdminStats, type AdminActivity, type AdminUserTransaction, type GlobalCharacter, type UgcVoice } from "@/lib/api/admin";
 import { TARGET_IMAGE_WIDTH, TARGET_IMAGE_HEIGHT } from "@/lib/utils/resize-image";
 import { CharacterImageCropEditor } from "@/components/create/character-image-crop-editor";
 import { toast } from "sonner";
@@ -98,6 +98,12 @@ export default function AdminDashboardPage() {
   const editVoiceInputRef = useRef<HTMLInputElement>(null);
   const charFileInputRef = useRef<HTMLInputElement>(null);
   const charVoiceInputRef = useRef<HTMLInputElement>(null);
+  // Global UGC voices (Generate Speech dropdown)
+  const [ugcVoices, setUgcVoices] = useState<UgcVoice[]>([]);
+  const [ugcVoicesLoading, setUgcVoicesLoading] = useState(false);
+  const [ugcNewVoiceId, setUgcNewVoiceId] = useState("");
+  const [ugcAddLoading, setUgcAddLoading] = useState(false);
+  const [ugcDeletingId, setUgcDeletingId] = useState<string | null>(null);
 
   const toggleVideoExpansion = (videoId: string) => {
     setExpandedVideos((prev) => {
@@ -185,6 +191,7 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     if (activeTab === "characters" && isAdmin) fetchGlobalCharacters();
+    if (activeTab === "ugc-voices" && isAdmin) fetchUgcVoices();
   }, [activeTab, isAdmin]);
 
   const handleRefresh = () => {
@@ -364,6 +371,59 @@ export default function AdminDashboardPage() {
     }
   };
 
+  const fetchUgcVoices = async () => {
+    setUgcVoicesLoading(true);
+    try {
+      const res = await adminApi.getUgcVoices();
+      setUgcVoices(res.voices || []);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to load UGC voices");
+      setUgcVoices([]);
+    } finally {
+      setUgcVoicesLoading(false);
+    }
+  };
+
+  const handleAddUgcVoice = async () => {
+    const voiceId = ugcNewVoiceId.trim();
+    if (!voiceId) {
+      toast.error("Enter an Eleven Labs voice ID");
+      return;
+    }
+    setUgcAddLoading(true);
+    try {
+      const res = await adminApi.addUgcVoice(voiceId);
+      if (res.success && res.voice) {
+        setUgcVoices((prev) => [...prev, res.voice!].sort((a, b) => a.name.localeCompare(b.name)));
+        setUgcNewVoiceId("");
+        toast.success(`Added "${res.voice.name}"`);
+      } else {
+        toast.error(res.error || "Failed to add voice");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to add voice");
+    } finally {
+      setUgcAddLoading(false);
+    }
+  };
+
+  const handleDeleteUgcVoice = async (id: string) => {
+    setUgcDeletingId(id);
+    try {
+      const res = await adminApi.deleteUgcVoice(id);
+      if (res.success) {
+        setUgcVoices((prev) => prev.filter((v) => v.id !== id));
+        toast.success("Voice removed");
+      } else {
+        toast.error(res.error || "Delete failed");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setUgcDeletingId(null);
+    }
+  };
+
   const handleBackfillTransactions = async () => {
     if (selectedBackfillRefs.size === 0) {
       toast.error("Select at least one transaction");
@@ -479,6 +539,10 @@ export default function AdminDashboardPage() {
           <TabsTrigger value="characters" className="rounded-xl gap-2">
             <UserPlus className="h-4 w-4" />
             Characters
+          </TabsTrigger>
+          <TabsTrigger value="ugc-voices" className="rounded-xl gap-2">
+            <Volume2 className="h-4 w-4" />
+            UGC Voices
           </TabsTrigger>
         </TabsList>
 
@@ -1212,6 +1276,83 @@ export default function AdminDashboardPage() {
                   </div>
                 )}
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="ugc-voices" className="mt-6 space-y-6">
+          <Card className="rounded-2xl">
+            <CardHeader>
+              <CardTitle>Global UGC Voices</CardTitle>
+              <CardDescription>
+                Voices shown in the Generate Speech dropdown (AI UGC editor). Add an Eleven Labs voice ID; we fetch the name and category and add it to the list.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="space-y-1 min-w-[200px]">
+                  <label className="text-sm font-medium">Eleven Labs voice ID</label>
+                  <Input
+                    placeholder="e.g. abc123..."
+                    value={ugcNewVoiceId}
+                    onChange={(e) => setUgcNewVoiceId(e.target.value)}
+                    className="rounded-xl font-mono"
+                  />
+                </div>
+                <Button
+                  onClick={handleAddUgcVoice}
+                  disabled={!ugcNewVoiceId.trim() || ugcAddLoading}
+                  className="rounded-xl"
+                >
+                  {ugcAddLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Volume2 className="h-4 w-4 mr-2" />}
+                  {ugcAddLoading ? "Fetching…" : "Fetch & add"}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Find voice IDs at elevenlabs.io → Voice Lab or in the URL when you open a voice.
+              </p>
+              <div>
+                <h3 className="text-sm font-medium mb-2">Current voices ({ugcVoices.length})</h3>
+                {ugcVoicesLoading ? (
+                  <div className="flex items-center gap-2 text-muted-foreground py-4">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+                  </div>
+                ) : ugcVoices.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4">No voices yet. Add one above to populate the Generate Speech dropdown.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-3">
+                    {ugcVoices.map((v) => (
+                      <div
+                        key={v.id}
+                        className="flex items-center gap-3 rounded-xl border border-border/60 p-3 bg-muted/20"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-medium text-sm">{v.name}</p>
+                          <p className="text-xs text-muted-foreground font-mono truncate">{v.voice_id}</p>
+                          {v.category && (
+                            <Badge variant="secondary" className="rounded-full text-xs mt-1">{v.category}</Badge>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="rounded-lg text-destructive hover:text-destructive shrink-0"
+                          disabled={ugcDeletingId === v.id}
+                          onClick={() => handleDeleteUgcVoice(v.id)}
+                        >
+                          {ugcDeletingId === v.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {ugcVoices.length > 0 && (
+                <Button variant="outline" size="sm" className="rounded-xl" onClick={fetchUgcVoices} disabled={ugcVoicesLoading}>
+                  <RefreshCw className={`h-4 w-4 mr-2 ${ugcVoicesLoading ? "animate-spin" : ""}`} />
+                  Refresh list
+                </Button>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

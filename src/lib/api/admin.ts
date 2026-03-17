@@ -99,6 +99,14 @@ export type AdminActivity = {
   }>;
 };
 
+export type UgcVoice = {
+  id: string;
+  voice_id: string;
+  name: string;
+  category: string;
+  created_at: string;
+};
+
 async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
@@ -312,6 +320,30 @@ export const adminApi = {
   async deleteGlobalCharacter(id: string): Promise<{ success: boolean; error?: string }> {
     try {
       await apiRequest(`/api/admin/global-characters/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : 'Delete failed' };
+    }
+  },
+
+  /** Global UGC voices (Generate Speech dropdown). */
+  async getUgcVoices(): Promise<{ success: boolean; voices: UgcVoice[] }> {
+    return apiRequest('/api/admin/ugc-voices');
+  },
+
+  /** Add voice by Eleven Labs voice_id; fetches details and adds to global list. */
+  async addUgcVoice(voiceId: string): Promise<{ success: boolean; voice?: UgcVoice; error?: string }> {
+    const data = await apiRequest<{ success: boolean; voice?: UgcVoice; error?: string }>(
+      '/api/admin/ugc-voices',
+      { method: 'POST', body: JSON.stringify({ voice_id: voiceId.trim() }) }
+    );
+    return data;
+  },
+
+  /** Remove voice from global UGC list. */
+  async deleteUgcVoice(id: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      await apiRequest(`/api/admin/ugc-voices/${encodeURIComponent(id)}`, { method: 'DELETE' });
       return { success: true };
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : 'Delete failed' };

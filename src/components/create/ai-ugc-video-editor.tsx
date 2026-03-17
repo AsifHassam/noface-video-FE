@@ -101,6 +101,7 @@ import {
 } from "@/lib/api/ugc-videos";
 import { subscriptionApi } from "@/lib/api/subscription";
 import { listCharacters } from "@/lib/api/avatar";
+import { checkApiKey } from "@/lib/api/custom-characters";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { useProjectStore } from "@/lib/stores/project-store";
 import type { UGCVideoProject, UGCGeneratedVideo } from "@/lib/supabase";
@@ -575,6 +576,13 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   const generatingLipSyncRef = useRef(false); // Ref to track generation state to prevent race conditions
   const [elevenLabsVoices, setElevenLabsVoices] = useState<Array<{ voice_id: string; name: string; category?: string }>>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
+  const [userSavedVoices, setUserSavedVoices] = useState<Array<{ id: string; name: string; eleven_labs_voice_id: string }>>([]);
+  const [loadingUserVoices, setLoadingUserVoices] = useState(false);
+  const [hasElevenLabsKey, setHasElevenLabsKey] = useState(false);
+  const [addVoiceDialogOpen, setAddVoiceDialogOpen] = useState(false);
+  const [newVoiceName, setNewVoiceName] = useState("");
+  const [newVoiceId, setNewVoiceId] = useState("");
+  const [savingNewVoice, setSavingNewVoice] = useState(false);
   const [previewAudio, setPreviewAudio] = useState<string | null>(null);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const uploadOwnVoiceInputRef = useRef<HTMLInputElement>(null);
@@ -624,6 +632,9 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
 
   // Check if user has enough credits
   const hasEnoughCredits = userCredits !== null && userCredits >= calculateEstimatedCredits;
+  // Mutual exclusivity in speech step: once user picks a path, disable the other
+  const ownVoiceChosen = !!(generatedSpeechUrl && !generatedSpeechVoiceId);
+  const aiVoiceChosen = !!selectedVoice;
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement>(null);
   const [lipSyncStatus, setLipSyncStatus] = useState<string>(""); // Status message for lip sync
@@ -2724,7 +2735,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   mime_type: 'audio/mpeg',
                   metadata: {
                     voice_id: selectedVoice,
-                    voice_name: elevenLabsVoices.find(v => v.voice_id === selectedVoice)?.name || null,
+                    voice_name: getVoiceName(selectedVoice) || null,
                     generated_with: 'elevenlabs'
                   }
                             }),
@@ -2762,7 +2773,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
               }
             
             // Get voice name from the list
-            const voiceName = elevenLabsVoices.find(v => v.voice_id === selectedVoice)?.name || null;
+            const voiceName = getVoiceName(selectedVoice) || null;
             
             // Calculate duration (rough estimate from audio size or use API response)
             const durationSeconds = data.duration_seconds || null;
@@ -2824,11 +2835,31 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     }
   };
 
-  // Fetch ElevenLabs voices when speech generation screen opens
-  useEffect(() => {
-    if (showSpeechGeneration && elevenLabsVoices.length === 0 && !loadingVoices) {
-      fetchElevenLabsVoices();
+  // Fetch ElevenLabs voices and user saved voices when speech generation screen opens
+  const fetchUserSavedVoices = useCallback(async () => {
+    if (!user?.id) return;
+    setLoadingUserVoices(true);
+    try {
+      const { data, error } = await supabase
+        .from("user_saved_voices")
+        .select("id, name, eleven_labs_voice_id")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      setUserSavedVoices(data ?? []);
+    } catch (e) {
+      console.error("Failed to fetch user saved voices:", e);
+      setUserSavedVoices([]);
+    } finally {
+      setLoadingUserVoices(false);
     }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!showSpeechGeneration) return;
+    if (elevenLabsVoices.length === 0 && !loadingVoices) fetchElevenLabsVoices();
+    fetchUserSavedVoices();
+    checkApiKey("elevenlabs").then((r) => setHasElevenLabsKey(r.hasKey));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showSpeechGeneration]);
 
@@ -3439,6 +3470,48 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       setLoadingVoices(false);
     }
   };
+
+  // Combined list: user saved voices first, then Eleven Labs API voices (for dropdown)
+  const combinedVoices = useMemo(() => {
+    const saved = userSavedVoices.map((v) => ({
+      voice_id: v.eleven_labs_voice_id,
+      name: v.name,
+      category: "Saved" as const,
+    }));
+    return [...saved, ...elevenLabsVoices];
+  }, [userSavedVoices, elevenLabsVoices]);
+
+  const getVoiceName = useCallback(
+    (voiceId: string) =>
+      userSavedVoices.find((v) => v.eleven_labs_voice_id === voiceId)?.name ??
+      elevenLabsVoices.find((v) => v.voice_id === voiceId)?.name ??
+      null,
+    [userSavedVoices, elevenLabsVoices]
+  );
+
+  const handleSaveNewVoice = useCallback(async () => {
+    const name = newVoiceName.trim();
+    const voiceId = newVoiceId.trim();
+    if (!name || !voiceId || !user?.id) return;
+    setSavingNewVoice(true);
+    try {
+      const { error } = await supabase.from("user_saved_voices").insert({
+        user_id: user.id,
+        name,
+        eleven_labs_voice_id: voiceId,
+      });
+      if (error) throw error;
+      setAddVoiceDialogOpen(false);
+      setNewVoiceName("");
+      setNewVoiceId("");
+      await fetchUserSavedVoices();
+    } catch (e) {
+      console.error("Failed to save voice:", e);
+      alert(e instanceof Error ? e.message : "Failed to save voice");
+    } finally {
+      setSavingNewVoice(false);
+    }
+  }, [newVoiceName, newVoiceId, user?.id, fetchUserSavedVoices]);
 
   // Preview voice function
   const handlePreviewVoice = async (voiceId: string) => {
@@ -6458,6 +6531,8 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   key={section.id}
                   onClick={() => {
                     if (section.id === "avatars") {
+                      setCreatingProjectFromAvatar(false);
+                      setAvatarNextError(null);
                       setAvatarsDialogOpen(true);
                     } else {
                       setActiveSidebarSection(section.id);
@@ -8939,7 +9014,10 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       <Dialog
         open={avatarsDialogOpen}
         onOpenChange={(open) => {
-          if (open) setAvatarNextError(null);
+          if (open) {
+            setAvatarNextError(null);
+            setCreatingProjectFromAvatar(false);
+          }
           setAvatarsDialogOpen(open);
         }}
       >
@@ -9149,9 +9227,9 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                 />
                 {currentStep === "speech" ? (
                   <>
-                    {/* Step 1: Generate Speech */}
+                    {/* Step 1: Generate Speech - mutual exclusivity: own voice vs AI */}
                     {/* Use your own voice */}
-                    <div className="space-y-2">
+                    <div className={cn("space-y-2", aiVoiceChosen && "opacity-60 pointer-events-none")}>
                       <Label className="text-sm font-semibold block">Use your own voice</Label>
                       <p className="text-xs text-muted-foreground">
                         Upload an audio file or record with your mic, then go to Lip Sync.
@@ -9163,6 +9241,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                           size="sm"
                           onClick={handleOwnVoiceUploadClick}
                           className="flex-1"
+                          disabled={aiVoiceChosen}
                         >
                           <Upload className="h-4 w-4 mr-1.5" />
                           Upload audio
@@ -9174,6 +9253,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                             size="sm"
                             onClick={handleStartRecording}
                             className="flex-1"
+                            disabled={aiVoiceChosen}
                           >
                             <Mic className="h-4 w-4 mr-1.5" />
                             Record
@@ -9196,17 +9276,28 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                       <Label className="text-sm font-semibold mb-2 block">Or generate with AI</Label>
                     </div>
                     {/* Select Voice */}
-                    <div>
+                    <div className={cn(ownVoiceChosen && "opacity-60 pointer-events-none")}>
                       <Label className="text-sm font-semibold mb-2 block">Select voice</Label>
                       <div className="flex gap-2">
-                        <Select value={selectedVoice} onValueChange={setSelectedVoice} disabled={loadingVoices}>
+                        <Select
+                          value={selectedVoice}
+                          onValueChange={setSelectedVoice}
+                          disabled={loadingVoices || loadingUserVoices || ownVoiceChosen}
+                        >
                           <SelectTrigger className="flex-1">
-                            <SelectValue placeholder={loadingVoices ? "Loading voices..." : "Choose a voice"} />
+                            <SelectValue
+                              placeholder={
+                                loadingVoices || loadingUserVoices ? "Loading voices..." : "Choose a voice"
+                              }
+                            />
                           </SelectTrigger>
                           <SelectContent>
-                            {elevenLabsVoices.length > 0 ? (
-                              elevenLabsVoices.map((voice) => (
-                                <SelectItem key={voice.voice_id} value={voice.voice_id}>
+                            {combinedVoices.length > 0 ? (
+                              combinedVoices.map((voice) => (
+                                <SelectItem
+                                  key={voice.category === "Saved" ? `saved-${voice.voice_id}` : voice.voice_id}
+                                  value={voice.voice_id}
+                                >
                                   {voice.name} {voice.category && `(${voice.category})`}
                                 </SelectItem>
                               ))
@@ -9219,12 +9310,25 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                             )}
                           </SelectContent>
                         </Select>
+                        {hasElevenLabsKey && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setAddVoiceDialogOpen(true)}
+                            className="flex-shrink-0"
+                            title="Add voice to your library"
+                            disabled={ownVoiceChosen}
+                          >
+                            <Plus className="h-4 w-4 mr-1" />
+                            Add voice
+                          </Button>
+                        )}
                         {selectedVoice && (
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => handlePreviewVoice(selectedVoice)}
-                            disabled={previewingVoice === selectedVoice}
+                            disabled={previewingVoice === selectedVoice || ownVoiceChosen}
                             className="flex-shrink-0"
                           >
                             {previewingVoice === selectedVoice ? (
@@ -9256,7 +9360,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                     </div>
 
                     {/* Model Selection */}
-                    <div className="mb-4 space-y-2">
+                    <div className={cn("mb-4 space-y-2", ownVoiceChosen && "opacity-60 pointer-events-none")}>
                       <Label className="text-sm font-semibold block">Model</Label>
                       <div className="flex gap-2">
                         <button
@@ -9265,6 +9369,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                             setSelectedModel("flash");
                             setEmotionsEnabled(false);
                           }}
+                          disabled={ownVoiceChosen}
                           className={`flex-1 px-4 py-2 rounded-lg border-2 transition-colors ${
                             selectedModel === "flash"
                               ? "border-blue-500 bg-blue-50 text-blue-700"
@@ -9276,6 +9381,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                         <button
                           type="button"
                           onClick={() => setSelectedModel("alpha3")}
+                          disabled={ownVoiceChosen}
                           className={`flex-1 px-4 py-2 rounded-lg border-2 transition-colors ${
                             selectedModel === "alpha3"
                               ? "border-blue-500 bg-blue-50 text-blue-700"
@@ -9289,6 +9395,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                         <Button
                           type="button"
                           variant={emotionsEnabled ? "default" : "outline"}
+                          disabled={ownVoiceChosen}
                           onClick={() => {
                             if (!emotionsEnabled) {
                               // Add emotion tags to the text based on ElevenLabs Alpha 3 requirements
@@ -9343,12 +9450,13 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                     </div>
 
                     {/* Text Input Area */}
-                    <div className="flex-1 flex flex-col">
+                    <div className={cn("flex-1 flex flex-col", ownVoiceChosen && "opacity-60 pointer-events-none")}>
                       <Label className="text-sm font-semibold mb-2 block">Script</Label>
                       <textarea
                         value={speechText}
                         onChange={(e) => setSpeechText(e.target.value)}
                         placeholder="Enter your script here..."
+                        disabled={ownVoiceChosen}
                         className="flex-1 w-full p-4 border-2 border-gray-300 rounded-lg resize-none focus:outline-none focus:border-blue-500"
                       />
                       
@@ -9365,6 +9473,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                           step="0.05"
                           value={speechSpeed}
                           onChange={(e) => setSpeechSpeed(parseFloat(e.target.value))}
+                          disabled={ownVoiceChosen}
                           className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
                         />
                         <div className="flex justify-between text-xs text-gray-500">
@@ -9376,7 +9485,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                     </div>
 
                     {/* Action Buttons */}
-                    <div className="flex flex-col gap-2">
+                    <div className={cn("flex flex-col gap-2", ownVoiceChosen && "opacity-60 pointer-events-none")}>
                       {/* Credit estimation and warning */}
                       {speechText && speechText.trim().length > 0 && (
                         <div className="text-xs space-y-1">
@@ -9402,7 +9511,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                     <div className="flex items-center gap-2">
                       <Button
                         onClick={handleGenerateSpeech}
-                          disabled={!selectedVoice || !speechText || generatingSpeech || (userCredits !== null && !hasEnoughCredits)}
+                          disabled={!selectedVoice || !speechText || generatingSpeech || (userCredits !== null && !hasEnoughCredits) || ownVoiceChosen}
                         className="flex-1"
                         size="lg"
                           variant={!hasEnoughCredits && userCredits !== null ? "destructive" : "default"}
@@ -9418,9 +9527,15 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                       <Button
                         variant="outline"
                         size="lg"
-                        className="h-12 w-12 p-0"
+                        onClick={() => {
+                          setSelectedVoice("");
+                          setGeneratedSpeechUrl(null);
+                          setGeneratedSpeechVoiceId(null);
+                          setPreviewAudio(null);
+                        }}
+                        title="Reset voice choice and re-enable all options"
                       >
-                        <Plus className="h-4 w-4" />
+                        Reset
                       </Button>
                       </div>
                     </div>
@@ -9488,34 +9603,34 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
 
                     {/* Action Buttons */}
                     <div className="flex items-center gap-2 w-full">
-                      <Button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          console.log("[Lip Sync] Button clicked", {
-                            generatedSpeechUrl: !!generatedSpeechUrl,
-                            selectedAvatar: !!selectedAvatar,
-                            generatingLipSync
-                          });
-                          handleGenerateLipSync(e);
-                        }}
-                        disabled={!generatedSpeechUrl || !selectedAvatar || generatingLipSync}
-                        className="flex-1"
-                        size="lg"
-                        type="button"
-                      >
-                        <Mic className="h-4 w-4 mr-2" />
-                        {generatingLipSync ? "Generating..." : "Generate Lip Sync (16 credits)"}
-                      </Button>
-                      {lipSyncVideoUrl && (
+                      {lipSyncVideoUrl ? (
                         <Button
-                          variant="outline"
-                          size="lg"
                           onClick={handleAddVideoToScene}
-                          className="h-12 w-12 p-0"
-                          title="Add video to scene"
+                          className="flex-1"
+                          size="lg"
+                          type="button"
                         >
-                          <Plus className="h-4 w-4" />
+                          Add video to canvas
+                        </Button>
+                      ) : (
+                        <Button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            console.log("[Lip Sync] Button clicked", {
+                              generatedSpeechUrl: !!generatedSpeechUrl,
+                              selectedAvatar: !!selectedAvatar,
+                              generatingLipSync
+                            });
+                            handleGenerateLipSync(e);
+                          }}
+                          disabled={!generatedSpeechUrl || !selectedAvatar || generatingLipSync}
+                          className="flex-1"
+                          size="lg"
+                          type="button"
+                        >
+                          <Mic className="h-4 w-4 mr-2" />
+                          {generatingLipSync ? "Generating..." : "Generate Lip Sync (16 credits)"}
                         </Button>
                       )}
                       <Button
@@ -9534,6 +9649,56 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Add voice to user library (name + Eleven Labs voice ID) */}
+      <Dialog open={addVoiceDialogOpen} onOpenChange={setAddVoiceDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add voice</DialogTitle>
+            <DialogDescription>
+              Save a voice to your library. Enter a name and the Eleven Labs voice ID (from your Eleven Labs dashboard).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="new-voice-name">Name</Label>
+              <Input
+                id="new-voice-name"
+                placeholder="e.g. My narrator"
+                value={newVoiceName}
+                onChange={(e) => setNewVoiceName(e.target.value)}
+                className="rounded-xl"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-voice-id">Eleven Labs voice ID</Label>
+              <Input
+                id="new-voice-id"
+                placeholder="e.g. abc123..."
+                value={newVoiceId}
+                onChange={(e) => setNewVoiceId(e.target.value)}
+                className="rounded-xl font-mono text-sm"
+              />
+              <p className="text-xs text-muted-foreground">
+                Find voice IDs at elevenlabs.io → Voice Lab or in the URL when you open a voice.
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setAddVoiceDialogOpen(false)} className="rounded-xl">
+              Cancel
+            </Button>
+            <Button
+              className="rounded-xl"
+              onClick={handleSaveNewVoice}
+              disabled={!newVoiceName.trim() || !newVoiceId.trim() || savingNewVoice}
+            >
+              {savingNewVoice ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {savingNewVoice ? "Saving..." : "Add voice"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Media Dialog - Generated Videos and Uploaded Images */}
       <Dialog open={mediaDialogOpen} onOpenChange={(open) => {
