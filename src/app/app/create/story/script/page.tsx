@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useNavigateWithLoading } from "@/lib/hooks/use-navigate-with-loading";
 import { Stepper } from "@/components/create/stepper";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -23,6 +24,7 @@ const steps = [
 
 export default function StoryScriptPage() {
   const router = useRouter();
+  const navigate = useNavigateWithLoading();
   const { draft, updateDraft } = useProjectStore();
   const { user } = useAuthStore();
   const [userCredits, setUserCredits] = useState<number | null>(null);
@@ -159,9 +161,9 @@ Your story is waiting to be told.`;
     
     // If background is already set (from template), skip to preview
     if (draft?.backgroundId) {
-      router.push("/app/create/story/preview");
+      navigate("/app/create/story/preview");
     } else {
-    router.push("/app/create/story/background");
+      navigate("/app/create/story/background");
     }
   };
 
@@ -288,7 +290,7 @@ Your story is waiting to be told.`;
           <Button
             variant="ghost"
             className="rounded-2xl"
-            onClick={() => router.push("/app/create")}
+            onClick={() => navigate("/app/create")}
           >
             Back
           </Button>

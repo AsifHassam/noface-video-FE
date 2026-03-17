@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useNavigateWithLoading } from "@/lib/hooks/use-navigate-with-loading";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { Stepper } from "@/components/create/stepper";
@@ -21,6 +22,7 @@ const steps = [
 
 export default function BackgroundPage() {
   const router = useRouter();
+  const navigate = useNavigateWithLoading();
   const { draft, updateDraft } = useProjectStore();
   const [backgrounds, setBackgrounds] = useState<Background[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,7 +77,7 @@ export default function BackgroundPage() {
       }
     }
 
-    router.push("/app/create/two-char/preview");
+    navigate("/app/create/two-char/preview");
   };
 
   return (
@@ -110,7 +112,7 @@ export default function BackgroundPage() {
           <Button
             variant="ghost"
             className="rounded-2xl"
-            onClick={() => router.push("/app/create/two-char/script")}
+            onClick={() => navigate("/app/create/two-char/script")}
           >
             Back
           </Button>

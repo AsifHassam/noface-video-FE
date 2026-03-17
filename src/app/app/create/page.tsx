@@ -7,10 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
-import { Sparkles, MessageCircle, Video, MessageSquare, Crown } from "lucide-react";
+import { Sparkles, MessageCircle, Video, MessageSquare, Crown, Loader2 } from "lucide-react";
 import { subscriptionApi } from "@/lib/api/subscription";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { useProjectStore } from "@/lib/stores/project-store";
+import { useNavigationStore } from "@/lib/stores/navigation-store";
 import { toast } from "sonner";
 
 const steps = [
@@ -56,9 +57,11 @@ export default function CreatePage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuthStore();
   const clearDraft = useProjectStore((state) => state.clearDraft);
+  const setNavigating = useNavigationStore((s) => s.setNavigating);
   const [canCreateVideo, setCanCreateVideo] = useState(true);
   const [checkingLimit, setCheckingLimit] = useState(false);
   const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'paid' | 'premium' | null>(null);
+  const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
 
   // Clear draft whenever user lands on Create so they don't see previous 2-char/story preview
   useEffect(() => {
@@ -119,6 +122,8 @@ export default function CreatePage() {
 
     if (!user?.id) {
       // If not authenticated, allow navigation (for dev/testing)
+      setNavigatingTo(card.href);
+      setNavigating(true);
       router.push(card.href);
       return;
     }
@@ -161,6 +166,8 @@ export default function CreatePage() {
       return;
     }
 
+    setNavigatingTo(card.href);
+    setNavigating(true);
     router.push(card.href);
   };
 
@@ -255,9 +262,22 @@ export default function CreatePage() {
                   variant={isDisabled ? "outline" : "default"}
                   className="rounded-2xl"
                   disabled={isDisabled}
-                  onClick={() => handleCardClick(card)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleCardClick(card);
+                  }}
                 >
-                  {card.disabled ? "Locked" : isUgcPremiumLocked ? "Premium only" : checkingLimit ? "Checking..." : "Start"}
+                  {navigatingTo === card.href ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : card.disabled ? (
+                    "Locked"
+                  ) : isUgcPremiumLocked ? (
+                    "Premium only"
+                  ) : checkingLimit ? (
+                    "Checking..."
+                  ) : (
+                    "Start"
+                  )}
                 </Button>
               </CardContent>
             </Card>

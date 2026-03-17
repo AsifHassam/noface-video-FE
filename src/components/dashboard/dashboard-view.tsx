@@ -11,6 +11,7 @@ import { subscriptionApi, type OutstandingItem } from "@/lib/api/subscription";
 import { toast } from "sonner";
 import { Loader2, ChevronLeft, ChevronRight, FileText } from "lucide-react";
 import { useRouter, usePathname } from "next/navigation";
+import { useNavigateWithLoading } from "@/lib/hooks/use-navigate-with-loading";
 import { TemplateSelector } from "@/components/create/template-selector";
 import type { VideoTemplate } from "@/types";
 
@@ -21,6 +22,7 @@ export const DashboardView = () => {
   const { user, loading: authLoading, initialize } = useAuthStore();
   const router = useRouter();
   const pathname = usePathname();
+  const navigate = useNavigateWithLoading();
   const [currentPage, setCurrentPage] = useState(1);
   const [canCreateVideo, setCanCreateVideo] = useState(true);
   const [checkingLimit, setCheckingLimit] = useState(false);
@@ -142,7 +144,7 @@ export const DashboardView = () => {
     if (!user?.id) {
       // If not authenticated, allow navigation (for dev/testing)
       clearDraft();
-      router.push("/app/create");
+      navigate("/app/create");
       return;
     }
 
@@ -185,7 +187,7 @@ export const DashboardView = () => {
     }
 
     clearDraft();
-    router.push("/app/create");
+    navigate("/app/create");
   };
 
   const handleTemplateSelected = (template: VideoTemplate) => {
@@ -193,10 +195,10 @@ export const DashboardView = () => {
     // Navigate based on project type
     if (template.projectType === "story" || template.projectType === "NORMAL_STORY") {
       // For story templates: go directly to script page (skip background since it's in template)
-      router.push("/app/create/story/script");
+      navigate("/app/create/story/script");
     } else {
       // For two-char templates: go to template script page (script + text overlays)
-      router.push("/app/create/template/script");
+      navigate("/app/create/template/script");
     }
   };
 

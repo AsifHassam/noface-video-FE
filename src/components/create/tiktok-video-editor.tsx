@@ -1399,8 +1399,8 @@ export const TikTokVideoEditor = ({
     const audio = audioRef.current;
     if (!video) return;
 
-    // In browser preview mode, check if audio is still preloading
-    if (browserPreviewMode && isAudioPreloading) {
+    // In browser preview mode, wait for audio preload—unless we have a rendered video (e.g. editing), then allow video-only playback
+    if (browserPreviewMode && isAudioPreloading && !videoUrl) {
       console.log("⏳ Audio files still preloading, please wait...");
       return;
     }
@@ -2681,8 +2681,8 @@ export const TikTokVideoEditor = ({
             size="icon"
             onClick={togglePlayPause}
             className="flex-shrink-0 rounded-full"
-            disabled={browserPreviewMode && isAudioPreloading}
-            title={browserPreviewMode && isAudioPreloading ? `Loading audio files... ${Math.round(audioPreloadProgress)}%` : undefined}
+            disabled={browserPreviewMode && isAudioPreloading && !videoUrl}
+            title={browserPreviewMode && isAudioPreloading && !videoUrl ? `Loading audio files... ${Math.round(audioPreloadProgress)}%` : undefined}
           >
             {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
           </Button>

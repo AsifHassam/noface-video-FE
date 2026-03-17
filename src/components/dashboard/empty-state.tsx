@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useNavigateWithLoading } from "@/lib/hooks/use-navigate-with-loading";
 import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { subscriptionApi } from "@/lib/api/subscription";
@@ -9,7 +10,7 @@ import { useAuthStore } from "@/lib/stores/auth-store";
 import { toast } from "sonner";
 
 export const EmptyState = () => {
-  const router = useRouter();
+  const navigate = useNavigateWithLoading();
   const { user } = useAuthStore();
   const [canCreateVideo, setCanCreateVideo] = useState(true);
   const [checkingLimit, setCheckingLimit] = useState(false);
@@ -44,7 +45,7 @@ export const EmptyState = () => {
   const handleCreateNewVideo = async () => {
     if (!user?.id) {
       // If not authenticated, allow navigation (for dev/testing)
-      router.push("/app/create");
+      navigate("/app/create");
       return;
     }
 
@@ -86,7 +87,7 @@ export const EmptyState = () => {
       return;
     }
 
-    router.push("/app/create");
+    navigate("/app/create");
   };
 
   return (

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useNavigateWithLoading } from "@/lib/hooks/use-navigate-with-loading";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { Stepper } from "@/components/create/stepper";
@@ -20,6 +21,7 @@ const steps = [
 
 export default function StoryBackgroundPage() {
   const router = useRouter();
+  const navigate = useNavigateWithLoading();
   const { draft, updateDraft } = useProjectStore();
   const [backgrounds, setBackgrounds] = useState<Background[]>([]);
   const [loading, setLoading] = useState(true);
@@ -109,7 +111,7 @@ export default function StoryBackgroundPage() {
           <Button
             variant="ghost"
             className="rounded-2xl"
-            onClick={() => router.push("/app/create/story/script")}
+            onClick={() => navigate("/app/create/story/script")}
           >
             Back
           </Button>

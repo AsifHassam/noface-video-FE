@@ -70,7 +70,7 @@ export const VideoCard = ({ project, onDelete }: { project: Project; onDelete: (
       const draft = useProjectStore.getState().draft;
       
       // Determine the correct preview page based on project type or draft type
-      let previewRoute = "/app/create/two-char/preview?editing=true"; // Default to two-char
+      let previewRoute = `/app/create/two-char/preview?editing=true&projectId=${project.id}`; // Default to two-char
       
       // Check project type from metadata or draft type
       const projectType = project.type || (draft?.type as any);
@@ -93,7 +93,7 @@ export const VideoCard = ({ project, onDelete }: { project: Project; onDelete: (
       }
       // Check if it's explicitly a TWO_CHAR_CONVO project
       else if (effectiveType === "TWO_CHAR_CONVO" || project.type === "TWO_CHAR_CONVO") {
-        previewRoute = "/app/create/two-char/preview?editing=true";
+        previewRoute = `/app/create/two-char/preview?editing=true&projectId=${project.id}`;
       } 
       // Check if it's explicitly a story narration project
       // Note: Story narration type can be stored as "STORY_NARRATION", "story", "NORMAL_STORY", or "REDDIT_STORY" in metadata.type
@@ -115,7 +115,7 @@ export const VideoCard = ({ project, onDelete }: { project: Project; onDelete: (
         if (draft.scriptInput && !hasCharacters) {
           previewRoute = "/app/create/story/preview?editing=true";
         } else if (hasCharacters) {
-          previewRoute = "/app/create/two-char/preview?editing=true";
+          previewRoute = `/app/create/two-char/preview?editing=true&projectId=${project.id}`;
         }
       }
       

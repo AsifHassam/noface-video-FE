@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useNavigateWithLoading } from "@/lib/hooks/use-navigate-with-loading";
 import { Stepper } from "@/components/create/stepper";
 import { ScriptEditor } from "@/components/create/script-editor";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,7 @@ const steps = [
 
 export default function ScriptPage() {
   const router = useRouter();
+  const navigate = useNavigateWithLoading();
   const { draft, updateDraft } = useProjectStore();
   const { user } = useAuthStore();
   const [userCredits, setUserCredits] = useState<number | null>(null);
@@ -121,7 +123,7 @@ export default function ScriptPage() {
       return;
     }
     updateDraft({ script: parsedLines });
-    router.push("/app/create/two-char/background");
+    navigate("/app/create/two-char/background");
   };
 
   return (
@@ -146,7 +148,7 @@ export default function ScriptPage() {
           userCredits={userCredits}
         />
         <div className="flex justify-end gap-3">
-          <Button variant="ghost" className="rounded-2xl" onClick={() => router.push("/app/create/two-char/characters")}>
+          <Button variant="ghost" className="rounded-2xl" onClick={() => navigate("/app/create/two-char/characters")}>
             Back
           </Button>
           <Button className="rounded-2xl px-6" disabled={!isValid} onClick={handleNext}>

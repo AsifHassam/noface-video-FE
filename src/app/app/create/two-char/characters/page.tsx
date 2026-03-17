@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useNavigateWithLoading } from "@/lib/hooks/use-navigate-with-loading";
 import { Stepper } from "@/components/create/stepper";
 import { CharacterCard } from "@/components/create/character-card";
 import { CreateCharacterCard } from "@/components/create/create-character-card";
@@ -21,6 +22,7 @@ const steps = [
 
 export default function CharacterSelectionPage() {
   const router = useRouter();
+  const navigate = useNavigateWithLoading();
   const searchParams = useSearchParams();
   const { loadCustomCharacters, refreshCharacters } = useCharacterStore();
   const allCharacters = useAllCharacters();
@@ -68,7 +70,7 @@ export default function CharacterSelectionPage() {
 
   const handleNext = () => {
     if (selected.length !== 2) return;
-    router.push("/app/create/two-char/script");
+    navigate("/app/create/two-char/script");
   };
 
   const handleCharacterCreated = async () => {

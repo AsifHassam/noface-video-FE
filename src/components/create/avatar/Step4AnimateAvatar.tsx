@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { animateAvatar, cropAvatarVideo, fetchLastAnimation } from "@/lib/api/avatar";
 import type { AvatarWizardState } from "./types";
 import { config } from "@/lib/config";
+
+const ANIMATE_TIMER_SECONDS = 90; // 1 min 30 sec
 
 type Props = { state: AvatarWizardState };
 
@@ -36,6 +38,41 @@ export function Step4AnimateAvatar({ state }: Props) {
   const [cropLoading, setCropLoading] = useState(false);
   const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [trimEndSeconds, setTrimEndSeconds] = useState(0.5);
+  const [timerSeconds, setTimerSeconds] = useState<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Countdown timer: when it reaches 0, show "Fetch my video from server"
+  useEffect(() => {
+    if (timerSeconds === null) {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      return;
+    }
+    if (timerSeconds <= 0) {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      return;
+    }
+    timerRef.current = setInterval(() => {
+      setTimerSeconds((prev) => (prev === null ? 0 : Math.max(0, prev - 1)));
+    }, 1000);
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [timerSeconds === null ? 0 : timerSeconds <= 0 ? -1 : 1]);
+
+  const formatTimer = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  };
 
   const handleFetchLastAnimation = async () => {
     setRecoveryLoading(true);
@@ -45,6 +82,7 @@ export function Step4AnimateAvatar({ state }: Props) {
       if (result?.videoUrl) {
         setAnimationVideoUrl(result.videoUrl.startsWith("http") ? result.videoUrl : `${config.remotionServerUrl}${result.videoUrl}`);
         setError(null);
+        setTimerSeconds(null);
       } else {
         setError("No recent animation found. Try generating again.");
       }
@@ -55,21 +93,25 @@ export function Step4AnimateAvatar({ state }: Props) {
     }
   };
 
-  const handleAnimate = async () => {
+  const handleAnimate = () => {
     if (!selectedAvatarUrl) return;
     setError(null);
     setLoading(true);
-    try {
-      const imageUrl = isAbsolute(selectedAvatarUrl)
-        ? selectedAvatarUrl
-        : `${config.remotionServerUrl}${selectedAvatarUrl}`;
-      const { videoUrl } = await animateAvatar(imageUrl, motionStyle);
-      setAnimationVideoUrl(videoUrl.startsWith("http") ? videoUrl : `${config.remotionServerUrl}${videoUrl}`);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Animation failed");
-    } finally {
-      setLoading(false);
-    }
+    setTimerSeconds(ANIMATE_TIMER_SECONDS);
+    const imageUrl = isAbsolute(selectedAvatarUrl)
+      ? selectedAvatarUrl
+      : `${config.remotionServerUrl}${selectedAvatarUrl}`;
+    animateAvatar(imageUrl, motionStyle)
+      .then(({ videoUrl }) => {
+        setAnimationVideoUrl(videoUrl.startsWith("http") ? videoUrl : `${config.remotionServerUrl}${videoUrl}`);
+        setTimerSeconds(null);
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Animation failed");
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   };
 
   const handleCropEnd = async () => {
@@ -142,25 +184,34 @@ export function Step4AnimateAvatar({ state }: Props) {
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Button onClick={handleAnimate} disabled={loading || !selectedAvatarUrl}>
-                      {loading ? "Animating…" : "Generate animation (18.97 credits)"}
+                    <Button
+                      onClick={handleAnimate}
+                      disabled={!selectedAvatarUrl || (timerSeconds !== null && timerSeconds > 0)}
+                    >
+                      {timerSeconds !== null && timerSeconds > 0
+                        ? `Animating… ${formatTimer(timerSeconds)}`
+                        : loading
+                          ? "Animating…"
+                          : "Generate animation (18.97 credits)"}
                     </Button>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={handleFetchLastAnimation}
-                          disabled={recoveryLoading}
-                        >
-                          {recoveryLoading ? "Checking…" : "Fetch my video from server"}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        Use this button if animation times out
-                      </TooltipContent>
-                    </Tooltip>
+                    {timerSeconds === 0 && !animationVideoUrl && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handleFetchLastAnimation}
+                            disabled={recoveryLoading}
+                          >
+                            {recoveryLoading ? "Checking…" : "Fetch my video from server"}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          Use this button if animation timed out but completed on the server
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                   </div>
                 </>
               )}
@@ -208,7 +259,9 @@ export function Step4AnimateAvatar({ state }: Props) {
           )}
           <div className="flex justify-between">
             <Button variant="outline" onClick={() => setStep(2)}>Back</Button>
-            <Button onClick={() => setStep(4)}>Next</Button>
+            <Button onClick={() => setStep(4)} disabled={!animationVideoUrl}>
+              Next
+            </Button>
           </div>
         </CardContent>
       </Card>

@@ -76,13 +76,19 @@ export function Step3GenerateAvatar({ state }: Props) {
             <p className="text-sm text-muted-foreground">Upload your image in the previous step, then go back and click Next.</p>
           )}
           {loading && (
-            <div className="grid gap-4 sm:grid-cols-3">
-              {[1, 2, 3].map((i) => (
-                <Skeleton key={i} className="aspect-[9/16] w-full rounded-xl" />
-              ))}
-            </div>
+            <>
+              <div className="grid gap-4 sm:grid-cols-3">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="aspect-[9/16] w-full rounded-xl" />
+                ))}
+              </div>
+              <div className="flex justify-between">
+                <Button variant="outline" onClick={() => setStep(1)}>Back</Button>
+                <Button disabled>Next</Button>
+              </div>
+            </>
           )}
-          {generatedUrls.length > 0 && (
+          {generatedUrls.length > 0 && !loading && (
             <>
               <div className={sourceType === "own" ? "flex flex-col items-start gap-4" : "grid gap-4 sm:grid-cols-3"}>
                 {generatedUrls.map((url) => {

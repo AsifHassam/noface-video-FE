@@ -36,6 +36,7 @@ export default function PreviewPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const isEditing = searchParams.get("editing") === "true";
+  const projectIdFromUrl = searchParams.get("projectId");
   const { user } = useAuthStore();
   const draft = useProjectStore((state) => state.draft);
   const projects = useProjectStore((state) => state.projects);
@@ -49,30 +50,33 @@ export default function PreviewPage() {
     loadProjectIntoDraft,
   } = useProjectStore();
 
-  // Load project data when in edit mode
+  // Load project data when in edit mode (use projectId from URL so refresh/direct open works)
   const [isLoadingProject, setIsLoadingProject] = useState(false);
   useEffect(() => {
-    if (isEditing && draft?.id && !isLoadingProject) {
-      // Check if we need to load project data (missing script, merged audio, background, or other critical data)
-      const needsLoad = !draft?.script?.length || 
-                        (!draft?.mergedAudioUrl && !draft?.previewUrl && !draft?.audioFiles?.length) || 
-                        !draft?.srtText ||
-                        !draft?.backgroundId;
-      
-      if (needsLoad) {
-        // If we're editing but don't have complete project data loaded, load it
-        setIsLoadingProject(true);
-        loadProjectIntoDraft(draft.id)
-          .then(() => {
-            setIsLoadingProject(false);
-          })
-          .catch((error) => {
-            toast.error("Failed to load project data");
-            setIsLoadingProject(false);
-          });
-      }
+    const projectId = projectIdFromUrl || draft?.id;
+    if (!isEditing || !projectId || isLoadingProject) return;
+
+    // Check if we need to load project data (missing script, merged audio, background, or other critical data)
+    const needsLoad =
+      !draft?.script?.length ||
+      (!draft?.mergedAudioUrl && !draft?.previewUrl && !draft?.audioFiles?.length) ||
+      !draft?.srtText ||
+      !draft?.backgroundId ||
+      draft?.id !== projectId; // Also load when URL projectId doesn't match draft (e.g. page refresh)
+
+    if (needsLoad) {
+      setIsLoadingProject(true);
+      loadProjectIntoDraft(projectId)
+        .then(() => {
+          setIsLoadingProject(false);
+        })
+        .catch((err) => {
+          console.error("Failed to load project:", err);
+          toast.error(err?.message || "Failed to load project data");
+          setIsLoadingProject(false);
+        });
     }
-  }, [isEditing, draft?.id, draft?.script?.length, draft?.mergedAudioUrl, draft?.previewUrl, draft?.audioFiles?.length, draft?.srtText, draft?.backgroundId, isLoadingProject, loadProjectIntoDraft]);
+  }, [isEditing, projectIdFromUrl, draft?.id, draft?.script?.length, draft?.mergedAudioUrl, draft?.previewUrl, draft?.audioFiles?.length, draft?.srtText, draft?.backgroundId, isLoadingProject, loadProjectIntoDraft]);
 
   useEffect(() => {
     // Skip redirect check if we're editing an existing project
@@ -283,9 +287,10 @@ export default function PreviewPage() {
   };
 
   const handleRenderFinal = async () => {
-    // Check if project exists in edit mode
-    if (isEditing && !draft?.id) {
-      toast.error("Project not found. Please reload the page.");
+    // Check if project exists in edit mode (draft.id is set after load; projectIdFromUrl supports refresh)
+    const projectId = projectIdFromUrl || draft?.id;
+    if (isEditing && !projectId) {
+      toast.error("Project not found. Please open this video from the dashboard again.");
       return;
     }
     
