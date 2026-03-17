@@ -12,7 +12,6 @@ import { useProjectStore } from "@/lib/stores/project-store";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { toast } from "sonner";
 import { Play, Pause, RotateCcw, Download, Loader2 } from "lucide-react";
-import { Checkbox } from "@/components/ui/checkbox";
 import { IMessageTemplate } from "@/components/create/texting/imessage-template";
 import type { TextingMessage, TextingVideoSettings } from "../script/page";
 import { supabase } from "@/lib/supabase";
@@ -96,21 +95,6 @@ export default function TextingPreviewPage() {
   useEffect(() => {
     setKeepKeyboardOpen(textingSettings.keepKeyboardOpen || false);
   }, [textingSettings.keepKeyboardOpen]);
-  
-  // Save keepKeyboardOpen setting to draft
-  const handleKeepKeyboardOpenChange = async (checked: boolean) => {
-    setKeepKeyboardOpen(checked);
-    const updatedSettings = {
-      ...textingSettings,
-      keepKeyboardOpen: checked,
-    };
-    await updateDraft({
-      metadata: {
-        ...(draft?.metadata as any),
-        textingSettings: updatedSettings,
-      },
-    });
-  };
 
   // Parse messages from scriptInput if not in metadata
   useEffect(() => {
@@ -584,17 +568,9 @@ export default function TextingPreviewPage() {
           </p>
         </header>
 
-        {/* Debug Info - Remove in production */}
-        {process.env.NODE_ENV === 'development' && (
-          <div className="rounded-3xl border border-border/40 bg-yellow-50 p-4 text-xs">
-            <p><strong>Debug Info:</strong></p>
-            <p>Messages: {messages.length}</p>
-            <p>Total Duration: {totalDuration}ms ({(totalDuration / 1000).toFixed(2)}s)</p>
-            <p>Current Time: {currentTime}ms ({(currentTime / 1000).toFixed(2)}s)</p>
-            <p>Is Playing: {isPlaying ? 'Yes' : 'No'}</p>
-            <p>Script Input: {draft?.scriptInput ? `${draft.scriptInput.length} chars` : 'None'}</p>
-          </div>
-        )}
+        <p className="text-sm text-muted-foreground">
+          Calls will only show up on the Final Render
+        </p>
 
         {/* Preview Area */}
         <div className="rounded-3xl border border-border/40 bg-white/70 p-6">
@@ -675,32 +651,6 @@ export default function TextingPreviewPage() {
                 </Button>
               </div>
             </div>
-          </div>
-        </div>
-
-        {/* Settings */}
-        <div className="rounded-3xl border border-border/40 bg-white/70 p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-foreground">Settings</h2>
-              <p className="text-sm text-muted-foreground">
-                Customize your video settings
-              </p>
-            </div>
-          </div>
-          
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id="keepKeyboardOpen"
-              checked={keepKeyboardOpen}
-              onCheckedChange={(checked) => handleKeepKeyboardOpenChange(checked === true)}
-            />
-            <label
-              htmlFor="keepKeyboardOpen"
-              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-            >
-              Keep keyboard open full time
-            </label>
           </div>
         </div>
 

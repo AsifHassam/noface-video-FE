@@ -11,9 +11,17 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
-import { Info, Image as ImageIcon, X, Check, Plus, Phone } from "lucide-react";
+import { Info, Image as ImageIcon, X, Check, Phone } from "lucide-react";
 import { toast } from "sonner";
 import { uploadImageToStorage, getUserUploadedImages } from "@/lib/api/ugc-videos";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const steps = [
   { label: "Step 1", description: "Write your messages" },
@@ -118,6 +126,17 @@ export default function TextingScriptPage() {
   const [phoneCalls, setPhoneCalls] = useState<PhoneCall[]>(
     (draft?.metadata as any)?.textingSettings?.phoneCalls || []
   );
+  const [showAddCallDialog, setShowAddCallDialog] = useState(false);
+  const [addCallInsertAtEnd, setAddCallInsertAtEnd] = useState(false);
+  const DEFAULT_FACETIME_CALL_TYPE = 'FaceTime Video Call';
+  const DEFAULT_FACETIME_LOGO_URL = 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/FaceTime_iOS.svg/960px-FaceTime_iOS.svg.png';
+
+  const [addCallForm, setAddCallForm] = useState<{
+    type: 'top' | 'fullscreen';
+    callerInfo: string;
+    callType: string;
+    logoUrl: string;
+  }>({ type: 'top', callerInfo: '', callType: DEFAULT_FACETIME_CALL_TYPE, logoUrl: DEFAULT_FACETIME_LOGO_URL });
 
   // Extract phone calls from script syntax: [call:type:callerInfo:callType:logoUrl]
   // Calculate timestamp based on which message it appears after
@@ -433,7 +452,15 @@ you: Oh wow, I remember him! He's so awesome...`;
     toast.success("Image inserted into message");
   };
 
-  const handleInsertPhoneCall = () => {
+  const buildCallSyntax = (opts: { type: 'top' | 'fullscreen'; callerInfo: string; callType: string; logoUrl: string }) => {
+    const caller = (opts.callerInfo.trim() || contactName).replace(/:/g, ' ');
+    const callType = opts.callType.trim().replace(/:/g, ' ');
+    const logoUrl = opts.logoUrl.trim().replace(/]/g, '');
+    return `[call:${opts.type}:${caller}:${callType}:${logoUrl}]`;
+  };
+
+  const insertPhoneCallAtCursor = (opts: { type: 'top' | 'fullscreen'; callerInfo: string; callType: string; logoUrl: string }) => {
+    const callSyntax = buildCallSyntax(opts);
     const textarea = document.getElementById('messages') as HTMLTextAreaElement;
     if (textarea) {
       const start = textarea.selectionStart;
@@ -441,26 +468,46 @@ you: Oh wow, I remember him! He's so awesome...`;
       const currentText = text;
       const before = currentText.substring(0, start);
       const after = currentText.substring(end);
-      
-      // Insert phone call syntax: [call:type:callerInfo:callType:logoUrl]
-      // The call will appear after the message above it in the script
-      const callSyntax = `[call:top:${contactName}]`;
       const newText = before + (before.trim().endsWith('\n') || before.trim() === '' ? '' : '\n') + callSyntax + (after.trim().startsWith('\n') ? '' : '\n') + after;
       handleChange(newText);
-      
-      // Reset cursor position after call syntax
       setTimeout(() => {
         textarea.focus();
         const newStart = start + callSyntax.length + (before.trim().endsWith('\n') || before.trim() === '' ? 0 : 1) + (after.trim().startsWith('\n') ? 0 : 1);
         textarea.setSelectionRange(newStart, newStart);
       }, 0);
-      
-      toast.success("Phone call inserted. It will appear after the message above it.");
     } else {
-      // Append to end if no textarea found
-      handleChange((text.trim() ? text + '\n' : '') + `[call:top:${contactName}]`);
-      toast.success("Phone call inserted. It will appear after the message above it.");
+      handleChange((text.trim() ? text + '\n' : '') + callSyntax);
     }
+    toast.success("Phone call inserted. It will appear after the message above it.");
+  };
+
+  const handleOpenAddCallDialog = (insertAtEnd = false) => {
+    setAddCallForm({
+      type: 'top',
+      callerInfo: contactName,
+      callType: DEFAULT_FACETIME_CALL_TYPE,
+      logoUrl: DEFAULT_FACETIME_LOGO_URL,
+    });
+    setAddCallInsertAtEnd(insertAtEnd);
+    setShowAddCallDialog(true);
+  };
+
+  const handleInsertCallFromDialog = () => {
+    if (addCallInsertAtEnd) {
+      const callSyntax = buildCallSyntax(addCallForm);
+      handleChange((text.trim() ? text + '\n' : '') + callSyntax);
+      const textarea = document.getElementById('messages') as HTMLTextAreaElement;
+      if (textarea) {
+        setTimeout(() => {
+          textarea.focus();
+          textarea.scrollTop = textarea.scrollHeight;
+        }, 0);
+      }
+      toast.success("Phone call added to script. It will appear after the last message.");
+    } else {
+      insertPhoneCallAtCursor(addCallForm);
+    }
+    setShowAddCallDialog(false);
   };
 
   const handleSelectImageForAvatar = (imageUrl: string) => {
@@ -781,6 +828,15 @@ you: Oh wow, I remember him! He's so awesome...`;
             Enter your messages, one per line. Use <code className="bg-muted px-1 rounded">me: </code> for messages you type (with typing effect) or <code className="bg-muted px-1 rounded">you: </code> for replies (appear instantly). Click "Upload Image" to add images or "Add Call" to insert phone call notifications at your cursor position.
           </p>
         </header>
+
+        <div className="flex gap-3">
+          <Button variant="outline" className="rounded-2xl" onClick={handleSample}>
+            Use Sample
+          </Button>
+          <Button variant="outline" className="rounded-2xl" onClick={handleClear}>
+            Clear
+          </Button>
+        </div>
         
         <div className="space-y-2">
           <div className="flex items-center justify-between">
@@ -819,7 +875,7 @@ you: Oh wow, I remember him! He's so awesome...`;
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={handleInsertPhoneCall}
+                onClick={() => handleOpenAddCallDialog(false)}
                 className="flex items-center gap-2"
               >
                 <Phone className="h-4 w-4" />
@@ -1005,44 +1061,11 @@ you: Oh wow, I remember him! He's so awesome...`;
 
           {/* Phone Calls Section */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Label className="text-sm font-medium">
-                  Phone Call Notifications
-                </Label>
-                <Info className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  // Insert phone call at the end of the script
-                  const textarea = document.getElementById('messages') as HTMLTextAreaElement;
-                  if (textarea) {
-                    const currentText = text;
-                    const callSyntax = `[call:top:${contactName}]`;
-                    const newText = (currentText.trim() ? currentText + '\n' : '') + callSyntax;
-                    handleChange(newText);
-                    
-                    // Focus and scroll to bottom
-                    setTimeout(() => {
-                      textarea.focus();
-                      textarea.setSelectionRange(newText.length, newText.length);
-                      textarea.scrollTop = textarea.scrollHeight;
-                    }, 0);
-                    
-                    toast.success("Phone call added to script. It will appear after the last message.");
-                  } else {
-                    handleChange((text.trim() ? text + '\n' : '') + `[call:top:${contactName}]`);
-                    toast.success("Phone call added to script. It will appear after the last message.");
-                  }
-                }}
-                className="flex items-center gap-2"
-              >
-                <Plus className="h-4 w-4" />
-                Add Call to Script
-              </Button>
+            <div className="flex items-center gap-2">
+              <Label className="text-sm font-medium">
+                Phone Call Notifications
+              </Label>
+              <Info className="h-4 w-4 text-muted-foreground" />
             </div>
             
             {phoneCalls.length === 0 ? (
@@ -1156,15 +1179,6 @@ you: Oh wow, I remember him! He's so awesome...`;
               </div>
             )}
           </div>
-        </div>
-
-        <div className="flex gap-3">
-          <Button variant="outline" className="rounded-2xl" onClick={handleSample}>
-            Use Sample
-          </Button>
-          <Button variant="outline" className="rounded-2xl" onClick={handleClear}>
-            Clear
-          </Button>
         </div>
 
         <div className="flex justify-end gap-3">
@@ -1283,6 +1297,70 @@ you: Oh wow, I remember him! He's so awesome...`;
           </div>
         </div>
       )}
+
+      {/* Add Call dialog – select call type and options before inserting */}
+      <Dialog open={showAddCallDialog} onOpenChange={setShowAddCallDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add phone call</DialogTitle>
+            <DialogDescription>
+              Choose how the call notification appears. It will be inserted {addCallInsertAtEnd ? "at the end of the script" : "at your cursor position"}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Call type</Label>
+              <select
+                value={addCallForm.type}
+                onChange={(e) => setAddCallForm((f) => ({ ...f, type: e.target.value as 'top' | 'fullscreen' }))}
+                className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="top">Top notification</option>
+                <option value="fullscreen">Full screen</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Caller name / info</Label>
+              <Input
+                value={addCallForm.callerInfo}
+                onChange={(e) => setAddCallForm((f) => ({ ...f, callerInfo: e.target.value }))}
+                placeholder={contactName}
+                className="rounded-lg"
+              />
+            </div>
+            {addCallForm.type === 'fullscreen' && (
+              <>
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Call type label</Label>
+                  <Input
+                    value={addCallForm.callType}
+                    onChange={(e) => setAddCallForm((f) => ({ ...f, callType: e.target.value }))}
+                    placeholder={DEFAULT_FACETIME_CALL_TYPE}
+                    className="rounded-lg"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Logo URL (optional)</Label>
+                  <Input
+                    value={addCallForm.logoUrl}
+                    onChange={(e) => setAddCallForm((f) => ({ ...f, logoUrl: e.target.value }))}
+                    placeholder={DEFAULT_FACETIME_LOGO_URL}
+                    className="rounded-lg"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddCallDialog(false)} className="rounded-xl">
+              Cancel
+            </Button>
+            <Button onClick={handleInsertCallFromDialog} className="rounded-xl">
+              {addCallInsertAtEnd ? "Add to script" : "Insert call"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
