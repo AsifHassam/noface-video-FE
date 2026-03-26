@@ -3,6 +3,7 @@
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { getCachedToken, refreshToken } from "@/lib/utils/token-cache";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 
@@ -37,20 +38,26 @@ function CallbackInner() {
         return;
       }
 
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) {
+      // Avoid hanging on getSession() here; token-cache reads localStorage first.
+      // Instagram callback should complete quickly even if Supabase auth APIs are slow.
+      const token =
+        (await Promise.race([
+          getCachedToken(),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+        ])) || (await refreshToken());
+
+      if (!token) {
         toast.error("Please sign in first");
         router.replace("/app/automate");
         return;
       }
 
+      setMsg("Exchanging Instagram token…");
       const res = await fetch("/api/auth/instagram/exchange", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ code }),
       });
