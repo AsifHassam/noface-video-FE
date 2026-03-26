@@ -1,12 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { templatesApi, automationApi } from "@/lib/api/projects";
 import { uploadImageToStorage } from "@/lib/api/ugc-videos";
 import { useAuthStore } from "@/lib/stores/auth-store";
-import { getCachedUserInfo } from "@/lib/utils/token-cache";
 import { getCachedToken, refreshToken } from "@/lib/utils/token-cache";
 import { getInstagramLoginUrl } from "@/lib/instagram-oauth";
 import { config } from "@/lib/config";
@@ -146,13 +144,9 @@ function isLikelyAuthError(err: unknown): boolean {
 
 export default function AutomatePage() {
   const REQUEST_TIMEOUT_MS = 15000;
-  const pathname = usePathname();
   const authUser = useAuthStore((s) => s.user);
   const authLoading = useAuthStore((s) => s.loading);
-  const initializeAuth = useAuthStore((s) => s.initialize);
   const userId = authUser?.id ?? null;
-  const [fallbackUserId, setFallbackUserId] = useState<string | null>(null);
-  const effectiveUserId = userId ?? fallbackUserId;
   const [templates, setTemplates] = useState<VideoTemplate[]>([]);
   const [rules, setRules] = useState<AutomationRule[]>([]);
   const [loading, setLoading] = useState(true);
@@ -246,7 +240,7 @@ export default function AutomatePage() {
       };
 
       let token = await withTimeout(
-        getCachedToken(effectiveUserId || undefined),
+        getCachedToken(userId || undefined),
         "Auth token lookup timed out"
       );
       if (!token) {
@@ -256,7 +250,7 @@ export default function AutomatePage() {
       let response = await withTimeout(getOnce(token), timeoutMessage);
       if (response.status === 401) {
         const refreshed = await withTimeout(
-          refreshToken(effectiveUserId || undefined),
+          refreshToken(userId || undefined),
           "Session refresh timed out"
         );
         if (refreshed) {
@@ -270,11 +264,11 @@ export default function AutomatePage() {
       }
       return (await response.json()) as T;
     },
-    [withTimeout, effectiveUserId]
+    [withTimeout, userId]
   );
 
   const load = useCallback(async () => {
-    if (!effectiveUserId || isLoadingRef.current) return;
+    if (!userId || isLoadingRef.current) return;
     isLoadingRef.current = true;
     setIsLoadingData(true);
     setLoading(true);
@@ -283,13 +277,13 @@ export default function AutomatePage() {
         templatesApi.list({ limit: 100 }),
         supabaseRestGetWithAuthRetry<AutomationRule[]>(
           `automation_rules?select=*&user_id=eq.${encodeURIComponent(
-            effectiveUserId
+            userId
           )}&order=created_at.desc`,
           "Rules request timed out"
         ),
         supabaseRestGetWithAuthRetry<Array<{ id: string }>>(
           `user_instagram_connections?select=id&user_id=eq.${encodeURIComponent(
-            effectiveUserId
+            userId
           )}&limit=1`,
           "Instagram status request timed out"
         ),
@@ -326,42 +320,14 @@ export default function AutomatePage() {
       setIsLoadingData(false);
       isLoadingRef.current = false;
     }
-  }, [effectiveUserId, supabaseRestGetWithAuthRetry]);
-
-  // Route-level auth recovery: navbar navigation can occasionally land here
-  // before auth store has user hydrated, which prevents page data queries.
-  useEffect(() => {
-    if (pathname !== "/app/automate" || userId) {
-      if (userId) setFallbackUserId(null);
-      return;
-    }
-    let cancelled = false;
-    const recoverAuth = async () => {
-      try {
-        const cachedUser = getCachedUserInfo();
-        if (cachedUser?.id) {
-          if (!cancelled) setFallbackUserId(cachedUser.id);
-          return;
-        }
-        await initializeAuth();
-        const cachedAfterInit = getCachedUserInfo();
-        if (!cancelled) setFallbackUserId(cachedAfterInit?.id ?? null);
-      } catch {
-        if (!cancelled) setFallbackUserId(null);
-      }
-    };
-    recoverAuth();
-    return () => {
-      cancelled = true;
-    };
-  }, [pathname, userId, initializeAuth]);
+  }, [userId, supabaseRestGetWithAuthRetry]);
 
   useEffect(() => {
-    if (!authLoading && effectiveUserId && pathname === "/app/automate") {
+    if (!authLoading && userId) {
       load();
     }
-    if (!authLoading && !effectiveUserId) setLoading(false);
-  }, [authLoading, effectiveUserId, pathname, load]);
+    if (!authLoading && !userId) setLoading(false);
+  }, [authLoading, userId, load]);
 
   const handleConnectInstagram = () => {
     try {
@@ -379,7 +345,7 @@ export default function AutomatePage() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!effectiveUserId) {
+    if (!userId) {
       toast.error("Sign in required");
       return;
     }
@@ -410,7 +376,7 @@ export default function AutomatePage() {
       const { error } = await runSupabaseWithAuthRetry(
         () =>
           supabase.from("automation_rules").insert({
-            user_id: effectiveUserId,
+            user_id: userId,
             template_id: templateId,
             name: name.trim() || `Automation ${new Date().toLocaleDateString()}`,
             niche_prompt: "",
@@ -557,7 +523,7 @@ export default function AutomatePage() {
   };
 
   const uploadOverlayImage = async (file: File | null) => {
-    if (!file || !effectiveUserId) return;
+    if (!file || !userId) return;
     if (!file.type.startsWith("image/")) {
       toast.error("Please upload an image file.");
       return;
@@ -588,7 +554,7 @@ export default function AutomatePage() {
       toast.error("Auth is still loading. Please wait a second and try again.");
       return;
     }
-    if (!effectiveUserId) {
+    if (!userId) {
       toast.error("Sign in required");
       return;
     }
@@ -630,7 +596,7 @@ export default function AutomatePage() {
     setQueueSaving(true);
     try {
       const insertPayload = {
-        user_id: effectiveUserId,
+        user_id: userId,
         template_id: rule.template_id,
         project_type: tpl.projectType,
         script: draftScript.trim(),
@@ -668,7 +634,7 @@ export default function AutomatePage() {
       };
 
       let token = await withTimeout(
-        getCachedToken(effectiveUserId),
+        getCachedToken(userId),
         "Auth token lookup timed out. Please retry."
       );
       if (!token) {
@@ -678,7 +644,7 @@ export default function AutomatePage() {
       let response = await postQueueItem(token);
       if (response.status === 401) {
         const refreshed = await withTimeout(
-          refreshToken(effectiveUserId),
+          refreshToken(userId),
           "Session refresh timed out. Please retry."
         );
         if (refreshed) {
@@ -731,7 +697,7 @@ export default function AutomatePage() {
     }
   };
 
-  if (!authLoading && !effectiveUserId && !loading) {
+  if (!authLoading && !userId && !loading) {
     return <p className="text-muted-foreground">Please sign in.</p>;
   }
 

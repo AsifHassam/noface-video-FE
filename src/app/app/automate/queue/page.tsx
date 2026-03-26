@@ -5,7 +5,6 @@ import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { automationApi } from "@/lib/api/projects";
 import { useAuthStore } from "@/lib/stores/auth-store";
-import { getCachedUserInfo } from "@/lib/utils/token-cache";
 import { getCachedToken, refreshToken } from "@/lib/utils/token-cache";
 import { config } from "@/lib/config";
 import { Button } from "@/components/ui/button";
@@ -81,41 +80,12 @@ export default function AutomationQueuePage() {
   const templateId = search.get("templateId");
   const authUser = useAuthStore((s) => s.user);
   const authLoading = useAuthStore((s) => s.loading);
-  const initializeAuth = useAuthStore((s) => s.initialize);
   const userId = authUser?.id ?? null;
-  const [fallbackUserId, setFallbackUserId] = useState<string | null>(null);
-  const effectiveUserId = userId ?? fallbackUserId;
   const [items, setItems] = useState<QueueItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [renderById, setRenderById] = useState<Record<string, RenderJobLite>>({});
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
-
-  useEffect(() => {
-    if (userId) {
-      setFallbackUserId(null);
-      return;
-    }
-    let cancelled = false;
-    const recoverAuth = async () => {
-      try {
-        const cachedUser = getCachedUserInfo();
-        if (cachedUser?.id) {
-          if (!cancelled) setFallbackUserId(cachedUser.id);
-          return;
-        }
-        await initializeAuth();
-        const cachedAfterInit = getCachedUserInfo();
-        if (!cancelled) setFallbackUserId(cachedAfterInit?.id ?? null);
-      } catch {
-        if (!cancelled) setFallbackUserId(null);
-      }
-    };
-    recoverAuth();
-    return () => {
-      cancelled = true;
-    };
-  }, [userId, initializeAuth]);
 
   const restRequest = useCallback(
     async <T,>(method: "GET" | "DELETE", pathWithQuery: string): Promise<T> => {
@@ -144,12 +114,12 @@ export default function AutomationQueuePage() {
         }
       };
 
-      let token = await getCachedToken(effectiveUserId || undefined);
+      let token = await getCachedToken(userId || undefined);
       if (!token) throw new Error("No auth token available");
 
       let response = await callOnce(token);
       if (response.status === 401) {
-        const refreshedToken = await refreshToken(effectiveUserId || undefined);
+        const refreshedToken = await refreshToken(userId || undefined);
         if (refreshedToken) {
           token = refreshedToken;
           response = await callOnce(token);
@@ -166,13 +136,13 @@ export default function AutomationQueuePage() {
       }
       return (await response.json()) as T;
     },
-    [effectiveUserId]
+    [userId]
   );
 
   const refresh = useCallback(async () => {
-    if (!effectiveUserId) return;
+    if (!userId) return;
     const baseQueueQuery = `automation_script_queue?select=*&user_id=eq.${encodeURIComponent(
-      effectiveUserId
+      userId
     )}&order=created_at.desc&limit=100`;
     const queueQuery = templateId
       ? `${baseQueueQuery}&template_id=eq.${encodeURIComponent(templateId)}`
@@ -202,7 +172,7 @@ export default function AutomationQueuePage() {
     }
     setLastRefreshedAt(new Date());
     return queue;
-  }, [templateId, effectiveUserId, restRequest]);
+  }, [templateId, userId, restRequest]);
 
   // Realtime push updates while a generate/post action is active.
   useEffect(() => {
@@ -229,7 +199,7 @@ export default function AutomationQueuePage() {
 
   useEffect(() => {
     const load = async () => {
-      if (!effectiveUserId) return;
+      if (!userId) return;
       setLoading(true);
       try {
         await refresh();
@@ -241,15 +211,15 @@ export default function AutomationQueuePage() {
       }
     };
     load();
-  }, [effectiveUserId, templateId, refresh]);
+  }, [userId, templateId, refresh]);
 
   useEffect(() => {
-    if (!effectiveUserId) return;
+    if (!userId) return;
     const id = setInterval(() => {
       refresh().catch((e) => console.error("Auto-refresh failed", e));
     }, 10000);
     return () => clearInterval(id);
-  }, [effectiveUserId, refresh]);
+  }, [userId, refresh]);
 
   const canDelete = useMemo(
     () => (status: string) => !["posting", "posted"].includes(status),
@@ -322,7 +292,7 @@ export default function AutomationQueuePage() {
     }
   };
 
-  if (!authLoading && !effectiveUserId) {
+  if (!authLoading && !userId) {
     return <p className="text-muted-foreground">Please sign in.</p>;
   }
 
