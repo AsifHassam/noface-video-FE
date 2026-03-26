@@ -67,8 +67,10 @@ export type ImageOverlay = {
   endMs: number;
   x: number; // Position in % (0-100)
   y: number; // Position in % (0-100)
-  width: number; // Width in % (0-100)
+  width: number; // Width in % (0-100); 0 with intrinsicSize = use image natural size
   height: number; // Height in % (0-100)
+  /** When true (e.g. auto stock logos), render at native image dimensions (capped by max-width/height). */
+  intrinsicSize?: boolean;
   rotation?: number; // Rotation in degrees
   opacity?: number; // Opacity 0-1
   cropData?: {
@@ -77,6 +79,10 @@ export type ImageOverlay = {
     width: number; // Crop width
     height: number; // Crop height
   };
+  /** Slide into place from the side when the overlay appears (preview + final render). */
+  slideInFrom?: "left" | "right" | null;
+  /** How long the slide-in takes (ms). Default 400 when `slideInFrom` is set. */
+  slideInDurationMs?: number;
 };
 
 export type BackgroundId = string; // Now dynamic from database
@@ -162,6 +168,37 @@ export type Project = {
   updatedAt: string;
 };
 
+/** What to save / apply when using a video template */
+export type TemplateIncludeFlags = {
+  background: boolean;
+  subtitles: boolean;
+  textOverlays: boolean;
+  characters: boolean;
+  characterSizes: boolean;
+  characterPositions: boolean;
+  characterCustomPositions: boolean;
+  playbackRate: boolean;
+  imageOverlays: boolean;
+  characterSlideIn: boolean;
+  characterSlideInWhoosh: boolean;
+};
+
+export type TemplateSnapshots = {
+  imageOverlays?: ImageOverlay[];
+  characterSlideInEnabled?: boolean;
+  characterSlideInWhooshEnabled?: boolean;
+  subtitleFontFamily?: SubtitleFontFamily;
+  subtitleSingleLine?: boolean;
+  subtitleSingleWord?: boolean;
+  karaokePillColor?: string;
+  boldGreenColor?: string;
+};
+
+export type VideoTemplateExtras = {
+  includes: TemplateIncludeFlags;
+  snapshots: TemplateSnapshots;
+};
+
 export type VideoTemplate = {
   id: string;
   userId: string;
@@ -178,6 +215,8 @@ export type VideoTemplate = {
   characterPositions?: CharacterPositions;
   characterCustomPositions?: Record<string, { x: number; y: number }>;
   playbackRate?: number;
+  /** Selective save/apply flags + snapshots (image overlays, slide-in, extra subtitle fields). */
+  templateExtras?: VideoTemplateExtras;
   createdAt: string;
   updatedAt: string;
 };

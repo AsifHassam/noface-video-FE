@@ -18,6 +18,7 @@ import { supabase } from "@/lib/supabase";
 import { RenderWaitGame } from "@/components/create/RenderWaitGame";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SaveTemplateDialog } from "@/components/create/save-template-dialog";
+import { buildTemplateExtras, type TemplateIncludeFlags } from "@/lib/template-includes";
 import { templatesApi } from "@/lib/api/projects";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { subscriptionApi } from "@/lib/api/subscription";
@@ -839,7 +840,11 @@ export default function StoryPreviewPage() {
     }
   };
 
-  const handleSaveTemplate = async (name: string, description?: string) => {
+  const handleSaveTemplate = async (
+    name: string,
+    description: string | undefined,
+    includes: TemplateIncludeFlags
+  ) => {
     if (!draft) {
       toast.error("No draft found");
       return;
@@ -857,6 +862,7 @@ export default function StoryPreviewPage() {
 
     try {
       setIsSavingTemplate(true);
+      const templateExtras = buildTemplateExtras(draft, includes);
       await templatesApi.create({
         name,
         description,
@@ -866,7 +872,9 @@ export default function StoryPreviewPage() {
         subtitlePosition: draft.subtitlePosition,
         subtitleFontSize: draft.subtitleFontSize,
         textOverlays: draft.textOverlays || [],
-        playbackRate: draft.playbackRate !== undefined && draft.playbackRate !== null ? draft.playbackRate : 1,
+        playbackRate:
+          draft.playbackRate !== undefined && draft.playbackRate !== null ? draft.playbackRate : 1,
+        templateExtras,
       });
       toast.success("Template saved successfully!");
     } catch (error) {
@@ -1326,6 +1334,7 @@ export default function StoryPreviewPage() {
         onOpenChange={setIsSaveTemplateOpen}
         onSave={handleSaveTemplate}
         isLoading={isSavingTemplate}
+        variant="story"
       />
     </div>
   );

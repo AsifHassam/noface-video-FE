@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { config } from '@/lib/config';
-import type { Project, VideoTemplate } from '@/types';
+import type { Project, VideoTemplate, VideoTemplateExtras } from '@/types';
 import { getCachedToken, refreshToken } from '@/lib/utils/token-cache';
 
 const API_BASE_URL = config.remotionServerUrl;
@@ -327,6 +327,46 @@ export const renderApi = {
   /**
    * Generate audio files only (for browser preview) - no video render
    */
+  /**
+   * Auto stock image overlays (Freepik) for 2-char – call after generateAudio.
+   */
+  async suggestStockOverlays(
+    projectId: string,
+    body?: {
+      conversations?: Array<{
+        speaker: string;
+        text: string;
+        startMs: number;
+        endMs: number;
+      }>;
+      maxOverlays?: number;
+      mode?: 'per_line' | 'sparse';
+      /** Default true. Set false to use keyword-only search (no OpenAI). */
+      useLlm?: boolean;
+    }
+  ): Promise<{
+    success: boolean;
+    imageOverlays?: Array<{
+      id: string;
+      imageUrl: string;
+      startMs: number;
+      endMs: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      intrinsicSize?: boolean;
+      opacity?: number;
+    }>;
+    count?: number;
+    error?: string;
+  }> {
+    return apiRequest(`/api/projects/${projectId}/stock-overlays`, {
+      method: 'POST',
+      body: JSON.stringify(body || {}),
+    });
+  },
+
   async generateAudio(projectId: string): Promise<{
     success: boolean;
     projectId: string;
@@ -515,6 +555,8 @@ export const templatesApi = {
     characterPositions?: any;
     characterCustomPositions?: Record<string, { x: number; y: number }>;
     playbackRate?: number;
+    /** Selective include flags + snapshots (image overlays, slide-in, extra subtitle fields) */
+    templateExtras?: VideoTemplateExtras;
   }): Promise<{ success: boolean; template: VideoTemplate }> {
     return apiRequest('/api/templates', {
       method: 'POST',
@@ -546,9 +588,306 @@ export const templatesApi = {
 };
 
 /**
+ * Automation sample preview (Remotion `/api/automations/preview`) — can take several minutes for 2-char (TTS).
+ */
+export const automationApi = {
+  async queueGenerateNow(queueItemId: string): Promise<{ success: boolean; [k: string]: any }> {
+    const token = await getAuthToken();
+    const response = await fetch(`${API_BASE_URL}/api/automations/script-queue/generate-now`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ queueItemId }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error((data as { error?: string }).error || 'Generate now failed');
+    }
+    return data as { success: boolean };
+  },
+
+  async queuePostNow(queueItemId: string): Promise<{ success: boolean; [k: string]: any }> {
+    const token = await getAuthToken();
+    const response = await fetch(`${API_BASE_URL}/api/automations/script-queue/post-now`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ queueItemId }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error((data as { error?: string }).error || 'Post now failed');
+    }
+    return data as { success: boolean };
+  },
+
+  async generateCaptionFromScript(
+    script: string,
+    templateName?: string
+  ): Promise<{ success: boolean; caption: string }> {
+    const token = await getAuthToken();
+    const url = `${API_BASE_URL}/api/automations/caption`;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        script: script.trim(),
+        ...(templateName?.trim() ? { templateName: templateName.trim() } : {}),
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        (data as { error?: string }).error || response.statusText || 'Caption generation failed'
+      );
+    }
+    return data as { success: boolean; caption: string };
+  },
+
+  /**
+   * LLM-only: same script generation as automation preview (no video).
+   * POST /api/automations/script
+   */
+  async generateSampleScript(
+    nichePrompt: string,
+    projectType: string | undefined,
+    templateName?: string,
+    templateId?: string
+  ): Promise<{
+    success: boolean;
+    script: string;
+    mode: 'story' | 'two_char';
+  }> {
+    const token = await getAuthToken();
+    const url = `${API_BASE_URL}/api/automations/script`;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        nichePrompt: nichePrompt.trim(),
+        projectType: projectType ?? null,
+        ...(templateName?.trim() ? { templateName: templateName.trim() } : {}),
+        ...(templateId?.trim() ? { templateId: templateId.trim() } : {}),
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        (data as { error?: string }).error || response.statusText || 'Script generation failed'
+      );
+    }
+    return data as {
+      success: boolean;
+      script: string;
+      mode: 'story' | 'two_char';
+    };
+  },
+
+  async previewSample(templateId: string, nichePrompt: string): Promise<{
+    success: boolean;
+    projectId: string;
+    renderJobId: string | null;
+    pipeline: 'story' | 'two_char';
+    error?: string;
+  }> {
+    const token = await getAuthToken();
+    const controller = new AbortController();
+    const timeoutMs = 600000; // 10 min (2-char audio + queue)
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const url = `${API_BASE_URL}/api/automations/preview`;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ templateId, nichePrompt: nichePrompt.trim() }),
+        signal: controller.signal,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          (data as { error?: string }).error || response.statusText || 'Preview request failed'
+        );
+      }
+      return data as {
+        success: boolean;
+        projectId: string;
+        renderJobId: string | null;
+        pipeline: 'story' | 'two_char';
+      };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  },
+
+  /**
+   * End-to-end test: generate video (same as sample) + post Reel to Instagram with caption.
+   * Requires Instagram connected on the Automate page.
+   */
+  async testWorkflow(
+    templateId: string,
+    nichePrompt: string,
+    caption?: string
+  ): Promise<{
+    success: boolean;
+    projectId: string;
+    renderJobId: string | null;
+    pipeline: 'story' | 'two_char';
+    error?: string;
+    code?: string;
+  }> {
+    const token = await getAuthToken();
+    const controller = new AbortController();
+    const timeoutMs = 600000;
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const url = `${API_BASE_URL}/api/automations/test-workflow`;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          templateId,
+          nichePrompt: nichePrompt.trim(),
+          ...(caption != null && String(caption).trim() ? { caption: String(caption).trim() } : {}),
+        }),
+        signal: controller.signal,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          (data as { error?: string }).error || response.statusText || 'Test workflow request failed'
+        );
+      }
+      return data as {
+        success: boolean;
+        projectId: string;
+        renderJobId: string | null;
+        pipeline: 'story' | 'two_char';
+      };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  },
+
+  /**
+   * Post the most recent completed render to Instagram only (no new render). For testing IG integration.
+   */
+  async postLastVideoToInstagram(caption?: string): Promise<{
+    success: boolean;
+    posted?: boolean;
+    mediaId?: string;
+    renderJobId?: string;
+    videoUrl?: string;
+    error?: string;
+    hint?: string;
+    code?: string;
+  }> {
+    const token = await getAuthToken();
+    const url = `${API_BASE_URL}/api/automations/instagram-post-last`;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    // Instagram container polling can take several minutes
+    const controller = new AbortController();
+    const timeoutMs = 12 * 60 * 1000;
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          ...(caption != null && String(caption).trim() ? { caption: String(caption).trim() } : {}),
+        }),
+        signal: controller.signal,
+      });
+      const raw = await response.text();
+      let data: Record<string, unknown> = {};
+      try {
+        data = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      } catch {
+        data = { error: raw || response.statusText };
+      }
+
+      if (!response.ok) {
+        const err =
+          (typeof data.error === 'string' && data.error) ||
+          (data.error && typeof data.error === 'object' && data.error !== null && 'message' in data.error
+            ? String((data.error as { message?: string }).message)
+            : null) ||
+          (typeof data.message === 'string' && data.message) ||
+          `HTTP ${response.status}: ${response.statusText}`;
+        const hint = typeof data.hint === 'string' ? data.hint : '';
+        throw new Error(hint ? `${err}\n\n${hint}` : err);
+      }
+      return data as {
+        success: boolean;
+        posted?: boolean;
+        mediaId?: string;
+        renderJobId?: string;
+        videoUrl?: string;
+        error?: string;
+        hint?: string;
+        code?: string;
+      };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  },
+};
+
+/**
  * Render Jobs API methods
  */
 export const renderJobsApi = {
+  /**
+   * Get a single render job by id (works for story jobs with null project_id)
+   */
+  async getById(jobId: string): Promise<{
+    success: boolean;
+      render_job: {
+      id: string;
+      status: string;
+      progress: number;
+      result_url: string | null;
+      video_url: string | null;
+      error_message: string | null;
+      type?: string;
+      metadata?: Record<string, unknown> | null;
+    };
+  }> {
+    return apiRequest(`/api/render-jobs/${jobId}`);
+  },
+
   /**
    * Get all render jobs for the current user
    */

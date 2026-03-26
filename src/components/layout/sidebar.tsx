@@ -9,6 +9,7 @@ import {
   Clock,
   Shield,
   Calendar,
+  Zap,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -37,6 +38,11 @@ const NAV_ITEMS: NavItem[] = [
     label: "Create",
     href: "/app/create",
     icon: Sparkles,
+  },
+  {
+    label: "Automate",
+    href: "/app/automate",
+    icon: Zap,
   },
   {
     label: "Render Queue",

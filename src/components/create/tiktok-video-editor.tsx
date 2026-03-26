@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo } from "react";
-import { Play, Pause, Plus, Trash2, Type, Palette, Image as ImageIcon, Crop, Move, Gauge } from "lucide-react";
+import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "react";
+import { Play, Pause, Plus, Trash2, Type, Palette, Image as ImageIcon, Crop, Move, Gauge, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,10 +23,12 @@ import {
 } from "@/components/ui/dialog";
 import type { TextOverlay, TextOverlayStyle, RenderStatus, SubtitleSegment, SubtitleStyle, SubtitlePosition, SubtitleFontFamily, ImageOverlay, Character, CharacterSizes, CharacterPositions } from "@/types";
 import { cn } from "@/lib/utils";
+import { getImageOverlaySlideOffsetPx } from "@/lib/utils/image-overlay-slide";
 import { v4 as uuid } from "uuid";
 import { getSubtitleStyle, OUTLINED_STYLE, STYLE_KARAOKE_PINK, STYLE_MAGIC_LOOPS, STYLE_BOLD_GREEN } from "@/lib/data/subtitle-styles";
 import Image from "next/image";
 import { RedditPostOverlay } from "./reddit-post-overlay";
+import { motion } from "framer-motion";
 
 type TikTokVideoEditorProps = {
   videoUrl?: string | null;
@@ -75,6 +77,10 @@ type TikTokVideoEditorProps = {
   onCharacterCustomPositionsChange?: (positions: Record<string, { x: number; y: number }>) => void;
   // Reddit story title overlay
   redditTitle?: string;
+  /** Slide character in from bottom when each script line starts (browser preview). */
+  characterSlideInEnabled?: boolean;
+  /** Play whoosh SFX when slide-in starts (browser preview + final render). */
+  characterSlideInWhooshEnabled?: boolean;
 };
 
 const TEXT_OVERLAY_STYLES: Record<TextOverlayStyle, string> = {
@@ -107,6 +113,14 @@ const TEXT_OVERLAY_STYLES: Record<TextOverlayStyle, string> = {
   stroke: "font-black uppercase tracking-wide",
   "double-outline": "font-black uppercase tracking-wider",
 };
+
+/** Local drag preview only — parent/store updates happen on mouseup for smooth editing (esp. edit mode). */
+type DragPreviewState =
+  | { kind: "text"; id: string; x: number; y: number }
+  | { kind: "image"; id: string; x: number; y: number }
+  | { kind: "subtitle"; x: number; y: number }
+  | { kind: "character"; name: string; x: number; y: number }
+  | null;
 
 const COLOR_PRESETS = [
   { name: "White", value: "#FFFFFF" },
@@ -218,6 +232,8 @@ export const TikTokVideoEditor = ({
   characterCustomPositions,
   onCharacterCustomPositionsChange,
   redditTitle,
+  characterSlideInEnabled = true,
+  characterSlideInWhooshEnabled = false,
 }: TikTokVideoEditorProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -228,6 +244,7 @@ export const TikTokVideoEditor = ({
   const [audioPreloadProgress, setAudioPreloadProgress] = useState(0); // 0-100
   const [isAudioPreloading, setIsAudioPreloading] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
+  const [useVideoClockFallback, setUseVideoClockFallback] = useState(false);
   // In browser preview mode, use merged audio duration, otherwise use video duration
   const actualDurationMs = useMemo(() => {
     if (browserPreviewMode && mergedDurationMs) {
@@ -235,6 +252,10 @@ export const TikTokVideoEditor = ({
     }
     return durationMs || 0;
   }, [browserPreviewMode, mergedDurationMs, durationMs]);
+  const hasSegmentAudioSources = useMemo(
+    () => (audioFiles || []).some((af) => !!af.publicUrl),
+    [audioFiles]
+  );
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
   const [selectedImageOverlayId, setSelectedImageOverlayId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -244,6 +265,41 @@ export const TikTokVideoEditor = ({
   const [isDraggingSubtitle, setIsDraggingSubtitle] = useState(false);
   const [isDraggingCharacter, setIsDraggingCharacter] = useState(false);
   const [draggedCharacterName, setDraggedCharacterName] = useState<string | null>(null);
+  /** During drag: visual position only; committed in handleMouseUp */
+  const [dragPreview, setDragPreview] = useState<DragPreviewState>(null);
+  const dragPreviewRef = useRef<DragPreviewState>(null);
+  /** Always in sync with drag flags + ids for window pointer handlers */
+  const dragMetaRef = useRef({
+    isDragging: false,
+    dragOverlayId: null as string | null,
+    isDraggingImage: false,
+    dragImageOverlayId: null as string | null,
+    isDraggingSubtitle: false,
+    isDraggingCharacter: false,
+    draggedCharacterName: null as string | null,
+  });
+  dragMetaRef.current = {
+    isDragging,
+    dragOverlayId,
+    isDraggingImage,
+    dragImageOverlayId,
+    isDraggingSubtitle,
+    isDraggingCharacter,
+    draggedCharacterName,
+  };
+  /** Latest props for flush on mouseup (avoid stale closure from layout effect) */
+  const latestFlushRef = useRef({
+    textOverlays,
+    imageOverlays,
+    characterCustomPositions,
+    subtitlePosition,
+  });
+  latestFlushRef.current = {
+    textOverlays,
+    imageOverlays,
+    characterCustomPositions,
+    subtitlePosition,
+  };
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showAddImageDialog, setShowAddImageDialog] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(externalPlaybackRate ?? 1);
@@ -325,6 +381,51 @@ export const TikTokVideoEditor = ({
     return null;
   }, [browserPreviewMode, audioFiles, currentTimeMs, characters]);
 
+  /** Current script line index — used to replay slide-in when the speaker line changes. */
+  const activeScriptLineIndex = useMemo(() => {
+    if (!browserPreviewMode || !audioFiles?.length) return -1;
+    return audioFiles.findIndex(
+      (af) => currentTimeMs >= af.startMs && currentTimeMs < af.endMs
+    );
+  }, [browserPreviewMode, audioFiles, currentTimeMs]);
+
+  const prevScriptLineIndexForWhooshRef = useRef<number>(-999);
+
+  // Whoosh SFX when a new line / character slide-in starts (browser preview)
+  useEffect(() => {
+    if (
+      !browserPreviewMode ||
+      !characterSlideInEnabled ||
+      !characterSlideInWhooshEnabled ||
+      !audioFiles?.length
+    ) {
+      prevScriptLineIndexForWhooshRef.current = activeScriptLineIndex;
+      return;
+    }
+    if (activeScriptLineIndex < 0) {
+      prevScriptLineIndexForWhooshRef.current = activeScriptLineIndex;
+      return;
+    }
+    if (activeScriptLineIndex === prevScriptLineIndexForWhooshRef.current) {
+      return;
+    }
+    prevScriptLineIndexForWhooshRef.current = activeScriptLineIndex;
+    try {
+      const audio = new Audio("/sounds/character-slide-whoosh.mp3");
+      // ~3× prior level (0.42); Web Audio caps at 1.0
+      audio.volume = 1;
+      void audio.play();
+    } catch {
+      /* ignore */
+    }
+  }, [
+    activeScriptLineIndex,
+    audioFiles?.length,
+    browserPreviewMode,
+    characterSlideInEnabled,
+    characterSlideInWhooshEnabled,
+  ]);
+
   // Measure container width for character scaling
   useEffect(() => {
     if (!containerRef.current) return;
@@ -389,9 +490,9 @@ export const TikTokVideoEditor = ({
     }
 
     const handleTimeUpdate = () => {
-      // In browser preview mode, don't update currentTimeMs from video
-      // Audio-driven sync handles this more accurately
-      if (!browserPreviewMode) {
+      // In browser preview mode, prefer audio-driven sync.
+      // If audio is unavailable/failed in edit mode, fall back to video clock.
+      if (!browserPreviewMode || useVideoClockFallback) {
         setCurrentTimeMs(video.currentTime * 1000);
       }
     };
@@ -422,7 +523,44 @@ export const TikTokVideoEditor = ({
       video.removeEventListener("pause", handlePause);
       video.removeEventListener("loadedmetadata", handleLoadedMetadata);
     };
-  }, [videoSource, browserPreviewMode, audioFiles]); // Re-run when video source or browser preview mode changes
+  }, [videoSource, browserPreviewMode, audioFiles, useVideoClockFallback]); // Re-run when video source or browser preview mode changes
+
+  useEffect(() => {
+    if (!browserPreviewMode) {
+      setUseVideoClockFallback(false);
+      return;
+    }
+
+    // No merged audio and no per-line audio URLs: use video time in browser mode.
+    if (!mergedAudioUrl && !hasSegmentAudioSources) {
+      setUseVideoClockFallback(true);
+      return;
+    }
+
+    setUseVideoClockFallback(false);
+  }, [browserPreviewMode, mergedAudioUrl, hasSegmentAudioSources]);
+
+  useEffect(() => {
+    if (!browserPreviewMode || !mergedAudioUrl) return;
+
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handleAudioUnavailable = () => {
+      console.warn("⚠️ Merged audio unavailable, switching to video-time fallback");
+      setUseVideoClockFallback(true);
+    };
+
+    audio.addEventListener("error", handleAudioUnavailable);
+    audio.addEventListener("stalled", handleAudioUnavailable);
+    audio.addEventListener("abort", handleAudioUnavailable);
+
+    return () => {
+      audio.removeEventListener("error", handleAudioUnavailable);
+      audio.removeEventListener("stalled", handleAudioUnavailable);
+      audio.removeEventListener("abort", handleAudioUnavailable);
+    };
+  }, [browserPreviewMode, mergedAudioUrl, audioRef.current]);
 
   // Sync external playback rate
   useEffect(() => {
@@ -455,58 +593,67 @@ export const TikTokVideoEditor = ({
     });
   }, [playbackRate]);
 
-  // Preload merged audio file or individual audio files in browser preview mode
-  useEffect(() => {
-    // If we have merged audio, use that instead of multiple files
-    if (browserPreviewMode && mergedAudioUrl) {
-      console.log("🎵 Using merged audio file:", mergedAudioUrl);
-      setIsAudioPreloading(true);
-      setAudioPreloadProgress(0);
-      
-      // Preload merged audio
-      const audio = audioRef.current;
-      if (audio) {
-        audio.src = mergedAudioUrl;
-        audio.preload = 'auto';
-        audio.playbackRate = playbackRate; // Apply current playback rate
-        audio.load();
-        
-        const handleCanPlayThrough = () => {
-          setIsAudioPreloading(false);
-          setAudioPreloadProgress(100);
-          console.log("✅ Merged audio file ready!");
-          audio.removeEventListener('canplaythrough', handleCanPlayThrough);
-          audio.removeEventListener('canplay', handleCanPlay);
-        };
-        
-        const handleCanPlay = () => {
-          if (audio.readyState >= 2) {
-            setIsAudioPreloading(false);
-            setAudioPreloadProgress(100);
-            console.log("✅ Merged audio file ready to play!");
-          }
-        };
-        
-        const handleError = (e: Event) => {
-          console.error("❌ Failed to load merged audio:", e);
-          setIsAudioPreloading(false);
-          setAudioPreloadProgress(0);
-          audio.removeEventListener('error', handleError);
-        };
-        
-        audio.addEventListener('canplaythrough', handleCanPlayThrough);
-        audio.addEventListener('canplay', handleCanPlay);
-        audio.addEventListener('error', handleError);
-        
-        return () => {
-          audio.removeEventListener('canplaythrough', handleCanPlayThrough);
-          audio.removeEventListener('canplay', handleCanPlay);
-          audio.removeEventListener('error', handleError);
-        };
-      }
+  // Merged audio: run after DOM commit so <audio ref> exists (avoids isAudioPreloading stuck true + disabled play)
+  useLayoutEffect(() => {
+    if (!browserPreviewMode || !mergedAudioUrl) {
       return;
     }
-    
+    console.log("🎵 Using merged audio file:", mergedAudioUrl);
+    setIsAudioPreloading(true);
+    setAudioPreloadProgress(0);
+
+    const audio = audioRef.current;
+    if (!audio) {
+      console.warn("Merged audio: <audio> ref missing after layout — clearing preload lock");
+      setIsAudioPreloading(false);
+      return;
+    }
+
+    audio.src = mergedAudioUrl;
+    audio.preload = "auto";
+    audio.playbackRate = playbackRate;
+    audio.load();
+
+    const handleCanPlayThrough = () => {
+      setIsAudioPreloading(false);
+      setAudioPreloadProgress(100);
+      console.log("✅ Merged audio file ready!");
+      audio.removeEventListener("canplaythrough", handleCanPlayThrough);
+      audio.removeEventListener("canplay", handleCanPlay);
+    };
+
+    const handleCanPlay = () => {
+      if (audio.readyState >= 2) {
+        setIsAudioPreloading(false);
+        setAudioPreloadProgress(100);
+        console.log("✅ Merged audio file ready to play!");
+      }
+    };
+
+    const handleError = (e: Event) => {
+      console.error("❌ Failed to load merged audio:", e);
+      setIsAudioPreloading(false);
+      setAudioPreloadProgress(0);
+      audio.removeEventListener("error", handleError);
+    };
+
+    audio.addEventListener("canplaythrough", handleCanPlayThrough);
+    audio.addEventListener("canplay", handleCanPlay);
+    audio.addEventListener("error", handleError);
+
+    return () => {
+      audio.removeEventListener("canplaythrough", handleCanPlayThrough);
+      audio.removeEventListener("canplay", handleCanPlay);
+      audio.removeEventListener("error", handleError);
+    };
+  }, [browserPreviewMode, mergedAudioUrl, playbackRate]);
+
+  // Preload individual audio files in browser preview mode (when no merged file)
+  useEffect(() => {
+    if (browserPreviewMode && mergedAudioUrl) {
+      return;
+    }
+
     // Fallback to multiple audio files if merged audio not available
     if (!browserPreviewMode || !audioFiles || audioFiles.length === 0) {
       // Clean up preloaded audio elements when not in browser preview mode
@@ -640,7 +787,7 @@ export const TikTokVideoEditor = ({
       setIsAudioPreloading(false);
       setAudioPreloadProgress(0);
     };
-  }, [browserPreviewMode, audioFiles, mergedAudioUrl]);
+  }, [browserPreviewMode, audioFiles, mergedAudioUrl, playbackRate]);
 
   // Browser preview mode: Sync audio with video playback
   // Use merged audio if available, otherwise use multiple files
@@ -1416,6 +1563,7 @@ export const TikTokVideoEditor = ({
       if (audio && browserPreviewMode && mergedAudioUrl && audio.readyState >= 2) {
         audio.play().catch(err => {
           console.error("❌ Failed to play merged audio:", err);
+          setUseVideoClockFallback(true);
         });
       }
     }
@@ -1573,6 +1721,23 @@ export const TikTokVideoEditor = ({
     }
   };
 
+  /** Copy slide-in from the currently selected image to every image overlay. */
+  const applySlideInToAllImages = () => {
+    if (!onImageOverlaysChange || imageOverlays.length === 0 || !selectedImageOverlay) return;
+    const from = selectedImageOverlay.slideInFrom ?? null;
+    const durationMs =
+      from === "left" || from === "right"
+        ? (selectedImageOverlay.slideInDurationMs ?? 400)
+        : undefined;
+    onImageOverlaysChange(
+      imageOverlays.map((o) => ({
+        ...o,
+        slideInFrom: from,
+        slideInDurationMs: durationMs,
+      }))
+    );
+  };
+
   const handleVideoClick = (e: React.MouseEvent<HTMLDivElement>) => {
     // Don't handle clicks during dragging
     if (isDragging || isDraggingSubtitle || isDraggingImage || isDraggingCharacter) return;
@@ -1595,6 +1760,8 @@ export const TikTokVideoEditor = ({
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>, overlayId: string) => {
     e.stopPropagation();
     e.preventDefault();
+    setDragPreview(null);
+    dragPreviewRef.current = null;
     // Ensure subtitle and image dragging is off when starting text overlay drag
     setIsDraggingSubtitle(false);
     setIsDraggingImage(false);
@@ -1607,6 +1774,8 @@ export const TikTokVideoEditor = ({
   const handleImageMouseDown = (e: React.MouseEvent<HTMLDivElement>, overlayId: string) => {
     e.stopPropagation();
     e.preventDefault();
+    setDragPreview(null);
+    dragPreviewRef.current = null;
     // Ensure subtitle and text dragging is off when starting image overlay drag
     setIsDraggingSubtitle(false);
     setIsDragging(false);
@@ -1619,6 +1788,8 @@ export const TikTokVideoEditor = ({
   const handleSubtitleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     e.stopPropagation();
     e.preventDefault();
+    setDragPreview(null);
+    dragPreviewRef.current = null;
     // Ensure overlay dragging is off when starting subtitle drag
     setIsDragging(false);
     setDragOverlayId(null);
@@ -1632,6 +1803,8 @@ export const TikTokVideoEditor = ({
   const handleCharacterMouseDown = (e: React.MouseEvent<HTMLDivElement>, characterName: string) => {
     e.stopPropagation();
     e.preventDefault();
+    setDragPreview(null);
+    dragPreviewRef.current = null;
     // Ensure other dragging is off when starting character drag
     setIsDragging(false);
     setDragOverlayId(null);
@@ -1642,56 +1815,56 @@ export const TikTokVideoEditor = ({
     setDraggedCharacterName(characterName);
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+  /** Pointer position → local drag preview only (parent notified on mouseup). */
+  const applyDragAtClient = (clientX: number, clientY: number) => {
+    const d = dragMetaRef.current;
     if (!containerRef.current) return;
-    
-    // Only handle one type of dragging at a time
-    if (!isDragging && !isDraggingSubtitle && !isDraggingImage && !isDraggingCharacter) return;
+    if (!d.isDragging && !d.isDraggingImage && !d.isDraggingSubtitle && !d.isDraggingCharacter) return;
 
     const rect = containerRef.current.getBoundingClientRect();
-    let x = ((e.clientX - rect.left) / rect.width) * 100;
-    let y = ((e.clientY - rect.top) / rect.height) * 100;
-
-    // Clamp values to keep content within bounds (0-100%)
+    let x = ((clientX - rect.left) / rect.width) * 100;
+    let y = ((clientY - rect.top) / rect.height) * 100;
     x = Math.max(0, Math.min(100, x));
     y = Math.max(0, Math.min(100, y));
 
-    // Handle text overlay dragging
-    if (isDragging && dragOverlayId && !isDraggingSubtitle && !isDraggingImage && !isDraggingCharacter) {
-      updateOverlay(dragOverlayId, { x, y });
-      return;
+    let next: DragPreviewState = null;
+
+    if (d.isDragging && d.dragOverlayId && !d.isDraggingSubtitle && !d.isDraggingImage && !d.isDraggingCharacter) {
+      next = { kind: "text", id: d.dragOverlayId, x, y };
+    } else if (
+      d.isDraggingImage &&
+      d.dragImageOverlayId &&
+      !d.isDragging &&
+      !d.isDraggingSubtitle &&
+      !d.isDraggingCharacter
+    ) {
+      next = { kind: "image", id: d.dragImageOverlayId, x, y };
+    } else if (d.isDraggingSubtitle && !d.isDragging && !d.isDraggingImage && !d.isDraggingCharacter) {
+      next = { kind: "subtitle", x, y };
+    } else if (
+      d.isDraggingCharacter &&
+      d.draggedCharacterName &&
+      !d.isDragging &&
+      !d.isDraggingSubtitle &&
+      !d.isDraggingImage
+    ) {
+      next = { kind: "character", name: d.draggedCharacterName, x, y };
     }
 
-    // Handle image overlay dragging
-    if (isDraggingImage && dragImageOverlayId && !isDragging && !isDraggingSubtitle && !isDraggingCharacter) {
-      updateImageOverlay(dragImageOverlayId, { x, y });
-      return;
-    }
-
-    // Handle subtitle dragging
-    if (isDraggingSubtitle && !isDragging && !isDraggingImage && !isDraggingCharacter && onSubtitlePositionChange) {
-      onSubtitlePositionChange({ x, y });
-      return;
-    }
-
-    // Handle character dragging - use free-form x/y positioning
-    if (isDraggingCharacter && draggedCharacterName && !isDragging && !isDraggingSubtitle && !isDraggingImage && onCharacterCustomPositionsChange) {
-      // Update custom position with x/y coordinates
-      const currentCustomPositions = characterCustomPositions || {};
-      const newCustomPositions = {
-        ...currentCustomPositions,
-        [draggedCharacterName]: { x, y },
-      };
-      console.log('📍 Character custom position updated:', {
-        character: draggedCharacterName,
-        position: { x, y },
-        allPositions: newCustomPositions,
-      });
-      onCharacterCustomPositionsChange(newCustomPositions);
+    if (next) {
+      dragPreviewRef.current = next;
+      setDragPreview(next);
     }
   };
 
+  const applyDragAtClientRef = useRef(applyDragAtClient);
+  applyDragAtClientRef.current = applyDragAtClient;
+
   const handleMouseUp = () => {
+    const p = dragPreviewRef.current;
+    dragPreviewRef.current = null;
+    setDragPreview(null);
+
     setIsDragging(false);
     setDragOverlayId(null);
     setIsDraggingImage(false);
@@ -1699,25 +1872,61 @@ export const TikTokVideoEditor = ({
     setIsDraggingSubtitle(false);
     setIsDraggingCharacter(false);
     setDraggedCharacterName(null);
+
+    if (!p) return;
+
+    const props = latestFlushRef.current;
+
+    if (p.kind === "text") {
+      onTextOverlaysChange(
+        props.textOverlays.map((o) => (o.id === p.id ? { ...o, x: p.x, y: p.y } : o))
+      );
+    } else if (p.kind === "image" && onImageOverlaysChange) {
+      onImageOverlaysChange(
+        props.imageOverlays.map((o) => (o.id === p.id ? { ...o, x: p.x, y: p.y } : o))
+      );
+    } else if (p.kind === "subtitle" && onSubtitlePositionChange) {
+      onSubtitlePositionChange({ x: p.x, y: p.y });
+    } else if (p.kind === "character" && onCharacterCustomPositionsChange) {
+      onCharacterCustomPositionsChange({
+        ...(props.characterCustomPositions || {}),
+        [p.name]: { x: p.x, y: p.y },
+      });
+    }
   };
 
-  // Global mouse up handler
-  useEffect(() => {
-    const handleGlobalMouseUp = () => {
-      setIsDragging(false);
-      setDragOverlayId(null);
-      setIsDraggingImage(false);
-      setDragImageOverlayId(null);
-      setIsDraggingSubtitle(false);
-      setIsDraggingCharacter(false);
-      setDraggedCharacterName(null);
-    };
+  const handleMouseUpRef = useRef(handleMouseUp);
+  handleMouseUpRef.current = handleMouseUp;
 
-    if (isDragging || isDraggingSubtitle || isDraggingImage || isDraggingCharacter) {
-      window.addEventListener('mouseup', handleGlobalMouseUp);
-      return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
-    }
-  }, [isDragging, isDraggingSubtitle, isDraggingImage, isDraggingCharacter]);
+  const draggingAny =
+    isDragging || isDraggingSubtitle || isDraggingImage || isDraggingCharacter;
+
+  useLayoutEffect(() => {
+    if (!draggingAny) return;
+
+    const onMove = (e: MouseEvent) => {
+      e.preventDefault();
+      applyDragAtClientRef.current(e.clientX, e.clientY);
+    };
+    const onUp = () => handleMouseUpRef.current();
+
+    window.addEventListener("mousemove", onMove, { passive: false });
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("blur", onUp);
+
+    const prevUserSelect = document.body.style.userSelect;
+    const prevCursor = document.body.style.cursor;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "grabbing";
+
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("blur", onUp);
+      document.body.style.userSelect = prevUserSelect;
+      document.body.style.cursor = prevCursor;
+    };
+  }, [draggingAny]);
 
   const formatTime = (ms: number) => {
     const seconds = Math.floor(ms / 1000);
@@ -2006,9 +2215,7 @@ export const TikTokVideoEditor = ({
           isDragging && "cursor-grabbing"
         )}
         onClick={handleVideoClick}
-        onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
       >
         <video
           key={videoSource || 'video'} // Force re-render when source changes
@@ -2047,14 +2254,15 @@ export const TikTokVideoEditor = ({
             key={overlay.id}
             data-overlay-element="true"
             className={cn(
-              "absolute select-none transition-all",
+              "absolute select-none",
+              isDragging && dragOverlayId === overlay.id ? "transition-none" : "transition-all",
               dragOverlayId === overlay.id ? "cursor-grabbing" : "cursor-grab",
               selectedOverlayId === overlay.id && "ring-2 ring-primary ring-offset-2",
               isDragging && dragOverlayId === overlay.id && "opacity-90 scale-105"
             )}
             style={{
-              left: `${overlay.x}%`,
-              top: `${overlay.y}%`,
+              left: `${dragPreview?.kind === "text" && dragPreview.id === overlay.id ? dragPreview.x : overlay.x}%`,
+              top: `${dragPreview?.kind === "text" && dragPreview.id === overlay.id ? dragPreview.y : overlay.y}%`,
               transform: "translate(-50%, -50%)",
               width: "95%",
               maxWidth: "95%",
@@ -2086,22 +2294,46 @@ export const TikTokVideoEditor = ({
         ))}
 
         {/* Render active image overlays */}
-        {activeImageOverlays.map((overlay) => (
+        {activeImageOverlays.map((overlay) => {
+          const intrinsicLogo = overlay.intrinsicSize === true;
+          const slideW =
+            containerWidth > 0
+              ? containerWidth
+              : videoRef.current?.offsetWidth || videoRef.current?.clientWidth || 448;
+          const slidePx =
+            !(isDraggingImage && dragImageOverlayId === overlay.id)
+              ? getImageOverlaySlideOffsetPx(overlay, currentTimeMs, slideW)
+              : 0;
+          const hasSlide =
+            overlay.slideInFrom === "left" || overlay.slideInFrom === "right";
+          return (
           <div
             key={overlay.id}
             data-image-overlay-element="true"
             className={cn(
-              "absolute select-none transition-all",
+              "absolute select-none",
+              (isDraggingImage && dragImageOverlayId === overlay.id) || hasSlide
+                ? "transition-none"
+                : "transition-all",
               dragImageOverlayId === overlay.id ? "cursor-grabbing" : "cursor-grab",
               selectedImageOverlayId === overlay.id && "ring-2 ring-primary ring-offset-2",
               isDraggingImage && dragImageOverlayId === overlay.id && "opacity-90 scale-105"
             )}
             style={{
-              left: `${overlay.x}%`,
-              top: `${overlay.y}%`,
-              transform: "translate(-50%, -50%)",
-              width: `${overlay.width}%`,
-              height: `${overlay.height}%`,
+              left: `${dragPreview?.kind === "image" && dragPreview.id === overlay.id ? dragPreview.x : overlay.x}%`,
+              top: `${dragPreview?.kind === "image" && dragPreview.id === overlay.id ? dragPreview.y : overlay.y}%`,
+              transform: `translate(calc(-50% + ${slidePx}px), -50%)`,
+              ...(intrinsicLogo
+                ? {
+                    width: "auto",
+                    height: "auto",
+                    maxWidth: "55%",
+                    maxHeight: "42%",
+                  }
+                : {
+                    width: `${overlay.width}%`,
+                    height: `${overlay.height}%`,
+                  }),
               opacity: overlay.opacity ?? 1,
               pointerEvents: isDraggingImage && dragImageOverlayId !== overlay.id ? "none" : "auto",
               zIndex: isDraggingImage && dragImageOverlayId === overlay.id ? 50 : 25,
@@ -2114,7 +2346,16 @@ export const TikTokVideoEditor = ({
               }
             }}
           >
-            <div className="relative w-full h-full">
+            {intrinsicLogo ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={overlay.imageUrl}
+                alt="Logo overlay"
+                className="block max-h-[42vh] w-auto max-w-[min(55vw,100%)] object-contain"
+                draggable={false}
+              />
+            ) : (
+            <div className="relative h-full w-full">
               <Image
                 src={overlay.imageUrl}
                 alt="Image overlay"
@@ -2123,8 +2364,10 @@ export const TikTokVideoEditor = ({
                 unoptimized
               />
             </div>
+            )}
           </div>
-        ))}
+          );
+        })}
 
         {/* Reddit Post Overlay - Show during first narration segment (title) */}
         {redditTitle && subtitles.length > 0 && (
@@ -2190,19 +2433,12 @@ export const TikTokVideoEditor = ({
             const scaledWidth = Math.round(remotionSize.width * scaleFactor);
             const scaledHeight = Math.round(remotionSize.height * scaleFactor);
             
-            // Debug logging - check browser console to verify scaling
-            console.log('🎭 Character scaling:', {
-              speakerName,
-              remotionSize: { width: remotionSize.width, height: remotionSize.height },
-              containerWidth,
-              effectiveWidth,
-              REMOTION_WIDTH,
-              scaleFactor: scaleFactor.toFixed(4),
-              scaledSize: { width: scaledWidth, height: scaledHeight },
-            });
-            
             // Check if we have custom position (x/y coordinates) for this character
-            const customPosition = characterCustomPositions?.[speakerName];
+            const dragChar =
+              dragPreview?.kind === "character" && dragPreview.name === speakerName
+                ? { x: dragPreview.x, y: dragPreview.y }
+                : null;
+            const customPosition = dragChar ?? characterCustomPositions?.[speakerName];
             
             let left: string | undefined;
             let right: string | undefined;
@@ -2247,17 +2483,34 @@ export const TikTokVideoEditor = ({
             const shouldFlip = !customPosition && characterPositions?.[speakerName as keyof CharacterPositions] === 'right';
             const transform = `${transformX} ${transformY} ${shouldFlip ? 'scaleX(-1)' : ''}`.trim();
             
+            const characterInner = (
+                <Image
+                  src={character.avatarUrl}
+                  alt={speakerName}
+                  width={scaledWidth}
+                  height={scaledHeight}
+                  className="object-contain"
+                  unoptimized
+                />
+            );
+
+            const canDragCharacter = !!(
+              onCharacterPositionsChange || onCharacterCustomPositionsChange
+            );
+            const isThisCharacterDragging =
+              isDraggingCharacter && draggedCharacterName === speakerName;
+
             return (
               <div
-                key={`character-${speakerName}-${currentTimeMs}`}
+                key={`character-${speakerName}-${activeScriptLineIndex}`}
                 data-character-element="true"
                 className={cn(
-                  "absolute z-10 transition-opacity duration-200",
-                  isDraggingCharacter && draggedCharacterName === speakerName 
-                    ? "cursor-grabbing opacity-90 scale-105 pointer-events-auto" 
-                    : (onCharacterPositionsChange || onCharacterCustomPositionsChange)
-                    ? "cursor-grab pointer-events-auto" 
-                    : "pointer-events-none"
+                  "absolute z-10",
+                  isThisCharacterDragging
+                    ? "transition-none cursor-grabbing opacity-90 scale-105 pointer-events-auto"
+                    : "transition-opacity duration-200",
+                  !isThisCharacterDragging && canDragCharacter && "cursor-grab pointer-events-auto",
+                  !isThisCharacterDragging && !canDragCharacter && "pointer-events-none"
                 )}
                 style={{
                   position: 'absolute', // Explicitly set to match Remotion
@@ -2280,14 +2533,21 @@ export const TikTokVideoEditor = ({
                   e.stopPropagation();
                 }}
               >
-                <Image
-                  src={character.avatarUrl}
-                  alt={speakerName}
-                  width={scaledWidth}
-                  height={scaledHeight}
-                  className="object-contain"
-                  unoptimized
-                />
+                {characterSlideInEnabled &&
+                activeScriptLineIndex >= 0 &&
+                !(isDraggingCharacter && draggedCharacterName === speakerName) ? (
+                  <motion.div
+                    key={`slide-${activeScriptLineIndex}`}
+                    initial={{ y: "30vh" }}
+                    animate={{ y: 0 }}
+                    transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                    className="flex h-full w-full items-center justify-center overflow-visible"
+                  >
+                    {characterInner}
+                  </motion.div>
+                ) : (
+                  characterInner
+                )}
               </div>
             );
           })()
@@ -2298,12 +2558,12 @@ export const TikTokVideoEditor = ({
           <div
             data-subtitle-element="true"
             className={cn(
-              "absolute cursor-grab select-none transition-all",
-              isDraggingSubtitle && "cursor-grabbing opacity-90 scale-105"
+              "absolute cursor-grab select-none",
+              isDraggingSubtitle ? "transition-none cursor-grabbing opacity-90 scale-105" : "transition-all"
             )}
             style={{
-              left: `${subtitlePosition.x}%`,
-              top: `${subtitlePosition.y}%`,
+              left: `${dragPreview?.kind === "subtitle" ? dragPreview.x : subtitlePosition.x}%`,
+              top: `${dragPreview?.kind === "subtitle" ? dragPreview.y : subtitlePosition.y}%`,
               transform: "translate(-50%, -50%)",
               width: "95%",
               maxWidth: "95%",
@@ -2842,12 +3102,12 @@ export const TikTokVideoEditor = ({
                 )}
                 onClick={() => setSelectedImageOverlayId(overlay.id)}
               >
-                <div className="relative h-12 w-12 flex-shrink-0 rounded-lg border overflow-hidden">
+                <div className="relative h-12 w-12 flex-shrink-0 rounded-lg border overflow-hidden bg-muted/30">
                   <Image
                     src={overlay.imageUrl}
                     alt="Image overlay"
                     fill
-                    className="object-cover"
+                    className="object-contain"
                     unoptimized
                   />
                 </div>
@@ -3010,6 +3270,63 @@ export const TikTokVideoEditor = ({
                 />
               </div>
             </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label className="text-xs">Slide in</Label>
+                <Select
+                  value={selectedImageOverlay.slideInFrom ?? "none"}
+                  onValueChange={(v) =>
+                    updateImageOverlay(selectedImageOverlay.id, {
+                      slideInFrom: v === "none" ? null : (v as "left" | "right"),
+                    })
+                  }
+                >
+                  <SelectTrigger className="h-9 rounded-xl">
+                    <SelectValue placeholder="None" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    <SelectItem value="left">From left</SelectItem>
+                    <SelectItem value="right">From right</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Animates in when the overlay first appears on the timeline.
+                </p>
+              </div>
+              {(selectedImageOverlay.slideInFrom === "left" ||
+                selectedImageOverlay.slideInFrom === "right") && (
+                <div className="space-y-2">
+                  <Label className="text-xs">
+                    Slide duration: {selectedImageOverlay.slideInDurationMs ?? 400} ms
+                  </Label>
+                  <div className="pr-2">
+                    <Slider
+                      value={[selectedImageOverlay.slideInDurationMs ?? 400]}
+                      onValueChange={([v]) =>
+                        updateImageOverlay(selectedImageOverlay.id, { slideInDurationMs: v })
+                      }
+                      min={150}
+                      max={1500}
+                      step={50}
+                      className="w-full"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+            {imageOverlays.length > 1 && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full gap-2 rounded-xl"
+                onClick={applySlideInToAllImages}
+              >
+                <Copy className="h-3.5 w-3.5" />
+                Apply slide-in settings to all {imageOverlays.length} images
+              </Button>
+            )}
           </div>
         </div>
       )}

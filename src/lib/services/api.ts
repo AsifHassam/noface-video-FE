@@ -62,8 +62,8 @@ export const api = {
   async deleteProject(id: string) {
     useProjectStore.getState().deleteProject(id);
   },
-  async enqueuePreview(id?: string) {
-    useProjectStore.getState().enqueuePreview(id);
+  async enqueuePreview(id?: string, options?: { includeStockImages?: boolean }) {
+    useProjectStore.getState().enqueuePreview(id, undefined, options);
   },
   async simulateRender(id?: string) {
     useProjectStore.getState().simulateRender(id);

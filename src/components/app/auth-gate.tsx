@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { supabase } from "@/lib/supabase";
@@ -9,6 +9,7 @@ import { clearCachedToken } from "@/lib/utils/token-cache";
 
 export const AuthGate = ({ children }: { children: React.ReactNode }) => {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, loading, initialize } = useAuthStore();
 
   // Initialize auth if not already initialized (redundant but safe -
@@ -43,6 +44,39 @@ export const AuthGate = ({ children }: { children: React.ReactNode }) => {
       router.replace("/");
     }
   }, [loading, router, user]);
+
+  // Debug auth on every in-app route change so we can trace auth hydration issues.
+  useEffect(() => {
+    const logGetUser = async () => {
+      const startedAt = Date.now();
+      try {
+        const result = await Promise.race([
+          supabase.auth.getUser(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("auth_getUser_timeout")), 10000)
+          ),
+        ]);
+        const userId = (result as any)?.data?.user?.id ?? null;
+        const email = (result as any)?.data?.user?.email ?? null;
+        const error = (result as any)?.error ?? null;
+        console.log("[AuthGate/getUser]", {
+          pathname,
+          elapsedMs: Date.now() - startedAt,
+          userId,
+          email,
+          hasError: !!error,
+          errorMessage: error?.message || null,
+        });
+      } catch (error) {
+        console.error("[AuthGate/getUser] failed", {
+          pathname,
+          elapsedMs: Date.now() - startedAt,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+    logGetUser();
+  }, [pathname]);
 
   if (loading || !user) {
     return (

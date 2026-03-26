@@ -19,9 +19,13 @@ import { RenderWaitGame } from "@/components/create/RenderWaitGame";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { config } from "@/lib/config";
 import { SaveTemplateDialog } from "@/components/create/save-template-dialog";
+import { buildTemplateExtras, type TemplateIncludeFlags } from "@/lib/template-includes";
 import { templatesApi } from "@/lib/api/projects";
 import { subscriptionApi } from "@/lib/api/subscription";
 import { getBackgrounds } from "@/lib/data/backgrounds-api";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import type { ImageOverlay } from "@/types";
 
 const steps = [
   { label: "Step 1", description: "Pick two characters" },
@@ -29,6 +33,53 @@ const steps = [
   { label: "Step 3", description: "Choose gameplay background" },
   { label: "Step 4", description: "Preview & edit" },
 ];
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
+
+const toNumberOr = (value: unknown, fallback: number): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const isLikelySvgUrl = (url: string): boolean => {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  return lower.includes(".svg") || lower.includes("format=svg");
+};
+
+const normalizeStockOverlays = (
+  overlays: unknown[],
+  durationFallbackMs: number
+): ImageOverlay[] => {
+  return overlays
+    .map((raw, idx) => {
+      const item = (raw || {}) as Partial<ImageOverlay>;
+      const imageUrl = typeof item.imageUrl === "string" ? item.imageUrl.trim() : "";
+      if (!imageUrl || (!imageUrl.startsWith("http") && !imageUrl.startsWith("data:"))) {
+        return null;
+      }
+
+      const startMs = Math.max(0, Math.round(toNumberOr(item.startMs, 0)));
+      const defaultEnd = Math.max(startMs + 1, startMs + durationFallbackMs);
+      const endMs = Math.max(startMs + 1, Math.round(toNumberOr(item.endMs, defaultEnd)));
+
+      return {
+        id: typeof item.id === "string" && item.id.trim().length > 0 ? item.id : `stock-${Date.now()}-${idx}`,
+        imageUrl,
+        startMs,
+        endMs,
+        x: clamp(toNumberOr(item.x, 50), 0, 100),
+        y: clamp(toNumberOr(item.y, 26), 0, 100),
+        width: clamp(toNumberOr(item.width, 46), 0, 100),
+        height: clamp(toNumberOr(item.height, 28), 0, 100),
+        // SVG sources can trip Next/Image in some setups; render them with plain <img> branch.
+        intrinsicSize: item.intrinsicSize === true || isLikelySvgUrl(imageUrl),
+        opacity: clamp(toNumberOr(item.opacity, 1), 0, 1),
+      } as ImageOverlay;
+    })
+    .filter((overlay): overlay is ImageOverlay => overlay !== null);
+};
 
 export default function PreviewPage() {
   const router = useRouter();
@@ -97,6 +148,7 @@ export default function PreviewPage() {
   const [showSubtitles, setShowSubtitles] = useState(false);
   const [isSubtitlesExpanded, setIsSubtitlesExpanded] = useState(false); // Initially closed
   const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
+  const [isAddingMagicStockImages, setIsAddingMagicStockImages] = useState(false);
   const [isRenderingFinal, setIsRenderingFinal] = useState(false);
   const [isCharacterSettingsExpanded, setIsCharacterSettingsExpanded] = useState(false); // Initially collapsed
   const [isSaveTemplateOpen, setIsSaveTemplateOpen] = useState(false);
@@ -104,8 +156,12 @@ export default function PreviewPage() {
   const [userCredits, setUserCredits] = useState<number | null>(null);
   
   // Check if preview has been generated (user can interact with controls)
-  // Preview is ready if we have audioFiles (browser preview) OR previewUrl (rendered video)
-  const hasPreview = !!draft?.previewUrl || (!!draft?.audioFiles && draft.audioFiles.length > 0);
+  // Preview is ready if we have merged audio, per-line audioFiles (browser preview), OR previewUrl (rendered video).
+  // Edit mode often loads mergedAudioUrl from DB while audioFiles may be empty — must still count as "has preview".
+  const hasPreview =
+    !!draft?.previewUrl ||
+    (!!draft?.audioFiles && draft.audioFiles.length > 0) ||
+    !!draft?.mergedAudioUrl;
   const isInitialState = !hasPreview && !isGeneratingPreview; // Disable everything except preview button
   
   // Status: READY if we have audioFiles (browser preview) or previewUrl (rendered video)
@@ -157,6 +213,34 @@ export default function PreviewPage() {
     const segments = parseSrtText(subtitleText);
     return segments;
   }, [subtitleText, showSubtitles]);
+
+  const effectiveAudioFiles = useMemo(() => {
+    if (draft?.audioFiles && draft.audioFiles.length > 0) {
+      return draft.audioFiles;
+    }
+
+    // Edit-mode fallback: reconstruct timing windows from subtitles so speaker/avatar switching still works.
+    if (!subtitleSegments || subtitleSegments.length === 0) {
+      return [];
+    }
+
+    return subtitleSegments.map((segment) => ({
+      speaker: segment.speaker,
+      text: segment.text,
+      publicUrl: null,
+      startMs: segment.startMs,
+      endMs: segment.endMs,
+      durationMs: Math.max(1, segment.endMs - segment.startMs),
+    }));
+  }, [draft?.audioFiles, subtitleSegments]);
+
+  const shouldUseBrowserPreviewMode = useMemo(() => {
+    if (!effectiveAudioFiles.length) return false;
+    return Boolean(
+      draft?.mergedAudioUrl ||
+      effectiveAudioFiles.some((af) => !!af.publicUrl)
+    );
+  }, [draft?.mergedAudioUrl, effectiveAudioFiles]);
 
   // Reset generating state when render completes or fails
   useEffect(() => {
@@ -250,7 +334,9 @@ export default function PreviewPage() {
       const projectId = (isEditing && draft?.id && draft?.previewUrl) ? draft.id : undefined;
       const userId = user?.id || undefined;
       
-      await enqueuePreview(projectId, userId);
+      await enqueuePreview(projectId, userId, {
+        includeStockImages: false,
+      });
       // Don't show success here - it will be shown when the job actually completes
       // Don't set isGeneratingPreview to false here - let it stay true so the game shows
       // The useEffect will reset it when status becomes READY or FAILED
@@ -284,6 +370,64 @@ export default function PreviewPage() {
     }
   };
 
+  const handleAddMagicStockImages = async () => {
+    if (!draft?.id) {
+      toast.error("Generate preview first.");
+      return;
+    }
+
+    // We need real timing windows for overlays.
+    const conversations = (draft?.audioFiles || [])
+      .filter((a) => typeof a.startMs === "number" && typeof a.endMs === "number")
+      .map((a) => ({
+        speaker: a.speaker,
+        text: a.text,
+        startMs: a.startMs,
+        endMs: a.endMs,
+      }));
+
+    if (conversations.length === 0) {
+      toast.error("No timed audio found yet. Generate preview first.");
+      return;
+    }
+
+    try {
+      setIsAddingMagicStockImages(true);
+      const { renderApi } = await import("@/lib/api/projects");
+      const stockRes = await renderApi.suggestStockOverlays(draft.id, {
+        conversations,
+        maxOverlays: 20,
+        mode: "per_line",
+        useLlm: true,
+      });
+
+      if (!stockRes.success) {
+        throw new Error(stockRes.error || "Failed to generate stock images");
+      }
+
+      const stockOverlays = normalizeStockOverlays(
+        stockRes.imageOverlays || [],
+        2500
+      );
+      const prev = draft.imageOverlays || [];
+      const withoutOldStock = prev.filter((o) => !o.id.startsWith("stock-"));
+      const merged = [...withoutOldStock, ...stockOverlays];
+
+      updateDraft({ imageOverlays: merged });
+      await updateProject(draft.id, { imageOverlays: merged } as any).catch(() => {});
+
+      toast.success(
+        stockOverlays.length > 0
+          ? `Magic stock images added (${stockOverlays.length})`
+          : "No matching stock images found"
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to add stock images");
+    } finally {
+      setIsAddingMagicStockImages(false);
+    }
+  };
+
   const handleRenderFinal = async () => {
     // Check if project exists in edit mode (draft.id is set after load; projectIdFromUrl supports refresh)
     const projectId = projectIdFromUrl || draft?.id;
@@ -308,7 +452,11 @@ export default function PreviewPage() {
     }
   };
 
-  const handleSaveTemplate = async (name: string, description?: string) => {
+  const handleSaveTemplate = async (
+    name: string,
+    description: string | undefined,
+    includes: TemplateIncludeFlags
+  ) => {
     if (!draft) {
       toast.error("No draft found");
       return;
@@ -326,6 +474,7 @@ export default function PreviewPage() {
 
     try {
       setIsSavingTemplate(true);
+      const templateExtras = buildTemplateExtras(draft, includes);
       await templatesApi.create({
         name,
         description,
@@ -339,6 +488,8 @@ export default function PreviewPage() {
         characterSizes: draft.characterSizes,
         characterPositions: draft.characterPositions,
         characterCustomPositions: draft.characterCustomPositions,
+        playbackRate: draft.playbackRate ?? 1,
+        templateExtras,
       });
       toast.success("Template saved successfully!");
     } catch (error) {
@@ -609,6 +760,23 @@ export default function PreviewPage() {
             </span>
           </div>
           </div>
+          <div className="mt-3">
+            <Button
+              type="button"
+              variant="outline"
+              className="rounded-2xl"
+              onClick={handleAddMagicStockImages}
+              disabled={
+                isAddingMagicStockImages ||
+                isGeneratingPreview ||
+                status === "RENDERING" ||
+                status === "QUEUED" ||
+                !hasPreview
+              }
+            >
+              {isAddingMagicStockImages ? "Adding magic stock images..." : "Magic stock images"}
+            </Button>
+          </div>
         </div>
         {/* Captions Generation Gate - Show whenever preview exists */}
         {draft?.previewUrl && (
@@ -681,8 +849,8 @@ export default function PreviewPage() {
               }
             }}
             subtitleSingleLine={draft?.subtitleSingleLine ?? false}
-            browserPreviewMode={!!(draft?.mergedAudioUrl || (draft?.audioFiles && draft.audioFiles.length > 0))}
-            audioFiles={draft?.audioFiles || []}
+            browserPreviewMode={shouldUseBrowserPreviewMode}
+            audioFiles={effectiveAudioFiles}
             mergedAudioUrl={draft?.mergedAudioUrl || null}
             mergedDurationMs={draft?.mergedDurationMs}
             backgroundVideoUrl={draft?.backgroundId ? getBackgroundVideoUrl(draft.backgroundId) : null}
@@ -711,7 +879,53 @@ export default function PreviewPage() {
                 }
               }
             }}
+            characterSlideInEnabled={draft?.characterSlideInEnabled !== false}
+            characterSlideInWhooshEnabled={draft?.characterSlideInWhooshEnabled === true}
           />
+          <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/60 bg-card p-4">
+            <div className="space-y-1">
+              <Label htmlFor="character-slide-in" className="text-sm font-medium">
+                Character slide-in
+              </Label>
+              <p className="text-xs text-muted-foreground max-w-xl">
+                Each character pops in quickly from the bottom when their line starts (preview + final render).
+              </p>
+            </div>
+            <Switch
+              id="character-slide-in"
+              checked={draft?.characterSlideInEnabled !== false}
+              disabled={isInitialState}
+              onCheckedChange={(v) => {
+                updateDraft({ characterSlideInEnabled: v });
+                const projectId = draft?.id;
+                if (projectId && isEditing) {
+                  updateProject(projectId, { characterSlideInEnabled: v } as any).catch(() => {});
+                }
+              }}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/60 bg-card p-4">
+            <div className="space-y-1">
+              <Label htmlFor="character-slide-whoosh" className="text-sm font-medium">
+                Whoosh on slide-in
+              </Label>
+              <p className="text-xs text-muted-foreground max-w-xl">
+                Play a short swoosh when each character enters (preview + final video). Requires slide-in above.
+              </p>
+            </div>
+            <Switch
+              id="character-slide-whoosh"
+              checked={draft?.characterSlideInWhooshEnabled === true}
+              disabled={isInitialState || draft?.characterSlideInEnabled === false}
+              onCheckedChange={(v) => {
+                updateDraft({ characterSlideInWhooshEnabled: v });
+                const projectId = draft?.id;
+                if (projectId && isEditing) {
+                  updateProject(projectId, { characterSlideInWhooshEnabled: v } as any).catch(() => {});
+                }
+              }}
+            />
+          </div>
           {/* Character Size Controls */}
           {draft?.characters?.A || draft?.characters?.B ? (() => {
             // Initialize default sizes for custom characters if they don't exist
@@ -937,6 +1151,7 @@ export default function PreviewPage() {
         onOpenChange={setIsSaveTemplateOpen}
         onSave={handleSaveTemplate}
         isLoading={isSavingTemplate}
+        variant="two-char"
       />
     </div>
   );

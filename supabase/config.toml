@@ -1,0 +1,4 @@
+# Supabase local / deploy config (minimal). Extend with `supabase init` output as needed.
+
+[functions.automation-tick]
+verify_jwt = false

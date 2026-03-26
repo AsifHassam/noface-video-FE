@@ -203,6 +203,12 @@ export default function HomePage() {
             >
               Testimonials
             </Link>
+            <Link
+              href="/privacy"
+              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Privacy
+            </Link>
             <a
               href="https://calendly.com/asifhassam14/booking"
               target="_blank"
@@ -265,6 +271,13 @@ export default function HomePage() {
                   className="text-base font-medium text-foreground hover:text-primary transition-colors"
                 >
                   Testimonials
+                </Link>
+                <Link
+                  href="/privacy"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="text-base font-medium text-foreground hover:text-primary transition-colors"
+                >
+                  Privacy Policy
                 </Link>
                 <a
                   href="https://calendly.com/asifhassam14/booking"
@@ -880,6 +893,20 @@ export default function HomePage() {
             </div>
           </motion.div>
         </section>
+
+        <footer className="border-t border-border/50 bg-background/40 backdrop-blur-sm">
+          <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-3 py-8 sm:flex-row sm:px-6">
+            <p className="text-sm text-muted-foreground">
+              © {new Date().getFullYear()} noface.video
+            </p>
+            <Link
+              href="/privacy"
+              className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Privacy Policy
+            </Link>
+          </div>
+        </footer>
       </main>
 
       {/* Sign In Dialog */}

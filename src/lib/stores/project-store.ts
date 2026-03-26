@@ -25,7 +25,7 @@ import { config } from "@/lib/config";
 import { supabase } from "@/lib/supabase";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
-type DraftProject = {
+export type DraftProject = {
   id: string;
   type: ProjectType;
   title: string;
@@ -54,6 +54,10 @@ type DraftProject = {
   characterSizes?: CharacterSizes;
   characterPositions?: CharacterPositions;
   characterCustomPositions?: Record<string, { x: number; y: number }>;
+  /** Slide characters up from the bottom when each line starts (2-char). Default true. */
+  characterSlideInEnabled?: boolean;
+  /** Play a short whoosh SFX when each character slide-in starts (2-char). Default false. */
+  characterSlideInWhooshEnabled?: boolean;
   renderProgress?: number;
   playbackRate?: number;
   queuePosition?: number;
@@ -96,7 +100,11 @@ type ProjectStoreState = {
   loadProjectIntoDraft: (projectId: string) => Promise<void>;
   
   // Video generation
-  enqueuePreview: (projectId?: string, userId?: string) => Promise<void>;
+  enqueuePreview: (
+    projectId?: string,
+    userId?: string,
+    options?: { includeStockImages?: boolean }
+  ) => Promise<void>;
   simulateRender: (projectId?: string) => Promise<void>;
   
   // Realtime subscriptions
@@ -137,6 +145,8 @@ const initialDraft = (): DraftProject => ({
     Brian: { width: 280, height: 360 },
     Morty: { width: 400, height: 520 }, // Reduced for better fit
   },
+  characterSlideInEnabled: true,
+  characterSlideInWhooshEnabled: false,
   characterPositions: {
     Peter: 'left',
     Stewie: 'right',
@@ -333,6 +343,12 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       if (draftToSave.characterCustomPositions) {
         metadata.characterCustomPositions = draftToSave.characterCustomPositions;
       }
+      if (draftToSave.characterSlideInEnabled !== undefined) {
+        metadata.characterSlideInEnabled = draftToSave.characterSlideInEnabled;
+      }
+      if (draftToSave.characterSlideInWhooshEnabled !== undefined) {
+        metadata.characterSlideInWhooshEnabled = draftToSave.characterSlideInWhooshEnabled;
+      }
       if (draftToSave.redditTitle) {
         metadata.redditTitle = draftToSave.redditTitle;
       }
@@ -418,7 +434,7 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       }
       
       // Handle subtitle settings, character sizes, positions, playback rate, and merged audio - need to merge with existing metadata
-      const hasMetadataUpdates = updates.subtitleStyle || updates.subtitlePosition || updates.subtitleFontSize !== undefined || updates.subtitleEnabled !== undefined || (updates as any).characterSizes || (updates as any).characterPositions || (updates as any).playbackRate !== undefined || (updates as any).mergedAudioUrl !== undefined || (updates as any).mergedDurationMs !== undefined || (updates as any).audioFiles !== undefined;
+      const hasMetadataUpdates = updates.subtitleStyle || updates.subtitlePosition || updates.subtitleFontSize !== undefined || updates.subtitleEnabled !== undefined || (updates as any).characterSizes || (updates as any).characterPositions || (updates as any).playbackRate !== undefined || (updates as any).mergedAudioUrl !== undefined || (updates as any).mergedDurationMs !== undefined || (updates as any).audioFiles !== undefined || (updates as any).characterSlideInEnabled !== undefined || (updates as any).characterSlideInWhooshEnabled !== undefined;
       
       if (hasMetadataUpdates) {
         // Fetch current project to get existing metadata
@@ -445,6 +461,8 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           if ((updates as any).mergedAudioUrl !== undefined) metadata.mergedAudioUrl = (updates as any).mergedAudioUrl;
           if ((updates as any).mergedDurationMs !== undefined) metadata.mergedDurationMs = (updates as any).mergedDurationMs;
           if ((updates as any).audioFiles !== undefined) metadata.audioFiles = (updates as any).audioFiles;
+          if ((updates as any).characterSlideInEnabled !== undefined) metadata.characterSlideInEnabled = (updates as any).characterSlideInEnabled;
+          if ((updates as any).characterSlideInWhooshEnabled !== undefined) metadata.characterSlideInWhooshEnabled = (updates as any).characterSlideInWhooshEnabled;
           
           apiUpdates.metadata = metadata;
         } catch (error) {
@@ -463,6 +481,8 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           if ((updates as any).mergedAudioUrl !== undefined) metadata.mergedAudioUrl = (updates as any).mergedAudioUrl;
           if ((updates as any).mergedDurationMs !== undefined) metadata.mergedDurationMs = (updates as any).mergedDurationMs;
           if ((updates as any).audioFiles !== undefined) metadata.audioFiles = (updates as any).audioFiles;
+          if ((updates as any).characterSlideInEnabled !== undefined) metadata.characterSlideInEnabled = (updates as any).characterSlideInEnabled;
+          if ((updates as any).characterSlideInWhooshEnabled !== undefined) metadata.characterSlideInWhooshEnabled = (updates as any).characterSlideInWhooshEnabled;
           apiUpdates.metadata = metadata;
         }
       }
@@ -620,9 +640,20 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
           y: overlay.position_y !== undefined ? Number(overlay.position_y) : 50,
           width: overlay.width !== undefined ? Number(overlay.width) : 20,
           height: overlay.height !== undefined ? Number(overlay.height) : 20,
+          intrinsicSize: Boolean(overlay.intrinsic_size ?? overlay.intrinsicSize),
           opacity: overlay.opacity !== undefined ? Number(overlay.opacity) : 1,
           rotation: overlay.rotation !== undefined ? Number(overlay.rotation) : 0,
           cropData: overlay.crop_data || undefined,
+          slideInFrom: (() => {
+            const s = overlay.slide_in_from ?? overlay.slideInFrom;
+            return s === "left" || s === "right" ? s : null;
+          })(),
+          slideInDurationMs:
+            overlay.slide_in_duration_ms !== undefined
+              ? Number(overlay.slide_in_duration_ms)
+              : overlay.slideInDurationMs !== undefined
+                ? Number(overlay.slideInDurationMs)
+                : undefined,
         };
       });
 
@@ -764,6 +795,8 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         Morty: 'right',
       };
       const characterCustomPositions = metadata.characterCustomPositions || undefined;
+      const characterSlideInEnabled = metadata.characterSlideInEnabled !== false;
+      const characterSlideInWhooshEnabled = metadata.characterSlideInWhooshEnabled === true;
       
       // Extract merged audio URL and duration from metadata
       const mergedAudioUrl = metadata.mergedAudioUrl || null;
@@ -831,6 +864,8 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         characterSizes: characterSizes,
         characterPositions: characterPositions,
         characterCustomPositions: characterCustomPositions,
+        characterSlideInEnabled,
+        characterSlideInWhooshEnabled,
         mergedAudioUrl: mergedAudioUrl,
         mergedDurationMs: mergedDurationMs || null,
         audioFiles: audioFilesMetadata || undefined,
@@ -848,7 +883,11 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
   /**
    * Generate preview video
    */
-  enqueuePreview: async (projectId?: string, userId?: string) => {
+  enqueuePreview: async (
+    projectId?: string,
+    userId?: string,
+    options?: { includeStockImages?: boolean }
+  ) => {
     try {
       const draft = get().draft;
       
@@ -987,10 +1026,60 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
       } catch (error) {
         // Failed to save to database
       }
+
+      const shouldIncludeStockImages = options?.includeStockImages === true;
+      // Auto stock image overlays (Freepik) – optional and non-blocking if key missing or API fails
+      let stockOverlayCount = 0;
+      try {
+        const prev = get().draft.imageOverlays || [];
+        const withoutStock = prev.filter((o) => !o.id.startsWith("stock-"));
+
+        if (shouldIncludeStockImages) {
+          const stockRes = await renderApi.suggestStockOverlays(targetProjectId, {
+            conversations: audioResult.conversations.map((c) => ({
+              speaker: c.speaker,
+              text: c.text,
+              startMs: c.startMs,
+              endMs: c.endMs,
+            })),
+            maxOverlays: 20,
+            mode: "per_line",
+          });
+          if (stockRes.success && stockRes.imageOverlays && stockRes.imageOverlays.length > 0) {
+            stockOverlayCount = stockRes.imageOverlays.length;
+            const merged: ImageOverlay[] = [...withoutStock, ...stockRes.imageOverlays] as ImageOverlay[];
+            set((state) => ({
+              draft: { ...state.draft, imageOverlays: merged },
+            }));
+            await get()
+              .updateProject(targetProjectId, { imageOverlays: merged } as any)
+              .catch(() => {});
+          } else {
+            // If enabled but no stock overlays returned, at least keep non-stock overlays clean.
+            set((state) => ({
+              draft: { ...state.draft, imageOverlays: withoutStock },
+            }));
+          }
+        } else {
+          // Explicitly remove any previously auto-generated stock overlays when user disables this.
+          set((state) => ({
+            draft: { ...state.draft, imageOverlays: withoutStock },
+          }));
+          await get()
+            .updateProject(targetProjectId, { imageOverlays: withoutStock } as any)
+            .catch(() => {});
+        }
+      } catch (stockErr) {
+        console.warn("[Preview] Stock overlays skipped:", stockErr);
+      }
       
       // Show success message
       import('sonner').then(({ toast }) => {
-        toast.success("Audio generated! Preview is ready 🎉");
+        const extra =
+          stockOverlayCount > 0
+            ? ` ${stockOverlayCount} stock image${stockOverlayCount === 1 ? "" : "s"} added.`
+            : "";
+        toast.success(`Audio generated! Preview is ready 🎉${extra}`);
       }).catch(() => {});
       
     } catch (error) {
@@ -1150,6 +1239,9 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         characterSizes: initializedCharacterSizes, // Include initialized character sizes (with custom characters)
         characterPositions: initializedCharacterPositions, // Include initialized character positions (with custom characters)
         characterCustomPositions: draft.characterCustomPositions, // Include custom character positions
+        characterSlideInEnabled: draft.characterSlideInEnabled !== false,
+        characterSlideInDurationFrames: 6,
+        characterSlideInWhooshEnabled: draft.characterSlideInWhooshEnabled === true,
       };
       
       // Only include redditTitle if it has a value (don't send null/undefined)

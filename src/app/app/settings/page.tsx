@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -246,6 +247,15 @@ export default function SettingsPage() {
             <li>Custom characters are available for use in all video projects</li>
           </ul>
         </div>
+
+        <p className="text-center text-sm text-muted-foreground sm:text-left">
+          <Link
+            href="/privacy"
+            className="font-medium text-primary underline-offset-4 hover:underline"
+          >
+            Privacy Policy
+          </Link>
+        </p>
       </div>
     </div>
   );

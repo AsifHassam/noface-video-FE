@@ -13,6 +13,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { templatesApi } from "@/lib/api/projects";
+import { getDraftUpdatesFromTemplate } from "@/lib/template-includes";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { toast } from "sonner";
@@ -77,29 +78,14 @@ export function TemplateSelector({
 
   const handleSelectTemplate = (template: VideoTemplate) => {
     // Normalize project type: "story" or "NORMAL_STORY" should both be "story"
-    const normalizedType = template.projectType === "story" || template.projectType === "NORMAL_STORY" 
-      ? "story" 
-      : template.projectType;
-    
-    // Load template settings into draft, including project type
-    updateDraft({
-      type: normalizedType as any, // Set the project type from template
-      backgroundId: template.backgroundId,
-      subtitleStyle: template.subtitleStyle,
-      subtitlePosition: template.subtitlePosition,
-      subtitleFontSize: template.subtitleFontSize,
-      textOverlays: template.textOverlays,
-      // Load characters if template has them (for two-char conversations)
-      ...(template.characters && { characters: template.characters }),
-      // Load character sizes and positions
-      ...(template.characterSizes && { characterSizes: template.characterSizes }),
-      ...(template.characterPositions && { characterPositions: template.characterPositions }),
-      ...(template.characterCustomPositions && { characterCustomPositions: template.characterCustomPositions }),
-      // Load playback rate (handle both undefined and null, default to 1 if not set)
-      // Convert to number to ensure proper type (database might return as string)
-      playbackRate: template.playbackRate !== undefined && template.playbackRate !== null ? Number(template.playbackRate) : 1,
-    });
-    
+    const normalizedType =
+      template.projectType === "story" || template.projectType === "NORMAL_STORY"
+        ? "story"
+        : template.projectType;
+
+    const updates = getDraftUpdatesFromTemplate(template, normalizedType);
+    updateDraft(updates);
+
     onTemplateSelected(template);
     onOpenChange(false);
     toast.success(`Template "${template.name}" loaded!`);
