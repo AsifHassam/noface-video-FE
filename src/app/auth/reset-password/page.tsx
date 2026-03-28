@@ -32,7 +32,10 @@ export default function ResetPasswordPage() {
   const initialize = useAuthStore((s) => s.initialize);
 
   const [phase, setPhase] = useState<"checking" | "ready" | "invalid">("checking");
+  const [isSaving, setIsSaving] = useState(false);
   const recoverySeen = useRef(false);
+  const pollIdRef = useRef<number | null>(null);
+  const failIdRef = useRef<number | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -51,6 +54,8 @@ export default function ResetPasswordPage() {
       if (event === "PASSWORD_RECOVERY") {
         recoverySeen.current = true;
         setPhase("ready");
+        if (pollIdRef.current) window.clearInterval(pollIdRef.current);
+        if (failIdRef.current) window.clearTimeout(failIdRef.current);
       }
     });
 
@@ -68,9 +73,11 @@ export default function ResetPasswordPage() {
       if (session?.user) {
         recoverySeen.current = true;
         setPhase("ready");
-        window.clearInterval(poll);
+        if (pollIdRef.current) window.clearInterval(pollIdRef.current);
+        if (failIdRef.current) window.clearTimeout(failIdRef.current);
       }
     }, 450);
+    pollIdRef.current = poll;
 
     const fail = window.setTimeout(async () => {
       if (cancelled || recoverySeen.current) return;
@@ -80,24 +87,40 @@ export default function ResetPasswordPage() {
       if (!session?.user) {
         setPhase("invalid");
       }
-      window.clearInterval(poll);
+      if (pollIdRef.current) window.clearInterval(pollIdRef.current);
     }, 15000);
+    failIdRef.current = fail;
 
     return () => {
       cancelled = true;
-      window.clearInterval(poll);
-      window.clearTimeout(fail);
+      if (pollIdRef.current) window.clearInterval(pollIdRef.current);
+      if (failIdRef.current) window.clearTimeout(failIdRef.current);
     };
   }, []);
 
   const onSubmit = async (values: FormValues) => {
-    const { error } = await updatePassword(values.password);
-    if (error) {
-      toast.error(error.message || "Could not update password.");
-      return;
+    setIsSaving(true);
+    try {
+      const { error } = await Promise.race([
+        updatePassword(values.password),
+        new Promise<{ error: Error }>((resolve) =>
+          setTimeout(() => resolve({ error: new Error("Request timed out. Please try again.") }), 12000)
+        ),
+      ]);
+      if (error) {
+        const msg = String(error.message || "Could not update password.");
+        if (msg.includes("422")) {
+          toast.error("Password update was rejected. Try a stronger password.");
+        } else {
+          toast.error(msg);
+        }
+        return;
+      }
+      toast.success("Password updated. You’re signed in.");
+      router.replace("/app/dashboard");
+    } finally {
+      setIsSaving(false);
     }
-    toast.success("Password updated. You’re signed in.");
-    router.replace("/app/dashboard");
   };
 
   if (phase === "checking") {
@@ -151,7 +174,7 @@ export default function ResetPasswordPage() {
                 id="reset-pw"
                 type="password"
                 autoComplete="new-password"
-                disabled={form.formState.isSubmitting}
+                disabled={isSaving}
                 {...form.register("password")}
               />
               {form.formState.errors.password ? (
@@ -164,7 +187,7 @@ export default function ResetPasswordPage() {
                 id="reset-pw2"
                 type="password"
                 autoComplete="new-password"
-                disabled={form.formState.isSubmitting}
+                disabled={isSaving}
                 {...form.register("confirmPassword")}
               />
               {form.formState.errors.confirmPassword ? (
@@ -176,9 +199,9 @@ export default function ResetPasswordPage() {
             <Button
               type="submit"
               className="h-11 w-full rounded-2xl"
-              disabled={form.formState.isSubmitting}
+              disabled={isSaving}
             >
-              {form.formState.isSubmitting ? "Saving…" : "Update password"}
+              {isSaving ? "Saving…" : "Update password"}
             </Button>
           </form>
         </CardContent>

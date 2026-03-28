@@ -594,8 +594,13 @@ export default function AdminDashboardPage() {
                         {stats.payingUsers ?? "—"}
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Pro / Premium
+                        Pro / Premium · no test accounts
                       </p>
+                      {(stats.churnUsers ?? 0) > 0 ? (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {stats.churnUsers} churn (payment issue)
+                        </p>
+                      ) : null}
                     </CardContent>
                   </Card>
                   <Card className="rounded-2xl">
@@ -798,7 +803,7 @@ export default function AdminDashboardPage() {
                   <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-muted/30 text-[11px] font-medium text-muted-foreground border-b border-border/40 min-w-[720px]">
                     <div className="col-span-3">Email</div>
                     <div className="col-span-2">Last active</div>
-                    <div className="col-span-1">Tier</div>
+                    <div className="col-span-1">Tier / status</div>
                     <div className="col-span-1">Credits</div>
                     <div className="col-span-1">Amount</div>
                     <div className="col-span-1">Videos (mo)</div>
@@ -818,8 +823,13 @@ export default function AdminDashboardPage() {
                           ? formatDistanceToNow(new Date(u.lastSignIn), { addSuffix: true })
                           : "—"}
                       </div>
-                      <div className="col-span-1 text-xs capitalize">
-                        {u.subscription_tier ?? "—"}
+                      <div className="col-span-1 text-xs capitalize flex flex-col gap-1 items-start">
+                        <span>{u.subscription_tier ?? "—"}</span>
+                        {u.payment_blocked ? (
+                          <Badge variant="destructive" className="text-[10px] px-1.5 py-0 rounded-md font-medium">
+                            Churn
+                          </Badge>
+                        ) : null}
                       </div>
                       <div className="col-span-1 text-xs">
                         {u.credits != null ? Number(u.credits).toFixed(1) : "—"}

@@ -70,6 +70,8 @@ export type AdminStats = {
   projectsToday: number;
   activeUsersLast7Days?: number;
   payingUsers?: number;
+  /** Users with failed/bounced payment (payment_blocked), excluding test accounts */
+  churnUsers?: number;
   ugcProjectsTotal?: number;
   ugcProjectsToday?: number;
   ugcCompletedTotal?: number;

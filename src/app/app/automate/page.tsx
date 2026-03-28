@@ -152,6 +152,7 @@ export default function AutomatePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [igConnected, setIgConnected] = useState<boolean | null>(null);
+  const [igConnectedAccount, setIgConnectedAccount] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState<string>("");
@@ -307,10 +308,44 @@ export default function AutomatePage() {
 
       if (igRes.status === "fulfilled") {
         const igRows = igRes.value || [];
-        setIgConnected(igRows.length > 0);
+        const connected = igRows.length > 0;
+        setIgConnected(connected);
+        if (!connected) {
+          setIgConnectedAccount(null);
+        } else {
+          try {
+            const token = await getCachedToken(userId || undefined);
+            if (token) {
+              const connRes = await fetch("/api/auth/instagram/connection", {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              if (connRes.ok) {
+                const connJson = (await connRes.json()) as {
+                  connected?: boolean;
+                  username?: string | null;
+                  igUserId?: string | null;
+                };
+                if (connJson.connected) {
+                  setIgConnectedAccount(
+                    connJson.username ? `@${connJson.username}` : connJson.igUserId || null
+                  );
+                } else {
+                  setIgConnectedAccount(null);
+                }
+              } else {
+                setIgConnectedAccount(null);
+              }
+            } else {
+              setIgConnectedAccount(null);
+            }
+          } catch {
+            setIgConnectedAccount(null);
+          }
+        }
       } else {
         console.error("[automate/load] instagram status error:", igRes.reason);
         setIgConnected(false);
+        setIgConnectedAccount(null);
       }
     } catch (e) {
       console.error(e);
@@ -732,6 +767,11 @@ export default function AutomatePage() {
           <p className="text-sm text-muted-foreground">
             Status: {igConnected === null ? "…" : igConnected ? "Connected" : "Not connected"}
           </p>
+          {igConnected && igConnectedAccount ? (
+            <p className="text-xs text-muted-foreground mt-1">
+              Connected account: <span className="font-medium">{igConnectedAccount}</span>
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 
