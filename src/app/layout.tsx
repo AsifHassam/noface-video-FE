@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono, Bebas_Neue, Montserrat, Poppins, Roboto, Nunito_Sans, Oswald } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/app/providers";
+import { GoogleAnalytics } from "@/components/analytics/google-analytics";
 
 const inter = Inter({
   variable: "--font-sans",
@@ -50,9 +51,13 @@ const oswald = Oswald({
 });
 
 export const metadata: Metadata = {
-  title: "noface.video - Create Faceless Viral Videos That Get Millions of Views",
+  metadataBase: new URL("https://noface.video"),
+  title: {
+    default: "Create Faceless Viral Videos | noface.video",
+    template: "%s",
+  },
   description:
-    "Create faceless viral videos for TikTok, Shorts, and Instagram. Attract brand collaborations and grow your audience with the #1 platform for faceless video content.",
+    "Create faceless videos that go viral on TikTok, YouTube Shorts & Instagram. No camera needed. Start free today.",
 };
 
 export default function RootLayout({
@@ -68,6 +73,7 @@ export default function RootLayout({
           '--font-zy-resolve': '"ZY Resolve", "Arial Black", Arial, sans-serif',
         } as React.CSSProperties}
       >
+        <GoogleAnalytics />
         <Providers>{children}</Providers>
       </body>
     </html>

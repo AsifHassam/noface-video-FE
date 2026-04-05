@@ -28,7 +28,8 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { SignInCard } from "@/components/auth/sign-in-card";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
+import { useState, type VideoHTMLAttributes } from "react";
+import { LANDING_FAQ_ITEMS } from "@/content/landing-faq";
 
 const CASE_STUDIES = {
   saas: {
@@ -135,6 +136,31 @@ const PRICING_PLANS = [
   },
 ];
 
+/** One caption per unique clip (carousel repeats URLs; index uses modulo). */
+const LANDING_VIDEO_CAROUSEL_CAPTIONS = [
+  "Faceless short-form sample with bold captions and pacing suited for TikTok and Reels.",
+  "Vertical video example showing narration-driven storytelling without an on-camera host.",
+  "Educational style clip with b-roll and subtitles typical of viral explainers.",
+  "Another faceless vertical preview highlighting hook and retention-focused editing.",
+  "Instagram Reels style sample with dynamic framing and text overlays.",
+  "Tech explainer clip with visuals and voiceover—no face required.",
+  "Motivation or lifestyle style vertical formatted for algorithm-friendly watch time.",
+  "Story-driven faceless edit demonstrating template-based layout and timing.",
+  "Fast-cut vertical preview optimized for Shorts and in-feed discovery.",
+];
+
+const CAROUSEL_VIDEO_URLS = [
+  "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapTik.Cx_1769327353.mp4",
+  "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a88e28e7-2c7a-4e31-87a4-b1c4e71c591c.mp4",
+  "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/Check%20out%20the%20incredible%20work%20of%20Bohlale%20Mphahlele!%20This%20young%20inventor%20is%20revolutionizing%20safet.mp4",
+  "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a49d79ac-1aac-46c7-b9c8-0087254e6b08.mp4",
+  "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapInsta.to_AQP2in0u-jcD43wusT7bKR1sSZ0ZW0oHVJkBkiWwpP35xP3aZot4nGL5HDqDBfgkSWC3O0N6vo6q080FEkP1Ma9Y.mp4",
+  "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/compiler-vs-intepreter-broll.mp4",
+  "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapInsta.to_AQPWx9yTSLn4v2C-GRyTZvuenYwuYgg06TSvnINaFJszuxLNLBobtw4FeZBMi-56FTu8AeYWlfW1_2ywuVGsFg8R.mp4",
+  "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a7a07848-b9dc-4b3d-a986-f7fff3c0f46e.mp4",
+  "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapTik.Cx_1769327304.mp4",
+];
+
 const TESTIMONIALS = [
   {
     name: "Sarah Chen",
@@ -190,6 +216,12 @@ export default function HomePage() {
               className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
             >
               Case Studies
+            </Link>
+            <Link
+              href="/blog"
+              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Blog
             </Link>
             <Link
               href="#pricing"
@@ -257,6 +289,13 @@ export default function HomePage() {
                   className="text-base font-medium text-foreground hover:text-primary transition-colors"
                 >
                   Case Studies
+                </Link>
+                <Link
+                  href="/blog"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="text-base font-medium text-foreground hover:text-primary transition-colors"
+                >
+                  Blog
                 </Link>
                 <Link
                   href="#pricing"
@@ -343,8 +382,10 @@ export default function HomePage() {
             </h1>
             <p className="mx-auto max-w-2xl text-sm sm:text-xl text-muted-foreground lg:text-2xl px-3">
               The #1 platform for creating faceless videos that go viral on TikTok,
-              Shorts, and Instagram. Attract brand collaborations and grow your
-              audience—no face required.
+              Shorts, and Instagram—built so any faceless video creator can ship
+              fast. Attract brand collaborations and grow your audience—no face
+              required. If you want a reliable faceless video creator workflow from
+              script to export, you are in the right place.
             </p>
             <div className="flex flex-col items-center justify-center gap-3 sm:gap-4 sm:flex-row px-3">
               <Button
@@ -389,49 +430,93 @@ export default function HomePage() {
         {/* Video Carousel Section */}
         <section className="relative w-full py-6 sm:py-12 overflow-hidden">
           <div className="flex gap-3 sm:gap-6 animate-video-carousel">
-            {/* Videos array - shuffled and duplicated for seamless loop */}
-            {[
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapTik.Cx_1769327353.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a88e28e7-2c7a-4e31-87a4-b1c4e71c591c.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/Check%20out%20the%20incredible%20work%20of%20Bohlale%20Mphahlele!%20This%20young%20inventor%20is%20revolutionizing%20safet.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a49d79ac-1aac-46c7-b9c8-0087254e6b08.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapInsta.to_AQP2in0u-jcD43wusT7bKR1sSZ0ZW0oHVJkBkiWwpP35xP3aZot4nGL5HDqDBfgkSWC3O0N6vo6q080FEkP1Ma9Y.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/compiler-vs-intepreter-broll.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapInsta.to_AQPWx9yTSLn4v2C-GRyTZvuenYwuYgg06TSvnINaFJszuxLNLBobtw4FeZBMi-56FTu8AeYWlfW1_2ywuVGsFg8R.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a7a07848-b9dc-4b3d-a986-f7fff3c0f46e.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapTik.Cx_1769327304.mp4",
-              // Duplicate for seamless loop
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapTik.Cx_1769327353.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a88e28e7-2c7a-4e31-87a4-b1c4e71c591c.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/Check%20out%20the%20incredible%20work%20of%20Bohlale%20Mphahlele!%20This%20young%20inventor%20is%20revolutionizing%20safet.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a49d79ac-1aac-46c7-b9c8-0087254e6b08.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapInsta.to_AQP2in0u-jcD43wusT7bKR1sSZ0ZW0oHVJkBkiWwpP35xP3aZot4nGL5HDqDBfgkSWC3O0N6vo6q080FEkP1Ma9Y.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/compiler-vs-intepreter-broll.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapInsta.to_AQPWx9yTSLn4v2C-GRyTZvuenYwuYgg06TSvnINaFJszuxLNLBobtw4FeZBMi-56FTu8AeYWlfW1_2ywuVGsFg8R.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/a7a07848-b9dc-4b3d-a986-f7fff3c0f46e.mp4",
-              "https://khjcirljcxmrzrrosssx.supabase.co/storage/v1/object/public/videos/landing-page/SnapTik.Cx_1769327304.mp4",
-            ].map((videoUrl, i) => (
-              <div
-                key={i}
-                className="flex-shrink-0 w-[140px] sm:w-[224px] md:w-[256px]"
-              >
-                <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl sm:rounded-2xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 shadow-lg">
-                  <video
-                    className="h-full w-full object-cover"
-                    autoPlay
-                    loop
-                    muted
-                    playsInline
-                  >
-                    <source
-                      src={videoUrl}
-                      type="video/mp4"
-                    />
-                    Your browser does not support the video tag.
-                  </video>
+            {[...CAROUSEL_VIDEO_URLS, ...CAROUSEL_VIDEO_URLS].map((videoUrl, i) => {
+              const cap =
+                LANDING_VIDEO_CAROUSEL_CAPTIONS[
+                  i % LANDING_VIDEO_CAROUSEL_CAPTIONS.length
+                ];
+              return (
+                <div
+                  key={i}
+                  className="flex-shrink-0 w-[140px] sm:w-[224px] md:w-[256px]"
+                >
+                  <figure className="m-0">
+                    <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl sm:rounded-2xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 shadow-lg">
+                      <video
+                        className="h-full w-full object-cover"
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        preload="none"
+                        aria-label={cap}
+                        {...({ loading: "lazy" } as VideoHTMLAttributes<HTMLVideoElement>)}
+                      >
+                        <source src={videoUrl} type="video/mp4" />
+                        Your browser does not support the video tag.
+                      </video>
+                    </div>
+                    <figcaption className="sr-only">{cap}</figcaption>
+                  </figure>
                 </div>
-              </div>
-            ))}
+              );
+            })}
+          </div>
+        </section>
+
+        {/* How it works — crawlable steps (anchors #features for CTA) */}
+        <section
+          id="features"
+          aria-labelledby="how-it-works-heading"
+          className="relative mx-auto max-w-7xl px-3 sm:px-6 pt-2 pb-10 sm:pb-16"
+        >
+          <h2
+            id="how-it-works-heading"
+            className="text-center text-2xl sm:text-4xl font-bold text-foreground lg:text-5xl"
+          >
+            How noface.video Works
+          </h2>
+          <p className="mx-auto mt-3 max-w-2xl text-center text-sm sm:text-lg text-muted-foreground px-3">
+            From idea to publish in three steps—built for creators who want a
+            consistent faceless video creator pipeline without a film crew.
+          </p>
+          <div className="mt-8 sm:mt-12 grid gap-8 sm:gap-10 md:grid-cols-3">
+            <div className="rounded-2xl border border-border/60 bg-white/50 p-5 sm:p-6 shadow-sm backdrop-blur-sm">
+              <h3 className="text-lg sm:text-xl font-bold text-foreground">
+                1. Choose Your Template
+              </h3>
+              <p className="mt-3 text-sm sm:text-base text-muted-foreground leading-relaxed">
+                Pick a layout that matches your niche—story narration, two-character
+                dialogue, or short-form hooks. Templates set pacing, typography, and
+                safe zones so your exports look native on TikTok, Reels, and Shorts.
+                You spend less time fixing composition and more time testing ideas
+                that can scale.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-border/60 bg-white/50 p-5 sm:p-6 shadow-sm backdrop-blur-sm">
+              <h3 className="text-lg sm:text-xl font-bold text-foreground">
+                2. Add Your Script or Topic
+              </h3>
+              <p className="mt-3 text-sm sm:text-base text-muted-foreground leading-relaxed">
+                Paste a script, bullet points, or a single topic and let the workflow
+                guide structure, scene breaks, and captions. Strong faceless content
+                usually wins on clarity: a sharp hook, a simple storyline, and
+                readable on-screen text. Iterate quickly until the watch time and
+                completion rate match your goals.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-border/60 bg-white/50 p-5 sm:p-6 shadow-sm backdrop-blur-sm">
+              <h3 className="text-lg sm:text-xl font-bold text-foreground">
+                3. Export and Post
+              </h3>
+              <p className="mt-3 text-sm sm:text-base text-muted-foreground leading-relaxed">
+                Render in the right aspect ratio and quality tier for your plan, then
+                download and upload to your platforms. Batch similar formats on a
+                schedule so the algorithm sees steady activity. Track what performs,
+                double down on winning hooks, and keep your pipeline full without
+                stepping in front of the camera.
+              </p>
+            </div>
           </div>
         </section>
 
@@ -487,10 +572,10 @@ export default function HomePage() {
                         frameBorder="0"
                         allow="encrypted-media"
                         allowFullScreen
-                        title="TikTok Video"
+                        title="Embedded TikTok video: ExamPaperGPT SaaS case study"
                       />
                     ) : (
-                      <>
+                      <figure className="relative m-0 h-full w-full">
                         <video
                           className="h-full w-full object-cover"
                           controls
@@ -498,17 +583,24 @@ export default function HomePage() {
                           loop
                           muted
                           playsInline
+                          preload="none"
+                          aria-label="Case study preview for ExamPaperGPT SaaS growth on social platforms"
+                          {...({ loading: "lazy" } as VideoHTMLAttributes<HTMLVideoElement>)}
                         >
                           <source src={CASE_STUDIES.saas.videoUrl} type="video/mp4" />
                           Your browser does not support the video tag.
                         </video>
+                        <figcaption className="sr-only">
+                          Case study video preview for ExamPaperGPT showing faceless
+                          marketing content and results.
+                        </figcaption>
                         <div
                           className={cn(
-                            "absolute inset-0 bg-gradient-to-br opacity-20 mix-blend-overlay",
+                            "pointer-events-none absolute inset-0 bg-gradient-to-br opacity-20 mix-blend-overlay",
                             CASE_STUDIES.saas.gradient,
                           )}
                         />
-                      </>
+                      </figure>
                     )}
                   </div>
                   <div className="space-y-4 sm:space-y-6 mt-4 sm:mt-0">
@@ -564,10 +656,10 @@ export default function HomePage() {
                         frameBorder="0"
                         allow="encrypted-media"
                         allowFullScreen
-                        title="TikTok Video"
+                        title="Embedded TikTok video: viral growth case study"
                       />
                     ) : (
-                      <>
+                      <figure className="relative m-0 h-full w-full">
                         <video
                           className="h-full w-full object-cover"
                           controls
@@ -575,17 +667,24 @@ export default function HomePage() {
                           loop
                           muted
                           playsInline
+                          preload="none"
+                          aria-label="Case study preview for viral TikTok and Instagram faceless content"
+                          {...({ loading: "lazy" } as VideoHTMLAttributes<HTMLVideoElement>)}
                         >
                           <source src={CASE_STUDIES.viral.videoUrl} type="video/mp4" />
                           Your browser does not support the video tag.
                         </video>
+                        <figcaption className="sr-only">
+                          Case study video preview highlighting viral performance in the
+                          first week of posting.
+                        </figcaption>
                         <div
                           className={cn(
-                            "absolute inset-0 bg-gradient-to-br opacity-20 mix-blend-overlay",
+                            "pointer-events-none absolute inset-0 bg-gradient-to-br opacity-20 mix-blend-overlay",
                             CASE_STUDIES.viral.gradient,
                           )}
                         />
-                      </>
+                      </figure>
                     )}
                   </div>
                   <div className="space-y-4 sm:space-y-6 mt-4 sm:mt-0">
@@ -641,10 +740,10 @@ export default function HomePage() {
                         frameBorder="0"
                         allow="encrypted-media"
                         allowFullScreen
-                        title="Instagram Reel"
+                        title="Embedded Instagram Reel: brand and sponsorship case study"
                       />
                     ) : (
-                      <>
+                      <figure className="relative m-0 h-full w-full">
                         <video
                           className="h-full w-full object-cover"
                           controls
@@ -652,17 +751,24 @@ export default function HomePage() {
                           loop
                           muted
                           playsInline
+                          preload="none"
+                          aria-label="Case study preview for brand deals and sponsorship growth"
+                          {...({ loading: "lazy" } as VideoHTMLAttributes<HTMLVideoElement>)}
                         >
                           <source src={CASE_STUDIES.brand.videoUrl} type="video/mp4" />
                           Your browser does not support the video tag.
                         </video>
+                        <figcaption className="sr-only">
+                          Case study video preview for brand outreach and organic
+                          sponsorship opportunities.
+                        </figcaption>
                         <div
                           className={cn(
-                            "absolute inset-0 bg-gradient-to-br opacity-20 mix-blend-overlay",
+                            "pointer-events-none absolute inset-0 bg-gradient-to-br opacity-20 mix-blend-overlay",
                             CASE_STUDIES.brand.gradient,
                           )}
                         />
-                      </>
+                      </figure>
                     )}
                   </div>
                   <div className="space-y-4 sm:space-y-6 mt-4 sm:mt-0">
@@ -705,6 +811,15 @@ export default function HomePage() {
             </Tabs>
           </div>
         </section>
+
+        <div className="relative mx-auto max-w-7xl border-t border-border/40 px-3 py-5 text-center sm:px-6 sm:py-6">
+          <Link
+            href="/blog"
+            className="text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+          >
+            Learn from the best faceless creators — read our blog
+          </Link>
+        </div>
 
         {/* Pricing Section */}
         <section id="pricing" className="relative mx-auto max-w-7xl px-3 sm:px-6 py-12 sm:py-24">
@@ -894,17 +1009,74 @@ export default function HomePage() {
           </motion.div>
         </section>
 
+        <section
+          id="faq"
+          aria-labelledby="faq-heading"
+          className="relative mx-auto max-w-3xl px-3 sm:px-6 py-12 sm:py-20"
+        >
+          <h2
+            id="faq-heading"
+            className="text-center text-2xl sm:text-4xl font-bold text-foreground lg:text-5xl"
+          >
+            Frequently asked questions
+          </h2>
+          <p className="mx-auto mt-3 max-w-2xl text-center text-sm sm:text-lg text-muted-foreground">
+            Straight answers for creators researching faceless content and short-form
+            growth.
+          </p>
+          <dl className="mt-8 sm:mt-12 space-y-6 sm:space-y-8">
+            {LANDING_FAQ_ITEMS.map((item) => (
+              <div
+                key={item.question}
+                className="rounded-2xl border border-border/60 bg-white/60 p-5 sm:p-6 shadow-sm backdrop-blur-sm"
+              >
+                <dt>
+                  <h3 className="text-base sm:text-lg font-semibold text-foreground">
+                    {item.question}
+                  </h3>
+                </dt>
+                <dd className="mt-2 text-sm sm:text-base text-muted-foreground leading-relaxed">
+                  {item.answer}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+
         <footer className="border-t border-border/50 bg-background/40 backdrop-blur-sm">
-          <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-3 py-8 sm:flex-row sm:px-6">
+          <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-6 px-3 py-8 sm:flex-row sm:px-6">
             <p className="text-sm text-muted-foreground">
               © {new Date().getFullYear()} noface.video
             </p>
-            <Link
-              href="/privacy"
-              className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+            <nav
+              className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm"
+              aria-label="Footer"
             >
-              Privacy Policy
-            </Link>
+              <Link
+                href="/blog"
+                className="font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Blog
+              </Link>
+              <Link
+                href="/pricing"
+                className="font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Pricing
+              </Link>
+              <Link
+                href="/case-studies"
+                className="font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Case studies
+              </Link>
+              <Link
+                href="/privacy"
+                className="font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Privacy
+              </Link>
+            </nav>
           </div>
         </footer>
       </main>

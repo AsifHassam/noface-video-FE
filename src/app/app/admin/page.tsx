@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -514,6 +515,12 @@ export default function AdminDashboardPage() {
           >
             <UserCircle className="h-4 w-4 mr-2" />
             Login as user
+          </Button>
+          <Button variant="outline" size="sm" className="rounded-2xl" asChild>
+            <Link href="/app/admin/blog">
+              <FileText className="h-4 w-4 mr-2" />
+              Blog editor
+            </Link>
           </Button>
         </div>
       </div>
