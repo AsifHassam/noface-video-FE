@@ -75,6 +75,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
   const url = `${SITE}/blog/${post.slug}`;
   const desc = metaDescription(post);
+  const titleForMeta = post.metaTitle ?? post.title;
   const ogImages = post.heroImageUrl
     ? [
         {
@@ -93,7 +94,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
         },
       ];
   return {
-    title: `${post.title} | noface.video`,
+    title: `${titleForMeta} | noface.video`,
     description: desc,
     alternates: {
       canonical: url,
@@ -101,7 +102,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     openGraph: {
       type: "article",
       url,
-      title: post.title,
+      title: titleForMeta,
       description: desc,
       siteName: "noface.video",
       publishedTime: `${post.date}T12:00:00.000Z`,
@@ -109,7 +110,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     },
     twitter: {
       card: "summary_large_image",
-      title: post.title,
+      title: titleForMeta,
       description: desc,
       images: ogImages.map((i) => i.url),
     },

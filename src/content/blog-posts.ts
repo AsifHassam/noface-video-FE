@@ -1,3 +1,4 @@
+import { BRAND_DEALS_TIKTOK_INSTAGRAM_BODY } from "@/content/post-body-brand-deals-tiktok-instagram";
 import { FACELESS_YOUTUBE_2026_BODY } from "@/content/post-body-faceless-youtube-2026";
 
 export type BlogFaqItem = {
@@ -18,6 +19,8 @@ export type BlogPost = {
   heroImageUrl?: string | null;
   /** Dedicated meta description (differs from excerpt when set) */
   metaDescription?: string;
+  /** When set, used for document title and og:title; article H1 still uses `title` */
+  metaTitle?: string;
   faqItems?: BlogFaqItem[];
   /** Higher = newer when `date` ties; used for blog index order */
   sortOrder?: number;
@@ -96,8 +99,42 @@ const FACELESS_YOUTUBE_2026_POST: BlogPost = {
   bodyMarkdown: FACELESS_YOUTUBE_2026_BODY,
 };
 
+const BRAND_DEALS_TIKTOK_INSTAGRAM_POST: BlogPost = {
+  slug: "how-faceless-creators-land-brand-deals-tiktok-instagram",
+  title:
+    "How Faceless Creators Land Brand Deals on TikTok and Instagram in 2026",
+  metaTitle:
+    "How Faceless Creators Land Brand Deals on TikTok and Instagram",
+  excerpt:
+    "No face required. Here's exactly how anonymous creators are securing paid brand collaborations on TikTok and Instagram — what brands pay, what they want, and how to get your first deal without a big following.",
+  date: "2026-04-06",
+  author: "noface.video team",
+  sortOrder: 3,
+  metaDescription:
+    "Learn how faceless TikTok and Instagram creators land paid brand collaborations in 2026 — with real rates, pitch templates, and a step-by-step guide to your first deal.",
+  faqItems: [
+    {
+      question: "Can faceless creators get brand deals?",
+      answer:
+        "Yes. Brands increasingly partner with faceless creators because the content keeps the focus on the product rather than the presenter. Faceless accounts with as few as 5,000 engaged followers in a defined niche regularly secure paid brand collaborations on TikTok and Instagram.",
+    },
+    {
+      question: "How much do faceless TikTok creators earn from brand deals?",
+      answer:
+        "Faceless TikTok creators with 10,000–50,000 followers typically earn $200–$1,000 per sponsored post. Rates increase with follower count and niche — finance and tech creators consistently command higher rates due to their premium advertiser audiences.",
+    },
+    {
+      question: "How do I get my first brand deal as a faceless creator?",
+      answer:
+        "Build a one-page media kit showing your niche, average views, and engagement rate. Search for brands already sponsoring creators in your niche, then pitch them directly via email. Creating an unsolicited demo video for a product you use and tagging the brand is one of the fastest ways to open a paid partnership conversation.",
+    },
+  ],
+  bodyMarkdown: BRAND_DEALS_TIKTOK_INSTAGRAM_BODY,
+};
+
 /** Bundled fallback when DB is empty or service role is not configured */
 export const STATIC_BLOG_POSTS: BlogPost[] = [
+  BRAND_DEALS_TIKTOK_INSTAGRAM_POST,
   FACELESS_YOUTUBE_2026_POST,
   TECHNERD_POST,
 ];

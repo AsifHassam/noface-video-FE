@@ -34,6 +34,7 @@ function mergeStaticExtras(post: BlogPost): BlogPost {
   return {
     ...post,
     metaDescription: s.metaDescription ?? post.metaDescription,
+    metaTitle: s.metaTitle ?? post.metaTitle,
     faqItems: s.faqItems ?? post.faqItems,
     sortOrder: s.sortOrder ?? post.sortOrder,
   };
