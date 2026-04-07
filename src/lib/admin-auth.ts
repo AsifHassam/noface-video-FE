@@ -1,5 +1,5 @@
-import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
+import { verifyAccessToken } from "@/lib/auth-rest";
 
 const ADMIN_EMAIL =
   process.env.ADMIN_EMAIL?.toLowerCase() || "asifhassam14@gmail.com";
@@ -21,24 +21,14 @@ export async function requireAdmin(
     );
   }
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !anon) {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     return Response.json(
       { success: false, error: "Server misconfigured" },
       { status: 500 }
     );
   }
 
-  const supabase = createClient(url, anon, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser(token);
+  const { user, error } = await verifyAccessToken(token);
 
   if (error || !user?.email) {
     return Response.json(

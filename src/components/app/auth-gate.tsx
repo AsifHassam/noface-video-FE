@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useAuthStore } from "@/lib/stores/auth-store";
-import { supabase } from "@/lib/supabase";
+import { refreshSessionIfStale } from "@/lib/auth-rest";
 import { clearCachedToken } from "@/lib/utils/token-cache";
 
 export const AuthGate = ({ children }: { children: React.ReactNode }) => {
@@ -25,8 +25,8 @@ export const AuthGate = ({ children }: { children: React.ReactNode }) => {
     const handleVisible = async () => {
       if (document.visibilityState !== "visible" || !user?.id) return;
       try {
-        const { data: { session }, error } = await supabase.auth.refreshSession();
-        if (!error && session?.access_token) {
+        const session = await refreshSessionIfStale();
+        if (session?.access_token) {
           clearCachedToken(user.id);
         }
       } catch {

@@ -9,8 +9,11 @@
  * This prevents token expiration errors during processing.
  */
 
-import { supabase } from '@/lib/supabase';
 import { config } from '@/lib/config';
+import {
+  readSessionFromStorage,
+  refreshSessionRest,
+} from '@/lib/auth-rest';
 
 type CachedToken = {
   token: string;
@@ -126,13 +129,10 @@ export async function getCachedToken(userId?: string): Promise<string | null> {
       // Ignore
     }
 
-    // Only call getSession if we absolutely need to (no userId from token)
     const effectiveUserId = userId || parsedUserId;
-    
     if (!effectiveUserId) {
-      // Last resort: call getSession (this might hang, but we have no choice)
-      const { data: { session } } = await supabase.auth.getSession();
-      userId = session?.user?.id;
+      const s = readSessionFromStorage();
+      userId = s?.user?.id;
       if (!userId) {
         return null;
       }
@@ -184,14 +184,13 @@ export async function getCachedToken(userId?: string): Promise<string | null> {
       // Ignore
     }
 
-    // Last resort: get from Supabase session (this might hang)
-    const { data: { session }, error } = await supabase.auth.getSession();
-    if (error || !session?.access_token) {
-      console.error('❌ [Token Cache] Failed to get session:', error);
+    const s = readSessionFromStorage();
+    if (!s?.access_token) {
+      console.error('❌ [Token Cache] No session in storage');
       return null;
     }
 
-    const token = session.access_token;
+    const token = s.access_token;
     
     // Cache the token
     try {
@@ -262,49 +261,54 @@ export async function refreshToken(userId?: string): Promise<string | null> {
       }
     }
 
-    // Only call getSession if we still don't have userId
     if (!userId) {
-      const { data: { session } } = await supabase.auth.getSession();
-      userId = session?.user?.id;
+      const s = readSessionFromStorage();
+      userId = s?.user?.id;
+      if (!userId && s?.access_token) {
+        try {
+          const payload = JSON.parse(atob(s.access_token.split('.')[1]));
+          userId = payload.sub || payload.user_id;
+        } catch {
+          /* ignore */
+        }
+      }
       if (!userId) {
         return null;
       }
     }
 
-    // Clear cached token to force refresh
     tokenCache.delete(userId);
-    
-    // Try to refresh via Supabase refreshSession
+
     try {
-      const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
-      if (refreshError) {
-        console.error('❌ [Token Cache] refreshSession error:', refreshError);
-        // Fall through to getCachedToken which will try localStorage
-      } else if (refreshedSession?.access_token) {
+      const s = readSessionFromStorage();
+      if (!s?.refresh_token) {
+        return null;
+      }
+      const refreshedSession = await refreshSessionRest(s.refresh_token);
+      if (refreshedSession?.access_token) {
         const token = refreshedSession.access_token;
         try {
           const payload = JSON.parse(atob(token.split('.')[1]));
           const expiresAt = (payload.exp || 0) * 1000;
-          
+
           tokenCache.set(userId, {
             token,
             expiresAt,
-            userId
+            userId,
           });
-          console.log('✅ [Token Cache] Token refreshed via refreshSession');
+          console.log('✅ [Token Cache] Token refreshed via GoTrue REST');
           return token;
-        } catch (e) {
-          // Return token even if we can't parse expiration
+        } catch {
           tokenCache.set(userId, {
             token,
-            expiresAt: Date.now() + (60 * 60 * 1000),
-            userId
+            expiresAt: Date.now() + 60 * 60 * 1000,
+            userId,
           });
           return token;
         }
       }
     } catch (refreshError) {
-      console.warn('⚠️ [Token Cache] refreshSession failed, trying getCachedToken:', refreshError);
+      console.warn('⚠️ [Token Cache] REST refresh failed, trying getCachedToken:', refreshError);
     }
     
     // Fallback to getCachedToken (which will try localStorage first)

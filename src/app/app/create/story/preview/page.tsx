@@ -14,7 +14,8 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Download, ChevronDown, ChevronUp, Info, Save } from "lucide-react";
 import { config } from "@/lib/config";
-import { supabase } from "@/lib/supabase";
+import { getCurrentUserIdFromStorage } from "@/lib/auth-rest";
+import { getCachedToken } from "@/lib/utils/token-cache";
 import { RenderWaitGame } from "@/components/create/RenderWaitGame";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SaveTemplateDialog } from "@/components/create/save-template-dialog";
@@ -266,58 +267,11 @@ export default function StoryPreviewPage() {
       setRenderProgress(0);
       toast.info("Generating story narration video...");
       
-      // Get auth token with timeout and localStorage fallback
       console.log("🔐 Getting auth token...");
-      
-      let token: string | null = null;
-      
-      // Try 1: Read directly from localStorage (faster)
-      try {
-        const supabaseProjectRef = config.supabaseUrl?.split('.')[0]?.split('//')[1];
-        if (supabaseProjectRef) {
-          const storageKey = `sb-${supabaseProjectRef}-auth-token`;
-          const data = localStorage.getItem(storageKey);
-          if (data) {
-            const parsed = JSON.parse(data);
-            token = parsed?.access_token;
-            if (token) {
-              console.log("✅ Auth token from localStorage");
-            }
-          }
-        }
-      } catch (e) {
-        console.log("⚠️ Failed to get token from localStorage:", e);
-      }
-      
-      // Try 2: Use async getSession (with timeout) if localStorage didn't work
-      if (!token) {
-        console.log("🔄 Trying getSession...");
-        
-        // Create timeout promise (3 seconds)
-        const timeoutPromise = new Promise<null>((resolve) => {
-          setTimeout(() => {
-            console.warn("⚠️ getSession timeout after 3 seconds");
-            resolve(null);
-          }, 3000);
-        });
-        
-        // Create session promise
-        const sessionPromise = supabase.auth.getSession().then(({ data: { session }, error }) => {
-          if (error) {
-            console.error("❌ Session error:", error);
-            return null;
-          }
-          const sessionToken = session?.access_token || null;
-          console.log("✅ Auth token from getSession:", sessionToken ? "Found" : "Not found");
-          return sessionToken;
-        }).catch((error) => {
-          console.error("❌ getSession promise error:", error);
-          return null;
-        });
-        
-        // Race between session and timeout
-        token = await Promise.race([sessionPromise, timeoutPromise]);
-      }
+      const timeoutPromise = new Promise<string | null>((resolve) => {
+        setTimeout(() => resolve(null), 3000);
+      });
+      const token = await Promise.race([getCachedToken(), timeoutPromise]);
       
       if (!token) {
         console.error("❌ No auth token available after all attempts");
@@ -462,58 +416,11 @@ export default function StoryPreviewPage() {
         });
       }, 500);
       
-      // Get auth token with timeout and localStorage fallback
       console.log("🔐 Getting auth token...");
-      
-      let token: string | null = null;
-      
-      // Try 1: Read directly from localStorage (faster)
-      try {
-        const supabaseProjectRef = config.supabaseUrl?.split('.')[0]?.split('//')[1];
-        if (supabaseProjectRef) {
-          const storageKey = `sb-${supabaseProjectRef}-auth-token`;
-          const data = localStorage.getItem(storageKey);
-          if (data) {
-            const parsed = JSON.parse(data);
-            token = parsed?.access_token;
-            if (token) {
-              console.log("✅ Auth token from localStorage");
-            }
-          }
-        }
-      } catch (e) {
-        console.log("⚠️ Failed to get token from localStorage:", e);
-      }
-      
-      // Try 2: Use async getSession (with timeout) if localStorage didn't work
-      if (!token) {
-        console.log("🔄 Trying getSession...");
-        
-        // Create timeout promise (3 seconds)
-        const timeoutPromise = new Promise<null>((resolve) => {
-          setTimeout(() => {
-            console.warn("⚠️ getSession timeout after 3 seconds");
-            resolve(null);
-          }, 3000);
-        });
-        
-        // Create session promise
-        const sessionPromise = supabase.auth.getSession().then(({ data: { session }, error }) => {
-          if (error) {
-            console.error("❌ Session error:", error);
-            return null;
-          }
-          const sessionToken = session?.access_token || null;
-          console.log("✅ Auth token from getSession:", sessionToken ? "Found" : "Not found");
-          return sessionToken;
-        }).catch((error) => {
-          console.error("❌ getSession promise error:", error);
-          return null;
-        });
-        
-        // Race between session and timeout
-        token = await Promise.race([sessionPromise, timeoutPromise]);
-      }
+      const timeoutPromise = new Promise<string | null>((resolve) => {
+        setTimeout(() => resolve(null), 3000);
+      });
+      const token = await Promise.race([getCachedToken(), timeoutPromise]);
       
       if (!token) {
         console.error("❌ No auth token available after all attempts");
@@ -561,8 +468,10 @@ export default function StoryPreviewPage() {
           if (draft?.previewUrl) {
             console.log("📝 Project not found, creating it now...");
             try {
-              const session = await supabase.auth.getSession();
-              const userId = session.data.session?.user?.id || "mock-user";
+              const userId =
+                useAuthStore.getState().user?.id ??
+                getCurrentUserIdFromStorage() ??
+                "mock-user";
               
               if (!draft.title || draft.title === "Untitled Conversation") {
                 const firstLine = draft?.scriptInput?.split('\n')?.[0]?.trim() || "Untitled Story";

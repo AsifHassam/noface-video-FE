@@ -8,6 +8,7 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
+import { applySessionFromUrl, readSessionFromStorage } from "@/lib/auth-rest";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -43,7 +44,14 @@ export default function ResetPasswordPage() {
   });
 
   useEffect(() => {
-    initialize();
+    void (async () => {
+      await applySessionFromUrl();
+      await initialize();
+      if (readSessionFromStorage()?.user) {
+        recoverySeen.current = true;
+        setPhase("ready");
+      }
+    })();
   }, [initialize]);
 
   // Subscribe ASAP so we don’t miss PASSWORD_RECOVERY if it fires before useEffect runs.
@@ -67,9 +75,7 @@ export default function ResetPasswordPage() {
     let cancelled = false;
     const poll = window.setInterval(async () => {
       if (cancelled || recoverySeen.current) return;
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const session = readSessionFromStorage();
       if (session?.user) {
         recoverySeen.current = true;
         setPhase("ready");
@@ -81,9 +87,7 @@ export default function ResetPasswordPage() {
 
     const fail = window.setTimeout(async () => {
       if (cancelled || recoverySeen.current) return;
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const session = readSessionFromStorage();
       if (!session?.user) {
         setPhase("invalid");
       }

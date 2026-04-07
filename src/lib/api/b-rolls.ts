@@ -1,5 +1,5 @@
-import { supabase } from '@/lib/supabase';
 import { config } from '@/lib/config';
+import { getAccessTokenFromStorage } from '@/lib/auth-rest';
 import { getCachedToken, refreshToken } from '@/lib/utils/token-cache';
 
 const API_BASE_URL = config.remotionServerUrl;
@@ -20,12 +20,7 @@ async function getAuthToken(useCache: boolean = true): Promise<string | null> {
       }
     }
     
-    const { data: { session }, error } = await supabase.auth.getSession();
-    if (error || !session?.access_token) {
-      return null;
-    }
-    
-    return session.access_token;
+    return getAccessTokenFromStorage();
   } catch (error) {
     console.error('❌ [b-rolls] getAuthToken failed:', error);
     return null;

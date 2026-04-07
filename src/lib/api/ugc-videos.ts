@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { config } from '@/lib/config';
+import { getAccessTokenFromStorage, getCurrentUserIdFromStorage } from '@/lib/auth-rest';
 import type { UGCVideoProject, UGCVoiceGeneration, UGCGeneratedVideo } from '@/lib/supabase';
 import { getCachedToken, refreshToken } from '@/lib/utils/token-cache';
 
@@ -23,14 +24,7 @@ async function getAuthToken(useCache: boolean = true): Promise<string | null> {
       }
     }
     
-    // Fallback to direct session access (for backward compatibility)
-    const { data: { session }, error } = await supabase.auth.getSession();
-    if (error || !session?.access_token) {
-      console.error("🟣 [ugc-videos] Session error:", error);
-      return null;
-    }
-    
-    return session.access_token;
+    return getAccessTokenFromStorage();
   } catch (error) {
     console.error('❌ [ugc-videos] getAuthToken failed:', error);
     return null;
@@ -138,16 +132,15 @@ async function apiRequest<T>(
  * Create a new UGC video project
  */
 export async function createUGCProject(title: string, description?: string): Promise<UGCVideoProject> {
-  const { data: { session } } = await supabase.auth.getSession();
-  
-  if (!session?.user) {
+  const userId = getCurrentUserIdFromStorage();
+  if (!userId) {
     throw new Error('Authentication required');
   }
 
   const { data, error } = await supabase
     .from('ugc_video_projects')
     .insert({
-      user_id: session.user.id,
+      user_id: userId,
       title,
       description: description || null,
       status: 'DRAFT',
@@ -336,9 +329,8 @@ export async function saveVoiceGeneration(
   audioStoragePath: string | null,
   durationSeconds: number | null
 ): Promise<UGCVoiceGeneration> {
-  const { data: { session } } = await supabase.auth.getSession();
-  
-  if (!session?.user) {
+  const userId = getCurrentUserIdFromStorage();
+  if (!userId) {
     throw new Error('Authentication required');
   }
 
@@ -347,7 +339,7 @@ export async function saveVoiceGeneration(
     .from('ugc_video_projects')
     .select('id')
     .eq('id', projectId)
-    .eq('user_id', session.user.id)
+    .eq('user_id', userId)
     .single();
 
   if (!project) {
@@ -602,9 +594,7 @@ export async function uploadVideoToStorage(
   projectId: string,
   fileName: string
 ): Promise<string> {
-  const { data: { session } } = await supabase.auth.getSession();
-  
-  if (!session?.user) {
+  if (!getCurrentUserIdFromStorage()) {
     throw new Error('Authentication required');
   }
 
@@ -656,9 +646,7 @@ export async function uploadAudioToStorage(
   projectId: string,
   fileName: string
 ): Promise<string> {
-  const { data: { session } } = await supabase.auth.getSession();
-  
-  if (!session?.user) {
+  if (!getCurrentUserIdFromStorage()) {
     throw new Error('Authentication required');
   }
 

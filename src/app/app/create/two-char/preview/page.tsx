@@ -105,27 +105,36 @@ export default function PreviewPage() {
     const projectId = projectIdFromUrl || draft?.id;
     if (!isEditing || !projectId || isLoadingProject) return;
 
-    // Check if we need to load project data (missing script, merged audio, background, or other critical data)
+    // Only fetch what we truly need before showing the editor. Do NOT require srtText or
+    // backgroundId here — both can be empty in DB (no captions yet / legacy rows) and would
+    // keep needsLoad true forever → infinite reload and a stuck "Loading project data..." UI.
     const needsLoad =
       !draft?.script?.length ||
       (!draft?.mergedAudioUrl && !draft?.previewUrl && !draft?.audioFiles?.length) ||
-      !draft?.srtText ||
-      !draft?.backgroundId ||
-      draft?.id !== projectId; // Also load when URL projectId doesn't match draft (e.g. page refresh)
+      draft?.id !== projectId;
 
     if (needsLoad) {
       setIsLoadingProject(true);
       loadProjectIntoDraft(projectId)
-        .then(() => {
-          setIsLoadingProject(false);
-        })
         .catch((err) => {
           console.error("Failed to load project:", err);
           toast.error(err?.message || "Failed to load project data");
+        })
+        .finally(() => {
           setIsLoadingProject(false);
         });
     }
-  }, [isEditing, projectIdFromUrl, draft?.id, draft?.script?.length, draft?.mergedAudioUrl, draft?.previewUrl, draft?.audioFiles?.length, draft?.srtText, draft?.backgroundId, isLoadingProject, loadProjectIntoDraft]);
+  }, [
+    isEditing,
+    projectIdFromUrl,
+    draft?.id,
+    draft?.script?.length,
+    draft?.mergedAudioUrl,
+    draft?.previewUrl,
+    draft?.audioFiles?.length,
+    isLoadingProject,
+    loadProjectIntoDraft,
+  ]);
 
   useEffect(() => {
     // Skip redirect check if we're editing an existing project

@@ -1,9 +1,20 @@
-import { supabase } from '@/lib/supabase';
 import { config } from '@/lib/config';
+import { getAccessTokenFromStorage } from '@/lib/auth-rest';
 import type { Project, VideoTemplate, VideoTemplateExtras } from '@/types';
 import { getCachedToken, refreshToken } from '@/lib/utils/token-cache';
 
 const API_BASE_URL = config.remotionServerUrl;
+
+/** Default client wait for Remotion API (short requests). */
+const DEFAULT_API_TIMEOUT_MS = 25000;
+
+/** TTS + merge + upload for long 2-char scripts can exceed 1–2 minutes. */
+const GENERATE_AUDIO_TIMEOUT_MS = 600000;
+
+export type ApiRequestOptions = RequestInit & {
+  /** Override AbortController timeout (default 25s). */
+  timeoutMs?: number;
+};
 
 /**
  * Get authentication token from Supabase session
@@ -20,20 +31,12 @@ export async function getAuthToken(useCache: boolean = true): Promise<string | n
     }
   }
   
-  // Fallback to direct session access (for backward compatibility)
   try {
     if (typeof window === 'undefined') {
       console.log("🟣 Not in browser, no token available");
       return null;
     }
-    
-    const { data: { session }, error } = await supabase.auth.getSession();
-    if (error || !session?.access_token) {
-      console.error("🟣 Session error:", error);
-      return null;
-    }
-    
-    return session.access_token;
+    return getAccessTokenFromStorage();
   } catch (error) {
     console.error("❌ getAuthToken failed:", error);
     return null;
@@ -45,16 +48,19 @@ export async function getAuthToken(useCache: boolean = true): Promise<string | n
  */
 async function apiRequest<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: ApiRequestOptions = {}
 ): Promise<T> {
-  console.log("🔵 apiRequest:", endpoint, options.method || 'GET');
+  const timeoutMs = options.timeoutMs ?? DEFAULT_API_TIMEOUT_MS;
+  const { timeoutMs: _timeoutOmit, ...fetchOptions } = options;
+
+  console.log("🔵 apiRequest:", endpoint, fetchOptions.method || 'GET', `(timeout ${timeoutMs}ms)`);
   
   const token = await getAuthToken();
   console.log("🔵 Token:", token ? "✅ Present" : "❌ Missing");
   
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string>),
+    ...(fetchOptions.headers as Record<string, string>),
   };
 
   if (token) {
@@ -65,9 +71,9 @@ async function apiRequest<T>(
   console.log("🔵 Fetching:", url);
 
   // Log request body if it exists
-  if (options.body) {
+  if (fetchOptions.body) {
     try {
-      const bodyObj = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+      const bodyObj = typeof fetchOptions.body === 'string' ? JSON.parse(fetchOptions.body) : fetchOptions.body;
       console.log("🔵 Request body being sent:", JSON.stringify(bodyObj, null, 2));
       console.log("🔵 Request body keys:", Object.keys(bodyObj || {}));
       if (bodyObj?.redditTitle !== undefined) {
@@ -80,19 +86,18 @@ async function apiRequest<T>(
         console.log("🔵 Request body does NOT contain redditTitle");
       }
     } catch (e) {
-      console.log("🔵 Request body (could not parse):", options.body);
+      console.log("🔵 Request body (could not parse):", fetchOptions.body);
     }
   } else {
     console.log("🔵 No request body");
   }
 
-  // Add AbortController for timeout (25 seconds, before the 30s Promise.race timeout)
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 25000);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     let response = await fetch(url, {
-      ...options,
+      ...fetchOptions,
       headers,
       signal: controller.signal,
     });
@@ -109,10 +114,10 @@ async function apiRequest<T>(
         console.log('🔄 Retrying request with refreshed token...');
         // Retry the request with refreshed token
         const retryController = new AbortController();
-        const retryTimeoutId = setTimeout(() => retryController.abort(), 25000);
+        const retryTimeoutId = setTimeout(() => retryController.abort(), timeoutMs);
         try {
           response = await fetch(url, {
-            ...options,
+            ...fetchOptions,
             headers,
             signal: retryController.signal,
           });
@@ -399,6 +404,7 @@ export const renderApi = {
     console.log("🎤 renderApi.generateAudio called for project:", projectId);
     return apiRequest(`/api/projects/${projectId}/generate-audio`, {
       method: 'POST',
+      timeoutMs: GENERATE_AUDIO_TIMEOUT_MS,
     });
   },
 

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { refreshSessionIfStale } from "@/lib/auth-rest";
 import { templatesApi, automationApi } from "@/lib/api/projects";
 import { uploadImageToStorage } from "@/lib/api/ugc-videos";
 import { useAuthStore } from "@/lib/stores/auth-store";
@@ -204,7 +205,7 @@ export default function AutomatePage() {
       let result = await withTimeout(Promise.resolve(op()), timeoutMessage);
       if (result?.error && isLikelyAuthError(result.error)) {
         await withTimeout(
-          supabase.auth.refreshSession(),
+          refreshSessionIfStale(),
           "Session refresh timed out. Please try again."
         );
         result = await withTimeout(Promise.resolve(op()), timeoutMessage);

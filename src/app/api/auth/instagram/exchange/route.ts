@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { verifyAccessToken } from "@/lib/auth-rest";
 
 /**
  * Instagram Login: exchange authorization code for Instagram User access token,
@@ -21,14 +22,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing authorization" }, { status: 401 });
     }
 
-    const supabaseUser = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
-    const {
-      data: { user },
-      error: userErr,
-    } = await supabaseUser.auth.getUser(token);
+    const { user, error: userErr } = await verifyAccessToken(token);
     if (userErr || !user) {
       return NextResponse.json({ error: "Invalid session" }, { status: 401 });
     }

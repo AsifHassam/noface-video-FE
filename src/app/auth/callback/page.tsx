@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { applySessionFromUrl, readSessionFromStorage } from "@/lib/auth-rest";
 
 export default function AuthCallbackPage() {
   const router = useRouter();
@@ -10,13 +10,10 @@ export default function AuthCallbackPage() {
   useEffect(() => {
     const handleCallback = async () => {
       try {
-        // The session is automatically handled by Supabase
-        // Just redirect to the dashboard
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+        await applySessionFromUrl();
+        const session = readSessionFromStorage();
 
-        if (session) {
+        if (session?.access_token) {
           router.replace("/app/dashboard");
         } else {
           router.replace("/");
@@ -42,4 +39,3 @@ export default function AuthCallbackPage() {
     </div>
   );
 }
-

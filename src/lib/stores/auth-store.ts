@@ -2,7 +2,18 @@
 
 import { create } from "zustand";
 import { supabase } from "@/lib/supabase";
-import type { User } from "@supabase/supabase-js";
+import type { Session } from "@supabase/supabase-js";
+import {
+  persistAndSyncSession,
+  readSessionFromStorage,
+  refreshSessionIfStale,
+  signInWithOtpRest,
+  signInWithPasswordRest,
+  signUpRest,
+  resetPasswordForEmailRest,
+  updateUserPasswordRest,
+  signOutRest,
+} from "@/lib/auth-rest";
 
 export type AuthUser = {
   id: string;
@@ -52,10 +63,15 @@ function getUserFromPersistedToken(): AuthUser | null {
   }
 }
 
-async function getSessionWithTimeout() {
+async function resolveInitialSession(): Promise<Session | null> {
   return await Promise.race([
-    supabase.auth.getSession(),
-    new Promise((_, reject) =>
+    (async () => {
+      const session = await refreshSessionIfStale();
+      if (!session?.access_token) return null;
+      await persistAndSyncSession(session);
+      return session;
+    })(),
+    new Promise<Session | null>((_, reject) =>
       setTimeout(() => reject(new Error("auth_session_timeout")), SESSION_INIT_TIMEOUT_MS)
     ),
   ]);
@@ -73,8 +89,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
     try {
       // Get current session
-      const sessionResp = await getSessionWithTimeout();
-      const session = (sessionResp as any)?.data?.session;
+      const session = await resolveInitialSession();
 
       if (session?.user) {
         // Fetch profile data
@@ -132,18 +147,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   async signInWithMagicLink(email: string) {
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email: email.trim().toLowerCase(),
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
-        },
-      });
-
-      if (error) {
-        return { error };
-      }
-
-      return { error: null };
+      return await signInWithOtpRest(
+        email.trim().toLowerCase(),
+        `${window.location.origin}/auth/callback`
+      );
     } catch (error) {
       return { error: error as Error };
     }
@@ -151,14 +158,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   async signInWithPassword(email: string, password: string) {
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: email.trim().toLowerCase(),
-        password,
-      });
-      if (error) {
-        return { error };
-      }
-      return { error: null };
+      return await signInWithPasswordRest(email.trim().toLowerCase(), password);
     } catch (error) {
       return { error: error as Error };
     }
@@ -166,18 +166,11 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   async signUpWithPassword(email: string, password: string) {
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim().toLowerCase(),
+      return await signUpRest(
+        email.trim().toLowerCase(),
         password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
-        },
-      });
-      if (error) {
-        return { error, needsEmailConfirmation: false };
-      }
-      const needsEmailConfirmation = !data.session;
-      return { error: null, needsEmailConfirmation };
+        `${window.location.origin}/auth/callback`
+      );
     } catch (error) {
       return { error: error as Error, needsEmailConfirmation: false };
     }
@@ -185,16 +178,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   async resetPasswordForEmail(email: string) {
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(
+      return await resetPasswordForEmailRest(
         email.trim().toLowerCase(),
-        {
-          redirectTo: `${window.location.origin}/auth/reset-password`,
-        }
+        `${window.location.origin}/auth/reset-password`
       );
-      if (error) {
-        return { error };
-      }
-      return { error: null };
     } catch (error) {
       return { error: error as Error };
     }
@@ -202,20 +189,14 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   async updatePassword(newPassword: string) {
     try {
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword,
-      });
-      if (error) {
-        return { error };
-      }
-      return { error: null };
+      return await updateUserPasswordRest(newPassword);
     } catch (error) {
       return { error: error as Error };
     }
   },
 
   async signOut() {
-    await supabase.auth.signOut();
+    await signOutRest();
     // Clear token cache on sign out
     try {
       const { clearCachedToken } = await import('@/lib/utils/token-cache');

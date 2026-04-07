@@ -9,8 +9,8 @@ import { subscriptionApi } from "@/lib/api/subscription";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { toast } from "sonner";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
 import { config } from "@/lib/config";
+import { readSessionFromStorage, refreshSessionIfStale } from "@/lib/auth-rest";
 
 export default function PaymentSuccessPage() {
   const router = useRouter();
@@ -61,19 +61,16 @@ export default function PaymentSuccessPage() {
     try {
       setLoading(true);
       
-      // Try to get or refresh the session
-      let { data: { session } } = await supabase.auth.getSession();
-      
-      // If no session, try to refresh it
-      if (!session) {
+      let session = readSessionFromStorage();
+      if (!session?.access_token) {
         try {
-          const { data: { session: refreshedSession } } = await supabase.auth.refreshSession();
-          session = refreshedSession;
+          await refreshSessionIfStale();
+          session = readSessionFromStorage();
         } catch (refreshError) {
-          console.warn('Failed to refresh session:', refreshError);
+          console.warn("Failed to refresh session:", refreshError);
         }
       }
-      
+
       const userToken = session?.access_token;
 
       // Call backend verification endpoint
