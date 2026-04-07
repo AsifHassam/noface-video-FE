@@ -16,7 +16,9 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: false,
-    detectSessionInUrl: false,
+    // Required for magic links / OAuth: GoTrue redirects with #access_token=… or ?code=…
+    // The client must consume that URL once; our REST helpers do not replace this flow.
+    detectSessionInUrl: true,
     storage: typeof window !== 'undefined' ? window.localStorage : undefined,
   },
   global: {

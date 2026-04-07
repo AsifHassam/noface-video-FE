@@ -1,30 +1,35 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { applySessionFromUrl, readSessionFromStorage } from "@/lib/auth-rest";
+import { supabase } from "@/lib/supabase";
 
 export default function AuthCallbackPage() {
   const router = useRouter();
+  const redirected = useRef(false);
 
   useEffect(() => {
-    const handleCallback = async () => {
-      try {
-        await applySessionFromUrl();
-        const session = readSessionFromStorage();
-
-        if (session?.access_token) {
-          router.replace("/app/dashboard");
-        } else {
-          router.replace("/");
-        }
-      } catch (error) {
-        console.error("Error during auth callback:", error);
-        router.replace("/");
-      }
+    const redirectOnce = (to: "/app/dashboard" | "/") => {
+      if (redirected.current) return;
+      redirected.current = true;
+      router.replace(to);
     };
 
-    handleCallback();
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "INITIAL_SESSION") {
+        redirectOnce(session?.user ? "/app/dashboard" : "/");
+      }
+    });
+
+    void supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        redirectOnce("/app/dashboard");
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, [router]);
 
   return (

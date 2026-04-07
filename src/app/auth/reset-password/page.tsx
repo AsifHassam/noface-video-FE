@@ -8,7 +8,7 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
-import { applySessionFromUrl, readSessionFromStorage } from "@/lib/auth-rest";
+import { readSessionFromStorage } from "@/lib/auth-rest";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -45,9 +45,9 @@ export default function ResetPasswordPage() {
 
   useEffect(() => {
     void (async () => {
-      await applySessionFromUrl();
+      const { data: { session } } = await supabase.auth.getSession();
       await initialize();
-      if (readSessionFromStorage()?.user) {
+      if (session?.user || readSessionFromStorage()?.user) {
         recoverySeen.current = true;
         setPhase("ready");
       }
