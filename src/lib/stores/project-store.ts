@@ -169,8 +169,8 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
    * Load all projects from API
    */
   loadProjects: async () => {
+    set({ loading: true, error: null });
     try {
-      set({ loading: true, error: null });
       const { projects } = await projectsApi.list();
       
       // Convert API format to local format if needed
@@ -215,9 +215,11 @@ export const useProjectStore = create<ProjectStoreState>()((set, get) => ({
         };
       });
       
-      set({ projects: formattedProjects, loading: false });
+      set({ projects: formattedProjects, error: null });
     } catch (error) {
-      set({ error: "Failed to load projects", loading: false });
+      set({ error: "Failed to load projects" });
+    } finally {
+      set({ loading: false });
     }
   },
 
