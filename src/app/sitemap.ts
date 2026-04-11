@@ -3,6 +3,8 @@ import type { MetadataRoute } from "next";
 export default function sitemap(): MetadataRoute.Sitemap {
   const base = new Date("2026-04-05");
   const brandDeals = new Date("2026-04-06");
+  const instagramWarmup = new Date("2026-04-08");
+  const peterStewieIg = new Date("2026-04-09");
   return [
     {
       url: "https://noface.video/",
@@ -31,6 +33,18 @@ export default function sitemap(): MetadataRoute.Sitemap {
     {
       url: "https://noface.video/blog/how-faceless-creators-land-brand-deals-tiktok-instagram",
       lastModified: brandDeals,
+      changeFrequency: "monthly",
+      priority: 0.75,
+    },
+    {
+      url: "https://noface.video/blog/how-to-warm-up-new-instagram-account-minecraft-faceless-videos",
+      lastModified: instagramWarmup,
+      changeFrequency: "monthly",
+      priority: 0.75,
+    },
+    {
+      url: "https://noface.video/blog/how-to-start-faceless-instagram-channel-peter-stewie-step-by-step",
+      lastModified: peterStewieIg,
       changeFrequency: "monthly",
       priority: 0.75,
     },

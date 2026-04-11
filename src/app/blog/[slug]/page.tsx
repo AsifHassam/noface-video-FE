@@ -175,8 +175,8 @@ export default async function BlogPostPage({ params }: PageProps) {
             ) : null}
           </header>
 
-          <div className="relative mt-8 aspect-video w-full overflow-hidden rounded-2xl border border-border/50 bg-gradient-to-br from-purple-500/15 to-pink-500/15 shadow-inner">
-            {post.heroImageUrl ? (
+          {post.heroImageUrl ? (
+            <div className="relative mt-8 aspect-video w-full overflow-hidden rounded-2xl border border-border/50 bg-gradient-to-br from-purple-500/15 to-pink-500/15 shadow-inner">
               <Image
                 src={post.heroImageUrl}
                 alt=""
@@ -185,14 +185,8 @@ export default async function BlogPostPage({ params }: PageProps) {
                 sizes="(max-width: 768px) 100vw, 768px"
                 priority
               />
-            ) : (
-              <div className="absolute inset-0 flex items-center justify-center" aria-hidden>
-                <span className="text-sm font-medium text-muted-foreground">
-                  Article image
-                </span>
-              </div>
-            )}
-          </div>
+            </div>
+          ) : null}
 
           <div className="mt-10 max-w-none">
             <BlogMarkdown content={post.bodyMarkdown} />

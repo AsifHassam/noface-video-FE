@@ -33,10 +33,15 @@ function mergeStaticExtras(post: BlogPost): BlogPost {
   if (!s) return post;
   return {
     ...post,
+    /** Bundled posts: markdown lives in repo (`STATIC_BLOG_POSTS`); DB row is seed-only. */
+    bodyMarkdown: s.bodyMarkdown,
     metaDescription: s.metaDescription ?? post.metaDescription,
     metaTitle: s.metaTitle ?? post.metaTitle,
     faqItems: s.faqItems ?? post.faqItems,
     sortOrder: s.sortOrder ?? post.sortOrder,
+    /** When set in static (including `null`), overrides Supabase `hero_image_url`. */
+    heroImageUrl:
+      s.heroImageUrl !== undefined ? s.heroImageUrl : post.heroImageUrl,
   };
 }
 

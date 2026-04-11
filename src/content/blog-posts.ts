@@ -1,5 +1,7 @@
 import { BRAND_DEALS_TIKTOK_INSTAGRAM_BODY } from "@/content/post-body-brand-deals-tiktok-instagram";
 import { FACELESS_YOUTUBE_2026_BODY } from "@/content/post-body-faceless-youtube-2026";
+import { INSTAGRAM_WARMUP_MINECRAFT_BODY } from "@/content/post-body-instagram-warmup-minecraft";
+import { FACELESS_INSTAGRAM_PETER_STEWIE_BODY } from "@/content/post-body-faceless-instagram-peter-stewie";
 
 export type BlogFaqItem = {
   question: string;
@@ -24,6 +26,61 @@ export type BlogPost = {
   faqItems?: BlogFaqItem[];
   /** Higher = newer when `date` ties; used for blog index order */
   sortOrder?: number;
+};
+
+const FACELESS_INSTAGRAM_PETER_STEWIE_POST: BlogPost = {
+  slug: "how-to-start-faceless-instagram-channel-peter-stewie-step-by-step",
+  title:
+    "How to Start a Faceless Instagram Channel with Peter & Stewie (Step-by-Step Guide)",
+  subtitle: "No face. No camera. No problem.",
+  excerpt:
+    "Learn how to launch a faceless Instagram channel with Peter and Stewie characters — from account basics to your first rendered Reel using noface.video.",
+  date: "2026-04-09",
+  author: "noface.video team",
+  sortOrder: 6,
+  metaTitle:
+    "How to Start a Faceless Instagram Channel with Peter & Stewie (Step-by-Step)",
+  metaDescription:
+    "Learn how to start a viral faceless Instagram channel using Peter and Stewie characters on noface.video. A complete step-by-step guide covering account warm-up, content creation, and going viral — no face required.",
+  /** Explicit null so DB-stored hero does not override (see mergeStaticExtras). */
+  heroImageUrl: null,
+  bodyMarkdown: FACELESS_INSTAGRAM_PETER_STEWIE_BODY,
+};
+
+const INSTAGRAM_WARMUP_MINECRAFT_POST: BlogPost = {
+  slug: "how-to-warm-up-new-instagram-account-minecraft-faceless-videos",
+  title:
+    "How to Warm Up a New Instagram Account for Minecraft Faceless Videos (Step-by-Step)",
+  subtitle:
+    "Do this before you post a single Reel — or the algorithm will ignore you for weeks",
+  excerpt:
+    "Skip this and your first Reel gets ignored. Here's the exact warm-up process for new Instagram accounts posting Minecraft faceless content — including how to calibrate the algorithm before you post a single video.",
+  date: "2026-04-08",
+  author: "noface.video team",
+  sortOrder: 5,
+  metaTitle:
+    "How to Warm Up a New Instagram Account for Minecraft Faceless Videos",
+  metaDescription:
+    "New Instagram account getting zero views? Warm it up first. Here's the step-by-step process to calibrate the algorithm for Minecraft faceless content before you post your first Reel.",
+  faqItems: [
+    {
+      question: "How long does it take to warm up a new Instagram account?",
+      answer:
+        "For Minecraft and gaming faceless content, the warm-up process takes 3–5 days of consistent activity — following niche accounts, watching relevant Reels fully, and leaving genuine comments. You'll know it's working when your Reels feed fills up with Minecraft and character content.",
+    },
+    {
+      question: "Why is my new Instagram account getting zero views?",
+      answer:
+        "A new Instagram account gets zero views because the algorithm hasn't categorised it yet. Without a warm-up period of niche-specific activity, Instagram doesn't know who to show your content to — so it shows it to almost nobody. The warm-up process teaches Instagram your niche before you post.",
+    },
+    {
+      question:
+        "What kind of Instagram accounts should I follow for a Minecraft faceless channel?",
+      answer:
+        "Follow large Minecraft content accounts, faceless gaming channels, and character edit accounts posting Stewie, Peter Griffin, Rick and Morty, and anime content. These all share the same audience as Minecraft faceless content and help Instagram correctly categorise your account.",
+    },
+  ],
+  bodyMarkdown: INSTAGRAM_WARMUP_MINECRAFT_BODY,
 };
 
 const TECHNERD_POST: BlogPost = {
@@ -134,6 +191,8 @@ const BRAND_DEALS_TIKTOK_INSTAGRAM_POST: BlogPost = {
 
 /** Bundled fallback when DB is empty or service role is not configured */
 export const STATIC_BLOG_POSTS: BlogPost[] = [
+  FACELESS_INSTAGRAM_PETER_STEWIE_POST,
+  INSTAGRAM_WARMUP_MINECRAFT_POST,
   BRAND_DEALS_TIKTOK_INSTAGRAM_POST,
   FACELESS_YOUTUBE_2026_POST,
   TECHNERD_POST,
