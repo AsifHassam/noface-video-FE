@@ -2305,6 +2305,13 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   const [magicCreateScript, setMagicCreateScript] = useState("");
   const [magicCreateLoading, setMagicCreateLoading] = useState(false);
   const [magicCreateTranscribeLoading, setMagicCreateTranscribeLoading] = useState(false);
+  /**
+   * True once Transcribe has completed successfully for the currently selected
+   * main video. Required before the user can advance past Step 2B — we don't
+   * let them skip transcription with hand-typed text because the rest of the
+   * Magic pipeline relies on word-timestamped SRT data that only STT produces.
+   */
+  const [magicCreateTranscribed, setMagicCreateTranscribed] = useState(false);
   /** `gen:${id}` or `upload:${id}` — main video for Magic create (not forced to latest lip-sync) */
   const [magicCreateMainVideoKey, setMagicCreateMainVideoKey] = useState<string | null>(null);
   /** Wizard step for the Magic Create 3-step flow. */
@@ -2317,6 +2324,12 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
    * Avatars → Speech → Lipsync flow. When lipsync completes we reopen Magic Create on Step 3.
    */
   const [magicPendingReopenOnLipsync, setMagicPendingReopenOnLipsync] = useState(false);
+  /**
+   * When true, the media dialog is being used as a Magic Create picker (for choosing the
+   * main video) rather than for adding media directly to the canvas. Selections route to
+   * setMagicCreateMainVideoKey + close the media dialog, leaving the wizard open.
+   */
+  const [magicMediaPickerActive, setMagicMediaPickerActive] = useState(false);
   // Track where to insert a new element (after which element)
   const [insertAfterElementId, setInsertAfterElementId] = useState<string | null>(null);
   /** Dedupe concurrent Supabase project creates (client insert has no built-in timeout) */
@@ -2360,6 +2373,12 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       return magicMainVideoOptions[0]!.key;
     });
   }, [magicCreateOpen, magicMainVideoOptions]);
+
+  // Whenever the user picks a different main video, the existing transcript
+  // no longer matches — force them to re-run Transcribe before advancing.
+  useEffect(() => {
+    setMagicCreateTranscribed(false);
+  }, [magicCreateMainVideoKey]);
 
   // Load project if projectId is provided
   useEffect(() => {
@@ -5948,6 +5967,14 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
 
   // Handle selecting a generated video from media dialog
   const handleSelectGeneratedVideo = async (video: UGCGeneratedVideo) => {
+    // If the media dialog is being used as a Magic Create picker, just set the
+    // main-video key and return to the wizard — don't add the video to the canvas.
+    if (magicMediaPickerActive) {
+      setMagicCreateMainVideoKey(`gen:${video.id}`);
+      setMagicMediaPickerActive(false);
+      setMediaDialogOpen(false);
+      return;
+    }
     setMediaDialogOpen(false);
 
     setAssets((prev) => [
@@ -6191,6 +6218,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       }
 
       setMagicCreateScript(text);
+      setMagicCreateTranscribed(true);
     } catch (e) {
       console.error("[Magic create transcribe]", e);
       alert(e instanceof Error ? e.message : "Transcription failed");
@@ -13085,19 +13113,21 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   </div>
                 </button>
 
-                {/* Media card */}
+                {/* Media card — always enabled so the user can upload directly in the picker */}
                 <button
                   type="button"
                   onClick={() => {
                     setMagicSource("media");
                     setMagicWizardStep("media");
+                    // Open the full media picker dialog (grid view) instead of
+                    // forcing the user through a small dropdown inside the wizard.
+                    setMagicMediaPickerActive(true);
+                    setMediaDialogOpen(true);
                   }}
-                  disabled={magicMainVideoOptions.length === 0}
                   className={cn(
                     "group relative flex flex-col items-start gap-3 rounded-xl border-2 p-5 text-left transition-all",
                     "hover:border-primary hover:bg-primary/5",
-                    "border-border",
-                    "disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:bg-transparent"
+                    "border-border"
                   )}
                 >
                   <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600">
@@ -13106,14 +13136,9 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   <div>
                     <div className="font-semibold">Choose from Media</div>
                     <div className="text-xs text-muted-foreground mt-1">
-                      Pick an uploaded video or prior lipsync — we'll transcribe it into a script.
+                      Pick an uploaded video or prior lipsync — or upload a new one — and we'll transcribe it into a script.
                     </div>
                   </div>
-                  {magicMainVideoOptions.length === 0 && (
-                    <span className="text-[10px] text-muted-foreground font-medium">
-                      No videos in Media yet
-                    </span>
-                  )}
                 </button>
               </div>
 
@@ -13133,29 +13158,67 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
           {magicWizardStep === "media" && (
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="magic-wizard-media">Video</Label>
-                <Select
-                  value={magicCreateMainVideoKey ?? undefined}
-                  onValueChange={(v) => setMagicCreateMainVideoKey(v)}
-                  disabled={magicMainVideoOptions.length === 0}
-                >
-                  <SelectTrigger id="magic-wizard-media" className="w-full">
-                    <SelectValue
-                      placeholder={
-                        magicMainVideoOptions.length === 0
-                          ? "No videos — upload one first"
-                          : "Choose a video"
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {magicMainVideoOptions.map((o) => (
-                      <SelectItem key={o.key} value={o.key}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>Video</Label>
+                {(() => {
+                  const selected = magicMainVideoOptions.find(
+                    (o) => o.key === magicCreateMainVideoKey
+                  );
+                  if (selected) {
+                    return (
+                      <div className="flex items-center gap-3 rounded-lg border p-3">
+                        <div className="relative flex h-16 w-24 flex-shrink-0 items-center justify-center overflow-hidden rounded bg-muted">
+                          <video
+                            src={selected.url}
+                            className="h-full w-full object-cover"
+                            muted
+                            playsInline
+                          />
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                            <Play className="h-5 w-5 text-white" />
+                          </div>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium">
+                            {selected.label}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {selected.duration_seconds
+                              ? `${Math.round(selected.duration_seconds)}s`
+                              : "Video"}
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setMagicMediaPickerActive(true);
+                            setMediaDialogOpen(true);
+                          }}
+                        >
+                          Change
+                        </Button>
+                      </div>
+                    );
+                  }
+                  return (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full justify-start gap-2"
+                      disabled={magicMainVideoOptions.length === 0}
+                      onClick={() => {
+                        setMagicMediaPickerActive(true);
+                        setMediaDialogOpen(true);
+                      }}
+                    >
+                      <Upload className="h-4 w-4" />
+                      {magicMainVideoOptions.length === 0
+                        ? "No videos — upload one first"
+                        : "Choose a video from Media"}
+                    </Button>
+                  );
+                })()}
               </div>
 
               <div className="space-y-2">
@@ -13186,7 +13249,9 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   className="min-h-[160px] resize-y font-mono text-sm leading-relaxed"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Use blank lines between paragraphs to split scenes.
+                  {magicCreateTranscribed
+                    ? "Use blank lines between paragraphs to split scenes."
+                    : "Click Transcribe to continue — we need word-level timings from the video before generating."}
                 </p>
               </div>
 
@@ -13209,7 +13274,17 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   </Button>
                   <Button
                     type="button"
-                    disabled={!magicCreateMainVideoKey || !magicCreateScript.trim() || magicCreateTranscribeLoading}
+                    disabled={
+                      !magicCreateMainVideoKey ||
+                      !magicCreateScript.trim() ||
+                      magicCreateTranscribeLoading ||
+                      !magicCreateTranscribed
+                    }
+                    title={
+                      !magicCreateTranscribed
+                        ? "Click Transcribe first — the Magic pipeline needs word-level timings from the video."
+                        : undefined
+                    }
                     onClick={() => setMagicWizardStep("generate")}
                   >
                     Next
@@ -13347,14 +13422,21 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
         // Reset insertion point when dialog closes
         if (!open) {
           setInsertAfterElementId(null);
+          // If the dialog closes without a selection while in Magic picker mode,
+          // clear the flag so the next normal open behaves as usual.
+          setMagicMediaPickerActive(false);
         }
       }}>
         <DialogContent className="!w-[90vw] !h-[90vh] !max-w-[90vw] !max-h-[90vh] !sm:max-w-[90vw] overflow-hidden p-6 flex flex-col">
           <DialogHeader className="flex flex-row items-start justify-between gap-4">
             <div>
-            <DialogTitle>All Media</DialogTitle>
+            <DialogTitle>
+              {magicMediaPickerActive ? "Choose a video" : "All Media"}
+            </DialogTitle>
             <DialogDescription>
-              Select a video or image to use in your project
+              {magicMediaPickerActive
+                ? "Pick an uploaded video or prior lip-sync for Magic Create."
+                : "Select a video or image to use in your project"}
             </DialogDescription>
             </div>
             <Input
@@ -13482,6 +13564,12 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                           key={`uploaded-video-${idx}`}
                           className="flex flex-col items-center gap-2 p-4 rounded-lg border-2 border-gray-200 hover:border-blue-500 cursor-pointer transition-all relative"
                           onClick={() => {
+                            if (magicMediaPickerActive) {
+                              setMagicCreateMainVideoKey(`upload:${video.id}`);
+                              setMagicMediaPickerActive(false);
+                              setMediaDialogOpen(false);
+                              return;
+                            }
                             addElementToCanvas("video", video.url);
                             setMediaDialogOpen(false);
                           }}
@@ -13515,6 +13603,12 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                             className="w-full"
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (magicMediaPickerActive) {
+                                setMagicCreateMainVideoKey(`upload:${video.id}`);
+                                setMagicMediaPickerActive(false);
+                                setMediaDialogOpen(false);
+                                return;
+                              }
                               addElementToCanvas("video", video.url);
                               setMediaDialogOpen(false);
                             }}
@@ -13527,8 +13621,8 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   </div>
                 )}
 
-                {/* Uploaded Images Section */}
-                {uploadedImages.length > 0 && (
+                {/* Uploaded Images Section — hidden while picking a main video for Magic Create */}
+                {!magicMediaPickerActive && uploadedImages.length > 0 && (
                   <div>
                     <h3 className="text-lg font-semibold mb-4 px-4">Uploaded Images</h3>
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 px-4">
