@@ -97,7 +97,7 @@ export const EmptyState = () => {
       </span>
       <div className="space-y-2">
         <h3 className="text-2xl font-semibold text-foreground">
-          {!canCreateVideo && user ? "You've reached your video limit" : "No videos yet—let&apos;s create one"}
+          {!canCreateVideo && user ? "You've reached your video limit" : "No videos yet—let's create one"}
         </h3>
         <p className="max-w-sm text-sm text-muted-foreground">
           {!canCreateVideo && user 
