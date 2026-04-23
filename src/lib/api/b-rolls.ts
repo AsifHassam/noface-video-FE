@@ -272,7 +272,7 @@ export const bRollsApi = {
    */
   async delete(id: string): Promise<{ success: boolean; message: string }> {
     console.log('[B-roll] bRollsApi.delete', id);
-    const r = await apiRequest(`/api/b-rolls/${id}`, {
+    const r = await apiRequest<{ success: boolean; message: string }>(`/api/b-rolls/${id}`, {
       method: 'DELETE',
     });
     console.log('[B-roll] bRollsApi.delete done', r);
