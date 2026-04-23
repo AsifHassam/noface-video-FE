@@ -12,7 +12,6 @@ import {
   Type,
   FileText,
   Mic,
-  Sparkles,
   Film,
   Volume2,
   VolumeX,
@@ -44,10 +43,13 @@ import {
   ChevronUp,
   ChevronDown,
   GripVertical,
-  Pencil
+  Pencil,
+  Sparkles,
+  Snail,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -76,11 +78,17 @@ import { v4 as uuid } from "uuid";
 import { config } from "@/lib/config";
 import { supabase } from "@/lib/supabase";
 import type { SubtitleSegment, SubtitleStyle, SubtitlePosition, SubtitleFontFamily } from "@/types";
+import { CANVAS_SUBTITLE_DRAG_Z, CANVAS_SUBTITLE_Z } from "@/lib/canvas-subtitle-z";
 import { SubtitleStyleSelector } from "./subtitle-style-selector";
-import { getSubtitleStyle, OUTLINED_STYLE, STYLE_KARAOKE_PINK, STYLE_MAGIC_LOOPS, STYLE_BOLD_GREEN } from "@/lib/data/subtitle-styles";
+import { getSubtitleStyle, OUTLINED_STYLE, STYLE_KARAOKE_PINK, STYLE_MAGIC_LOOPS, STYLE_BOLD_GREEN, STYLE_FANCY, STYLE_CHIP_TEXT, STYLE_CHIP_PILL } from "@/lib/data/subtitle-styles";
 import { SubtitlesEditor } from "./subtitles-editor";
 import { serializeSrt, parseSrtText } from "@/lib/utils/srt";
-import { bRollsApi, type BRoll } from "@/lib/api/b-rolls";
+import { bRollsApi, type BRoll, type SceneStockBRollRow } from "@/lib/api/b-rolls";
+import {
+  magicSceneExplainersApi,
+  type SceneExplainerCard,
+} from "@/lib/api/magic-scene-explainers";
+import { MagicSceneExplainerGraphic } from "./magic-scene-explainer-graphic";
 import {
   createUGCProject,
   getUGCProject,
@@ -154,6 +162,571 @@ async function convertWebmBlobToWavDataUrl(blob: Blob): Promise<string> {
   }
 }
 
+/** Stub: split script into timed caption segments for Magic create (beta). */
+function buildMagicCreateSubtitleSegments(script: string, totalMs: number): SubtitleSegment[] {
+  const trimmed = script.trim();
+  if (!trimmed || !Number.isFinite(totalMs) || totalMs <= 0) return [];
+  const sentences = trimmed.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
+  const chunks =
+    sentences.length > 0
+      ? sentences
+      : trimmed.match(/.{1,80}(\s|$)/g)?.map((s) => s.trim()) ?? [trimmed];
+  const n = Math.max(1, chunks.length);
+  const slice = totalMs / n;
+  return chunks.slice(0, 40).map((text, i) => ({
+    startMs: Math.round(i * slice),
+    endMs: Math.round((i + 1) * slice),
+    speaker: "A" as const,
+    text: text.slice(0, 500),
+  }));
+}
+
+/** Normalize STT /transcribe segment times (seconds) — API may use startSec/endSec, start/end, or snake_case. */
+function sttSegmentTimesSec(seg: {
+  startSec?: unknown;
+  endSec?: unknown;
+  start?: unknown;
+  end?: unknown;
+  start_sec?: unknown;
+  end_sec?: unknown;
+}): { startSec: number; endSec: number } | null {
+  const num = (v: unknown): number => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string" && v.trim() !== "") {
+      const n = parseFloat(v);
+      if (Number.isFinite(n)) return n;
+    }
+    return NaN;
+  };
+  const pickFirst = (...vals: unknown[]) => {
+    for (const v of vals) {
+      const n = num(v);
+      if (Number.isFinite(n)) return n;
+    }
+    return NaN;
+  };
+  const startSec = pickFirst(seg.startSec, seg.start, seg.start_sec);
+  const endSec = pickFirst(seg.endSec, seg.end, seg.end_sec);
+  if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) return null;
+  return { startSec, endSec };
+}
+
+/** Transcribe a video URL via STT server → timeline subtitle segments (same rules as Generate Subtitles). */
+async function transcribeUrlToSubtitleSegments(
+  videoUrl: string,
+  ctx: { timelineStartMs: number; videoStartOffsetMs: number; elementDurationMs: number }
+): Promise<SubtitleSegment[]> {
+  try {
+    const res = await fetch(`${config.sttServerUrl}/transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        audioPath: videoUrl,
+        language: "en",
+        wordTimestamps: true,
+      }),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { segments?: unknown[] };
+    const segments = Array.isArray(data.segments) ? data.segments : [];
+    const out: SubtitleSegment[] = [];
+    const offSec = ctx.videoStartOffsetMs / 1000;
+    const maxSec = ctx.elementDurationMs / 1000;
+    for (const seg of segments) {
+      const times = sttSegmentTimesSec(seg as Record<string, unknown>);
+      if (!times) continue;
+      const rawText =
+        typeof (seg as { text?: unknown }).text === "string"
+          ? (seg as { text: string }).text
+          : "";
+      const line = rawText.trim();
+      if (!line) continue;
+      const adjStart = times.startSec - offSec;
+      const adjEnd = times.endSec - offSec;
+      if (adjStart < 0 || adjEnd > maxSec + 0.05) continue;
+      const startMs = Math.round(ctx.timelineStartMs + adjStart * 1000);
+      const endMs = Math.round(ctx.timelineStartMs + adjEnd * 1000);
+      if (endMs <= startMs) continue;
+      out.push({ startMs, endMs, speaker: "A", text: line });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function captionTextForTimeRange(
+  startMs: number,
+  endMs: number,
+  segments: SubtitleSegment[]
+): string {
+  if (!segments.length) return "";
+  const overlapping = segments.filter((s) => s.endMs > startMs && s.startMs < endMs);
+  if (overlapping.length === 0) return "";
+  return overlapping
+    .map((s) => s.text.trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
+/** Fill subtitle-cinema explainer layers with real caption lines for their timeline window. */
+function applyCaptionTextToCinemaExplainers(
+  elements: CanvasElement[],
+  segments: SubtitleSegment[]
+): CanvasElement[] {
+  if (!segments.length) return elements;
+  return elements.map((el) => {
+    if (!el.magicSceneExplainer || el.explainerSceneStyle !== "subtitle-cinema") {
+      return el;
+    }
+    const start = el.startTime ?? 0;
+    const end = start + (el.duration ?? 5000);
+    const cap = captionTextForTimeRange(start, end, segments);
+    if (!cap) return el;
+    return {
+      ...el,
+      text: cap,
+      explainerSubline: undefined,
+    };
+  });
+}
+
+/**
+ * Extend each subtitle-cinema beat until overlapping STT/caption segments finish; push later
+ * explainer layers forward so the dimmed overlay does not cut off while speech continues.
+ */
+function stretchCinemaExplainerTimingsToCaptions(
+  explainerElements: CanvasElement[],
+  captionSegments: SubtitleSegment[],
+  totalMs: number
+): CanvasElement[] {
+  if (!captionSegments.length || !explainerElements.length) {
+    return explainerElements;
+  }
+
+  const out = explainerElements.map((e) => ({ ...e }));
+  const sorted = out
+    .filter((e) => e.magicSceneExplainer)
+    .sort((a, b) => (a.startTime ?? 0) - (b.startTime ?? 0));
+
+  if (sorted.length === 0) return out;
+
+  for (let i = 0; i < sorted.length; i++) {
+    const el = sorted[i]!;
+    if (el.explainerSceneStyle !== "subtitle-cinema") continue;
+
+    const start = el.startTime ?? 0;
+    const nextEl = sorted[i + 1];
+    const nextStart = nextEl ? nextEl.startTime ?? 0 : totalMs;
+
+    const overlapping = captionSegments.filter(
+      (s) => s.endMs > start && s.startMs < nextStart
+    );
+    let speechEnd = nextStart;
+    if (overlapping.length > 0) {
+      speechEnd = Math.max(speechEnd, ...overlapping.map((s) => s.endMs));
+    }
+    speechEnd = Math.min(speechEnd, totalMs);
+    let newDur = Math.max(600, speechEnd - start);
+    newDur = Math.min(CINEMA_BLACK_OVERLAY_MS, newDur);
+    el.duration = newDur;
+    el.explainerSegmentDurationMs = newDur;
+    const effectiveEnd = start + newDur;
+
+    const v = el.explainerGraphicVariant;
+    if (v !== undefined) {
+      for (const o of out) {
+        if (o.magicSceneExplainerStock && o.explainerGraphicVariant === v) {
+          o.duration = newDur;
+          o.startTime = el.startTime;
+        }
+      }
+    }
+
+    if (effectiveEnd > nextStart + 0.5 && nextEl) {
+      const shift = effectiveEnd - nextStart;
+      for (let j = i + 1; j < sorted.length; j++) {
+        const sib = sorted[j]!;
+        sib.startTime = (sib.startTime ?? 0) + shift;
+        const sv = sib.explainerGraphicVariant;
+        if (sv !== undefined) {
+          for (const o of out) {
+            if (o.magicSceneExplainerStock && o.explainerGraphicVariant === sv) {
+              o.startTime = sib.startTime;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Fixed intro sequence (first 9 seconds):
+ *   0s – 4s : 50/50 split (main in bottom half + b-roll in top half)
+ *   4s – 7s : subtitle-cinema (black full-frame overlay; main hidden)
+ *   7s – 9s : full-screen b-roll (main hidden behind full-frame b-roll)
+ * After 9s the layout scheduler takes over and the LLM-picked `mainMediaLayout`
+ * drives each beat, capped by the 15% main-visible budget.
+ */
+const OPENING_SPLIT_MS = 4000;
+/** Intro black-overlay length (4s→7s). Kept separate from the general cinema cap. */
+const OPENING_CINEMA_MS = 3000;
+/** Intro full-screen b-roll length (7s→9s). */
+const OPENING_BROLL_FULL_MS = 2000;
+/** End of the fixed intro. Post-intro scheduling starts here. */
+const OPENING_TOTAL_MS = OPENING_SPLIT_MS + OPENING_CINEMA_MS + OPENING_BROLL_FULL_MS;
+
+/** Each full-frame black (subtitle-cinema) overlay duration — fixed 2s for non-intro beats. */
+const CINEMA_BLACK_OVERLAY_MS = 2000;
+const MAX_EXPLAINER_SCENE_MS = 4000;
+
+// NOTE: an earlier iteration enforced a hard 15% cap on main-video visibility
+// post-intro. That was dropped because every text card MUST render against
+// the main video (never b-roll) — b-roll only fills cinema tails / raw gaps.
+
+/**
+ * Align scene switches to spoken-phrase boundaries.
+ *
+ * The LLM picks anchor phrases in the script and we linearly map their char
+ * offset to ms — which lands mid-sentence more often than not. That produces
+ * a jumpcut feel when the layout flips (e.g. circle PiP → 50/50 → black
+ * overlay) while the presenter is mid-word. This snaps each explainer beat's
+ * start to the closest caption segment boundary (start or end of a phrase
+ * line) within a window, so transitions fall on natural pauses instead.
+ *
+ * Stock-image companions (`magicSceneExplainerStock`) are shifted with their
+ * parent beat. Durations are rebuilt to fill to the next beat's new start,
+ * capped per-style; downstream `stretchCinemaExplainerTimingsToCaptions` and
+ * `enforceExplainerOpeningAndMaxSceneDuration` still run afterwards.
+ */
+function snapExplainerStartsToCaptionBoundaries(
+  explainerElements: CanvasElement[],
+  captionSegments: SubtitleSegment[],
+  totalMs: number,
+  maxSnapMs = 1200
+): CanvasElement[] {
+  if (!captionSegments.length || !explainerElements.length) {
+    return explainerElements;
+  }
+
+  const out = explainerElements.map((e) => ({ ...e }));
+  const beats = out
+    .filter((e) => e.magicSceneExplainer && !e.magicSceneExplainerStock)
+    .sort((a, b) => (a.startTime ?? 0) - (b.startTime ?? 0));
+  if (beats.length === 0) return out;
+
+  const boundaries = Array.from(
+    new Set(
+      captionSegments.flatMap((s) => [
+        Math.max(0, Math.round(s.startMs)),
+        Math.max(0, Math.round(s.endMs)),
+      ])
+    )
+  )
+    .filter((m) => Number.isFinite(m) && m >= 0 && m <= totalMs)
+    .sort((a, b) => a - b);
+  if (boundaries.length === 0) return out;
+
+  const MIN_STEP = 600;
+
+  const nearestBoundary = (t: number): number | null => {
+    let lo = 0;
+    let hi = boundaries.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (boundaries[mid]! < t) lo = mid + 1;
+      else hi = mid;
+    }
+    const candidates = [boundaries[lo]!];
+    if (lo > 0) candidates.push(boundaries[lo - 1]!);
+    let best = candidates[0]!;
+    for (const c of candidates) {
+      if (Math.abs(c - t) < Math.abs(best - t)) best = c;
+    }
+    return Math.abs(best - t) <= maxSnapMs ? best : null;
+  };
+
+  for (let i = 0; i < beats.length; i++) {
+    const el = beats[i]!;
+    const orig = Math.max(0, el.startTime ?? 0);
+    if (i === 0 && orig < 400) continue;
+    const snapped = nearestBoundary(orig);
+    if (snapped == null) continue;
+    const nextStart =
+      i < beats.length - 1 ? beats[i + 1]!.startTime ?? totalMs : totalMs;
+    if (snapped >= nextStart - MIN_STEP) continue;
+    el.startTime = snapped;
+  }
+
+  for (let i = 1; i < beats.length; i++) {
+    const prev = beats[i - 1]!.startTime ?? 0;
+    if ((beats[i]!.startTime ?? 0) < prev + MIN_STEP) {
+      beats[i]!.startTime = prev + MIN_STEP;
+    }
+  }
+
+  for (let i = 0; i < beats.length; i++) {
+    const el = beats[i]!;
+    const start = Math.max(0, el.startTime ?? 0);
+    const nextStart =
+      i < beats.length - 1 ? beats[i + 1]!.startTime ?? totalMs : totalMs;
+    const window = Math.max(MIN_STEP, Math.min(totalMs, nextStart) - start);
+    const maxForStyle =
+      el.explainerSceneStyle === "subtitle-cinema"
+        ? CINEMA_BLACK_OVERLAY_MS
+        : MAX_EXPLAINER_SCENE_MS;
+    const dur = Math.max(MIN_STEP, Math.min(maxForStyle, window));
+    el.duration = dur;
+    el.explainerSegmentDurationMs = dur;
+
+    const v = el.explainerGraphicVariant;
+    if (v !== undefined) {
+      for (const o of out) {
+        if (o.magicSceneExplainerStock && o.explainerGraphicVariant === v) {
+          o.startTime = start;
+          o.duration = dur;
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Force the new 3-stage opening sequence for explainer beats:
+ *   0s – 4s  : main+b-roll 50/50 split (no explainer yet)
+ *   4s – 7s  : first explainer beat, forced subtitle-cinema (black overlay, 3s)
+ *   7s – 9s  : full-screen b-roll (main hidden; no explainer)
+ *   9s+      : remaining LLM beats flow from OPENING_TOTAL_MS onward
+ * Also hard-caps each explainer beat; non-intro subtitle-cinema beats are capped
+ * at CINEMA_BLACK_OVERLAY_MS (2s) elsewhere, but the intro cinema is 3s.
+ */
+function enforceExplainerOpeningAndMaxSceneDuration(
+  explainerElements: CanvasElement[],
+  totalMs: number
+): CanvasElement[] {
+  if (!explainerElements.length || totalMs <= 0) return explainerElements;
+
+  const out = explainerElements.map((e) => ({ ...e }));
+  const textBeats = out
+    .filter((e) => e.magicSceneExplainer)
+    .sort((a, b) => (a.startTime ?? 0) - (b.startTime ?? 0));
+  if (!textBeats.length) return out;
+
+  const introSplitEnd = Math.min(Math.max(0, OPENING_SPLIT_MS), totalMs);
+  const introCinemaEnd = Math.min(totalMs, introSplitEnd + OPENING_CINEMA_MS);
+  const introBrollEnd = Math.min(totalMs, introCinemaEnd + OPENING_BROLL_FULL_MS);
+  const cinemaDur = Math.max(600, introCinemaEnd - introSplitEnd);
+
+  // No explainer beat should begin before the split-screen intro has played.
+  for (const beat of textBeats) {
+    if ((beat.startTime ?? 0) < introSplitEnd) beat.startTime = introSplitEnd;
+  }
+
+  // Force the first explainer beat to be a 3s subtitle-cinema block at 4s→7s.
+  const first = textBeats[0]!;
+  first.startTime = introSplitEnd;
+  first.duration = cinemaDur;
+  first.explainerSegmentDurationMs = cinemaDur;
+  first.explainerSceneStyle = "subtitle-cinema";
+  first.height = 100;
+  first.zIndex = 945;
+  first.fontColor = "#ffffff";
+
+  // Remaining beats must start AFTER the full 9s intro (split + cinema + full
+  // b-roll). The 7s→9s full-frame b-roll window owns that slice on its own, so
+  // no explainer overlay should compete with it.
+  for (let i = 1; i < textBeats.length; i++) {
+    const prev = textBeats[i - 1]!;
+    const cur = textBeats[i]!;
+    const prevStart = prev.startTime ?? 0;
+    const prevDur = prev.duration ?? 600;
+    const minStart = Math.max(introBrollEnd, prevStart + Math.max(600, prevDur));
+    if ((cur.startTime ?? 0) < minStart) {
+      cur.startTime = minStart;
+    }
+  }
+
+  // Cap each beat to its available window; black overlay (cinema) max 2s.
+  for (let i = 0; i < textBeats.length; i++) {
+    const cur = textBeats[i]!;
+    const start = Math.max(0, cur.startTime ?? 0);
+    const nextStart = i < textBeats.length - 1 ? (textBeats[i + 1]!.startTime ?? totalMs) : totalMs;
+    const window = Math.max(600, Math.min(totalMs - start, nextStart - start));
+    const maxForStyle =
+      cur.explainerSceneStyle === "subtitle-cinema"
+        ? CINEMA_BLACK_OVERLAY_MS
+        : MAX_EXPLAINER_SCENE_MS;
+    const capped = Math.min(maxForStyle, window);
+    cur.duration = Math.max(600, capped);
+    cur.explainerSegmentDurationMs = cur.duration;
+
+    const v = cur.explainerGraphicVariant;
+    if (v !== undefined) {
+      for (const o of out) {
+        if (o.magicSceneExplainerStock && o.explainerGraphicVariant === v) {
+          o.startTime = cur.startTime;
+          o.duration = cur.duration;
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
+/** Full-frame subtitle-cinema explainer is on screen (hide duplicate STT captions; drop circle PiP). */
+function isMagicCinemaExplainerActiveAt(tMs: number, elements: CanvasElement[]): boolean {
+  return elements.some((el) => {
+    if (!el.magicSceneExplainer || el.explainerSceneStyle !== "subtitle-cinema") return false;
+    const t0 = el.startTime ?? 0;
+    const t1 = t0 + (el.duration ?? 0);
+    return tMs >= t0 && tMs < t1;
+  });
+}
+
+/** Active full-frame subtitle-cinema explainer at time, if any. */
+function getActiveMagicCinemaExplainerAt(
+  tMs: number,
+  elements: CanvasElement[]
+): CanvasElement | null {
+  for (const el of elements) {
+    if (!el.magicSceneExplainer || el.explainerSceneStyle !== "subtitle-cinema") continue;
+    const t0 = el.startTime ?? 0;
+    const t1 = t0 + (el.duration ?? 0);
+    if (tMs >= t0 && tMs < t1) return el;
+  }
+  return null;
+}
+
+/** Main video uses centered circle + caption bar (no B-roll underlay). */
+function isMagicCircleLayoutActiveAt(tMs: number, elements: CanvasElement[]): boolean {
+  const main = elements.find((el) => el.type === "video" && el.magicLayoutSegments?.length);
+  if (!main?.magicLayoutSegments?.length) return false;
+  const seg = main.magicLayoutSegments.find((s) => tMs >= s.startMs && tMs < s.endMs);
+  return seg?.mode === "circle-pip";
+}
+
+/**
+ * True when the main video is in a "topSlot" segment (authored to pair with a
+ * top explainer card) BUT that card is no longer present (user deleted it).
+ * In this state the main video sits in the bottom-half rectangle and the top
+ * half renders as empty white canvas — so the subtitle should be anchored to
+ * the canvas middle rather than to the bottom of a centered circle.
+ */
+function isMagicTopSlotNoCardAt(tMs: number, elements: CanvasElement[]): boolean {
+  const main = elements.find((el) => el.type === "video" && el.magicLayoutSegments?.length);
+  if (!main?.magicLayoutSegments?.length) return false;
+  const seg = main.magicLayoutSegments.find((s) => tMs >= s.startMs && tMs < s.endMs);
+  if (!seg?.topSlot) return false;
+  // topSlot only matters when there's no active card covering the top half.
+  return !isMagicTopTextCardExplainerActiveAt(tMs, elements);
+}
+
+/** Fancy-split / fancy-minimal explainer (text card on top) — not full-frame cinema. */
+function isMagicTopTextCardExplainerActiveAt(tMs: number, elements: CanvasElement[]): boolean {
+  return elements.some((el) => {
+    if (el.type !== "text" || !el.magicSceneExplainer) return false;
+    if (el.explainerSceneStyle === "subtitle-cinema") return false;
+    const t0 = el.startTime ?? 0;
+    const t1 = t0 + (el.duration ?? 0);
+    return tMs >= t0 && tMs < t1;
+  });
+}
+
+/** Up to 3 words for the active caption segment, advancing in step groups over the segment. */
+function captionThreeWordsAtTime(
+  segments: SubtitleSegment[],
+  tMs: number
+): string {
+  const seg = segments.find((s) => s && tMs >= s.startMs && tMs < s.endMs);
+  if (!seg?.text?.trim()) return "";
+  const words = seg.text.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "";
+  const dur = Math.max(1, seg.endMs - seg.startMs);
+  const t = Math.max(0, Math.min(1, (tMs - seg.startMs) / dur));
+  const n = words.length;
+  const nGroups = Math.max(1, Math.ceil(n / 3));
+  const gi = Math.min(nGroups - 1, Math.floor(t * nGroups));
+  const start = gi * 3;
+  return words.slice(start, Math.min(start + 3, n)).join(" ");
+}
+
+/** Smooth main video rect across Magic layout segment boundaries (circle ↔ bottom split, etc.). Longer = softer; 700ms keeps the shift clearly visible without looking sluggish. */
+const MAGIC_LAYOUT_BLEND_MS = 700;
+
+type MagicLayoutBox = { lx: number; ly: number; lw: number; lh: number; lz: number };
+
+function smoothstep01(t: number): number {
+  const x = Math.max(0, Math.min(1, t));
+  return x * x * (3 - 2 * x);
+}
+
+function magicLayoutBoxForSegment(
+  seg: { mode: "split-bottom" | "circle-pip"; topSlot?: boolean } | undefined,
+  baseZ: number,
+  cinemaCovers: boolean,
+  topTextCard: boolean
+): MagicLayoutBox {
+  let lz = baseZ;
+  if (!seg) {
+    return { lx: 0, ly: 0, lw: 100, lh: 100, lz };
+  }
+  if (seg.mode === "split-bottom") {
+    return { lx: 0, ly: 50, lw: 100, lh: 50, lz };
+  }
+  if (seg.mode === "circle-pip" && !cinemaCovers) {
+    lz = Math.max(lz, 920);
+    // `topSlot` means this segment was authored to pair with a top explainer card.
+    // Even if the user deleted that card, keep the main video in the bottom-half
+    // slot (vacated top area renders as canvas white) rather than expanding the
+    // circle to fill the frame.
+    if (topTextCard || seg.topSlot) {
+      return { lx: 0, ly: 50, lw: 100, lh: 50, lz };
+    }
+    return { lx: 0, ly: 0, lw: 100, lh: 100, lz };
+  }
+  return { lx: 0, ly: 0, lw: 100, lh: 100, lz };
+}
+
+function blendMagicMainVideoLayout(
+  segments: { startMs: number; endMs: number; mode: "split-bottom" | "circle-pip"; topSlot?: boolean }[],
+  tMs: number,
+  baseZ: number,
+  cinemaCovers: boolean,
+  topTextCard: boolean
+): MagicLayoutBox {
+  if (!segments.length) {
+    return magicLayoutBoxForSegment(undefined, baseZ, cinemaCovers, topTextCard);
+  }
+  const blend = MAGIC_LAYOUT_BLEND_MS;
+  for (let i = 0; i < segments.length - 1; i++) {
+    const prev = segments[i]!;
+    const next = segments[i + 1]!;
+    const boundary = next.startMs;
+    if (tMs >= boundary - blend / 2 && tMs <= boundary + blend / 2) {
+      const u = (tMs - (boundary - blend / 2)) / blend;
+      const e = smoothstep01(u);
+      const A = magicLayoutBoxForSegment(prev, baseZ, cinemaCovers, topTextCard);
+      const B = magicLayoutBoxForSegment(next, baseZ, cinemaCovers, topTextCard);
+      return {
+        lx: A.lx + (B.lx - A.lx) * e,
+        ly: A.ly + (B.ly - A.ly) * e,
+        lw: A.lw + (B.lw - A.lw) * e,
+        lh: A.lh + (B.lh - A.lh) * e,
+        lz: Math.round(A.lz + (B.lz - A.lz) * e),
+      };
+    }
+  }
+  const active = segments.find((s) => tMs >= s.startMs && tMs < s.endMs);
+  return magicLayoutBoxForSegment(active, baseZ, cinemaCovers, topTextCard);
+}
+
 // Types
 type Scene = {
   id: string;
@@ -217,7 +790,989 @@ type CanvasElement = {
   videoStartOffset?: number; // Offset in milliseconds - where in the video file to start playing from (for trimming)
   audioStartOffset?: number; // Offset in milliseconds - where in the audio file to start playing from (for trimming)
   circleFrame?: boolean; // When true, clip video/image to a circular frame (e.g. PiP style)
+  /**
+   * How the video/image should fit inside its element box.
+   *   - `cover` (default): fill the box, cropping the overflow — used by avatars,
+   *     b-rolls, magic main videos, and anything else that should fill its slot.
+   *   - `contain`: show the whole asset without cropping; the element box shows
+   *     letterbox/pillarbox bars as needed. Set by `addElementToCanvas` for media
+   *     the user drags in from the Media panel so their upload isn't cropped.
+   */
+  objectFit?: "cover" | "contain";
+  /** SVG / tricky URLs: render with <img> instead of Next/Image */
+  intrinsicSize?: boolean;
+  /** B-roll from Super data / jump cuts — top-half TikTok split overlays */
+  bRollOverlay?: boolean;
+  /** Magic B-roll: per-clip color grade / mood (rotates by scene) */
+  bRollSceneVibe?: string;
+  /**
+   * Origin of the b-roll clip (e.g. `freepik-12345`). Lets the server refresh
+   * short-lived signed URLs (Freepik `cdnpk.net` tokens) right before render
+   * so a long editor session doesn't 403 at the final render step.
+   */
+  bRollSourceId?: string;
+  /** Magic explainer: match card tint to scene vibe */
+  explainerSceneVibe?: string;
+  /** Magic create: bold outlined “viral” caption styling */
+  magicViralStyle?: boolean;
+  /** Magic create: typography beat (fancy text or full-frame subtitle overlay) */
+  magicSceneExplainer?: boolean;
+  /** Magic create: Freepik image paired with the same explainerGraphicVariant beat */
+  magicSceneExplainerStock?: boolean;
+  explainerIllustrationUrl?: string;
+  /** Beat order; used to resolve defaults */
+  explainerGraphicVariant?: number;
+  explainerLevel?: number;
+  explainerAccentLabel?: string;
+  explainerSubline?: string;
+  explainerSceneStyle?: string;
+  explainerTypographyStyle?: string;
+  explainerAccentHex?: string;
+  /** Segment length for enter/exit motion (defaults to duration) */
+  explainerSegmentDurationMs?: number;
+  /** emphasis-explode: single-word punchline drawn oversized. */
+  explainerHeroWord?: string;
+  /** checklist-reveal + ticker-stack: 2–5 short list items. */
+  explainerItems?: string[];
+  /** reaction-burst: single emoji (or short emoji pair). */
+  explainerEmoji?: string;
+  /** vs-split: left-side short label. */
+  explainerSideA?: string;
+  /** vs-split: right-side short label. */
+  explainerSideB?: string;
+  /** Contextual topic emoji rendered as a BIG motion accent on fancy-* / subtitle-cinema / emphasis-explode / ticker-stack / question-shrug cards. */
+  explainerIconEmoji?: string;
+  /** Resolved Logo.dev URL when the classifier detected a brand on this beat. */
+  explainerLogoUrl?: string;
+  /** Full-area background behind text (e.g. white hook card) */
+  textBackgroundColor?: string;
+  /** Red on white hook style — no black stroke */
+  magicWhiteSlide?: boolean;
+  /**
+   * Magic rhythm: one main video plays 0→duration; layout switches by timeline (overlays on top).
+   * `split-bottom` = bottom 50%; `circle-pip` = large centered circle + caption strip (no B-roll).
+   * `circleScale` (0.4–1.2) overrides the circle-pip diameter. Default 1.0 matches the
+   * original 96% / 400px cap — set via the on-canvas resize handle when the user clicks
+   * the circle to edit it.
+   */
+  magicLayoutSegments?: {
+    startMs: number;
+    endMs: number;
+    mode: "split-bottom" | "circle-pip";
+    circleScale?: number;
+    /**
+     * True when this segment was authored with a top explainer card in its upper half
+     * (post-intro card beats). Keeps the main video in the bottom-half position even
+     * if the user deletes the card — the vacated top area just renders as canvas white
+     * rather than the main video expanding to fill it.
+     */
+    topSlot?: boolean;
+  }[];
+  /** Auto-placed 2s subtitle-cinema beats at each jump-cut time (editor tool) */
+  magicJumpCutCinema?: boolean;
 };
+
+/**
+ * Full-frame black overlays with caption text at each jump-cut instant (same cadence as B-roll jump cuts).
+ */
+function generateJumpCutCinemaOverlays(
+  totalDurationMs: number,
+  intervalSeconds: number,
+  segments: SubtitleSegment[]
+): CanvasElement[] {
+  if (intervalSeconds <= 0 || totalDurationMs <= 0) return [];
+  const totalDurationSeconds = totalDurationMs / 1000;
+  const out: CanvasElement[] = [];
+  let variant = 9000;
+  for (let time = intervalSeconds; time < totalDurationSeconds; time += intervalSeconds) {
+    const startMs = Math.round(time * 1000);
+    const dur = CINEMA_BLACK_OVERLAY_MS;
+    if (startMs + dur > totalDurationMs) break;
+    const cap = captionTextForTimeRange(startMs, startMs + dur, segments).trim();
+    const text = cap.length > 0 ? cap : " ";
+    out.push({
+      id: uuid(),
+      type: "text",
+      text,
+      explainerSceneStyle: "subtitle-cinema",
+      explainerTypographyStyle: "modern-sans",
+      explainerAccentHex: "#6366f1",
+      explainerSegmentDurationMs: dur,
+      magicSceneExplainer: true,
+      magicJumpCutCinema: true,
+      explainerGraphicVariant: variant,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      rotation: 0,
+      opacity: 1,
+      zIndex: 1150 + (variant % 50),
+      startTime: startMs,
+      duration: dur,
+      fontSize: 21,
+      fontColor: "#ffffff",
+      fontFamily: "var(--font-montserrat), ui-sans-serif, system-ui, sans-serif",
+    });
+    variant += 1;
+  }
+  return out;
+}
+
+/** Split script into scenes (paragraphs first; otherwise sentence chunks). Max 15. */
+function splitScriptIntoScenes(script: string): string[] {
+  const t = script.trim();
+  if (!t) return [];
+  const paras = t.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+  if (paras.length >= 2) return paras.slice(0, 15);
+  const sentences = t.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  if (sentences.length <= 1) return [t];
+  const scenes: string[] = [];
+  let buf = "";
+  const maxChunk = 220;
+  for (const s of sentences) {
+    const next = buf ? `${buf} ${s}` : s;
+    if (next.length > maxChunk && buf) {
+      scenes.push(buf.trim());
+      buf = s;
+    } else {
+      buf = next;
+    }
+  }
+  if (buf.trim()) scenes.push(buf.trim());
+  return scenes.slice(0, 15);
+}
+
+function buildSceneTimings(
+  sceneTexts: string[],
+  totalMs: number
+): { startMs: number; endMs: number; sceneIndex: number }[] {
+  const n = sceneTexts.length;
+  if (n === 0 || totalMs <= 0) return [];
+  const weights = sceneTexts.map((s) => Math.max(1, s.length));
+  const sum = weights.reduce((a, b) => a + b, 0);
+  let acc = 0;
+  return sceneTexts.map((_, i) => {
+    const startMs = Math.round((acc / sum) * totalMs);
+    acc += weights[i];
+    const endMs = i === n - 1 ? totalMs : Math.round((acc / sum) * totalMs);
+    return { startMs, endMs, sceneIndex: i };
+  });
+}
+
+function sceneIndexAtTime(
+  tMs: number,
+  timings: { startMs: number; endMs: number; sceneIndex: number }[]
+): number {
+  for (const seg of timings) {
+    if (tMs >= seg.startMs && tMs < seg.endMs) {
+      return seg.sceneIndex;
+    }
+  }
+  return timings.length ? timings[timings.length - 1].sceneIndex : 0;
+}
+
+/** Magic B-roll: max clip length on canvas (ms) */
+const MAGIC_BROLL_CLIP_MS = 3000;
+
+const MAGIC_BROLL_VIBES = [
+  "warm",
+  "cool",
+  "cinematic",
+  "neon",
+  "soft",
+  "dramatic",
+  "golden",
+  "mono",
+] as const;
+
+const BROLL_VIBE_STYLES: Record<
+  string,
+  { filter: string; overlayGradient?: string }
+> = {
+  warm: {
+    filter: "sepia(0.22) saturate(1.18) contrast(1.06)",
+    overlayGradient:
+      "linear-gradient(180deg, rgba(255,130,70,0.24) 0%, rgba(255,60,40,0.07) 100%)",
+  },
+  cool: {
+    filter: "hue-rotate(178deg) saturate(0.9) brightness(1.03)",
+    overlayGradient:
+      "linear-gradient(160deg, rgba(30,110,255,0.22) 0%, rgba(20,40,120,0.05) 100%)",
+  },
+  cinematic: {
+    filter: "contrast(1.14) saturate(0.88) brightness(0.94)",
+    overlayGradient:
+      "linear-gradient(180deg, rgba(0,0,0,0.18) 0%, transparent 55%)",
+  },
+  neon: {
+    filter: "saturate(1.4) contrast(1.18) hue-rotate(-6deg)",
+    overlayGradient:
+      "linear-gradient(90deg, rgba(200,0,255,0.14) 0%, rgba(0,220,255,0.1) 100%)",
+  },
+  soft: {
+    filter: "brightness(1.05) saturate(0.92)",
+    overlayGradient:
+      "linear-gradient(180deg, rgba(255,255,255,0.14) 0%, rgba(0,0,0,0.06) 100%)",
+  },
+  dramatic: {
+    filter: "contrast(1.22) brightness(0.86)",
+    overlayGradient:
+      "radial-gradient(ellipse at center, transparent 42%, rgba(0,0,0,0.38) 100%)",
+  },
+  golden: {
+    filter: "sepia(0.4) saturate(1.15) contrast(1.05)",
+    overlayGradient:
+      "linear-gradient(200deg, rgba(255,210,100,0.28) 0%, rgba(180,90,20,0.1) 100%)",
+  },
+  mono: {
+    filter: "grayscale(0.92) contrast(1.1)",
+    overlayGradient:
+      "linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(0,0,0,0.14) 100%)",
+  },
+};
+
+function bRollVibeForStartMs(
+  startTime: number,
+  sceneTimings: { startMs: number; endMs: number; sceneIndex: number }[]
+): string {
+  if (sceneTimings.length) {
+    const idx = sceneIndexAtTime(startTime, sceneTimings);
+    return MAGIC_BROLL_VIBES[idx % MAGIC_BROLL_VIBES.length];
+  }
+  const slot = Math.max(0, Math.floor(startTime / MAGIC_BROLL_CLIP_MS));
+  return MAGIC_BROLL_VIBES[slot % MAGIC_BROLL_VIBES.length];
+}
+
+/** Seeking on tiny drift fights the decoder — Magic stacks many clips; use looser B-roll tolerance */
+const VIDEO_SYNC_DRIFT_SEC = 0.32;
+const BROLL_VIDEO_SYNC_DRIFT_SEC = 0.65;
+
+/**
+ * Returns the "active" <video> element for a canvas element and, critically,
+ * pauses + mutes any duplicates that may linger in the DOM.
+ *
+ * Why this exists:
+ * The main Magic video has 4 mutually-exclusive JSX branches (split-bottom,
+ * circle-pip with/without top-text card, default). When `magicLayoutSegments`
+ * flips mid-playback (e.g. split-bottom → circle-pip) React swaps between
+ * these branches. In some Chromium/WebKit builds the *removed* <video>
+ * continues emitting audio for a short time, producing a delayed echo of
+ * the exact same track — this helper kills those ghosts on every tick.
+ *
+ * We always keep the LAST match (most recently mounted = the visible one)
+ * and hard-pause/mute every earlier duplicate.
+ */
+function getActiveCanvasVideo(elementId: string): HTMLVideoElement | null {
+  const nodes = document.querySelectorAll<HTMLVideoElement>(
+    `video[id="canvas-video-${elementId}"]`
+  );
+  if (nodes.length === 0) return null;
+  if (nodes.length === 1) return nodes[0];
+  // Duplicate <video> tags for the same canvas element should not exist.
+  // When they do, silence every stale one so only the last one plays audio.
+  for (let i = 0; i < nodes.length - 1; i++) {
+    try {
+      nodes[i].pause();
+      nodes[i].muted = true;
+    } catch (_) {
+      /* noop */
+    }
+  }
+  return nodes[nodes.length - 1];
+}
+
+function BrollVibeVideoWrap({
+  vibeKey,
+  children,
+}: {
+  vibeKey?: string;
+  children: React.ReactNode;
+}) {
+  const style =
+    vibeKey && BROLL_VIBE_STYLES[vibeKey] ? BROLL_VIBE_STYLES[vibeKey] : null;
+  if (!style) return <>{children}</>;
+  return (
+    <div
+      className="relative h-full w-full overflow-hidden rounded-sm"
+      style={{ contain: "paint", isolation: "isolate" }}
+    >
+      {style.overlayGradient ? (
+        <div
+          className="pointer-events-none absolute inset-0 z-[2] mix-blend-soft-light"
+          style={{ background: style.overlayGradient }}
+          aria-hidden
+        />
+      ) : null}
+      <div
+        className="relative z-[1] h-full w-full [&_video]:h-full [&_video]:w-full"
+        style={{ filter: style.filter }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function chunkWords(text: string, maxLen: number): string[] {
+  const words = text.replace(/\s+/g, " ").trim().split(" ");
+  const out: string[] = [];
+  let buf: string[] = [];
+  let len = 0;
+  for (const w of words) {
+    const add = buf.length ? w.length + 1 : w.length;
+    if (len + add > maxLen && buf.length) {
+      out.push(buf.join(" "));
+      buf = [w];
+      len = w.length;
+    } else {
+      buf.push(w);
+      len += add;
+    }
+  }
+  if (buf.length) out.push(buf.join(" "));
+  return out.length ? out : [text.trim()].filter(Boolean);
+}
+
+/** Fallback beats when LLM fails: many short chunks from script. */
+function fallbackExplainerCardsFromScript(script: string): SceneExplainerCard[] {
+  const t = script.trim();
+  if (!t) return [];
+  const paras = t.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+  let chunks: string[] = [];
+  if (paras.length >= 2) {
+    chunks = paras.flatMap((p) => chunkWords(p, 100));
+  } else {
+    const sentences = t.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+    chunks = sentences.length > 1 ? sentences : chunkWords(t, 90);
+  }
+  const accents = ["#6366f1", "#0d9488", "#ea580c", "#db2777", "#7c3aed", "#0ea5e9"];
+  /** Bias toward subtitle-cinema (black overlay) ~2/3 of beats when LLM is unavailable. */
+  const sceneStylesHeavyCinema = [
+    "subtitle-cinema",
+    "subtitle-cinema",
+    "fancy-split",
+    "subtitle-cinema",
+    "fancy-minimal",
+    "subtitle-cinema",
+  ] as const;
+  const typos = ["modern-sans", "display-bold", "elegant-serif"] as const;
+  return chunks.slice(0, 24).map((text, i) => {
+    const headline =
+      text.split(/\s+/).slice(0, 8).join(" ").slice(0, 72) || `Point ${i + 1}`;
+    return {
+      sceneIndex: i,
+      headline,
+      subline: "",
+      accentLabel: "",
+      accentHex: accents[i % accents.length],
+      sceneStyle: sceneStylesHeavyCinema[i % sceneStylesHeavyCinema.length],
+      typographyStyle: typos[i % typos.length],
+      anchorText: text.trim().slice(0, 80),
+    };
+  });
+}
+
+/** Target minimum on-screen time per explainer beat so text can finish before the next beat vs main video. */
+const MIN_EXPLAINER_BEAT_MS = 3200;
+
+/**
+ * If spreading all LLM beats across the video would make each beat shorter than MIN_EXPLAINER_BEAT_MS,
+ * evenly subsample beats so on-screen time matches the main video better.
+ */
+function pickExplainerCardsForTimeline(
+  cards: SceneExplainerCard[],
+  totalMs: number
+): SceneExplainerCard[] {
+  const sorted = [...cards]
+    .filter((c) => c.headline?.trim())
+    .sort((a, b) => (a.sceneIndex ?? 0) - (b.sceneIndex ?? 0));
+  if (sorted.length === 0 || totalMs <= 0) return [];
+  const segmentIfAll = totalMs / sorted.length;
+  if (segmentIfAll >= MIN_EXPLAINER_BEAT_MS) return sorted;
+  const targetCount = Math.max(1, Math.floor(totalMs / MIN_EXPLAINER_BEAT_MS));
+  const n = Math.min(sorted.length, targetCount);
+  if (n >= sorted.length) return sorted;
+  const out: SceneExplainerCard[] = [];
+  const last = sorted.length - 1;
+  for (let j = 0; j < n; j++) {
+    const idx = n <= 1 ? 0 : Math.round((j / (n - 1)) * last);
+    out.push({ ...sorted[idx]!, sceneIndex: j });
+  }
+  return out;
+}
+
+function normalizeScriptForAnchorMatch(s: string): string {
+  return s.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/** First match position in normalized script, or -1. */
+function findAnchorCharOffset(anchorRaw: string, scriptRaw: string): number {
+  const needle = normalizeScriptForAnchorMatch(anchorRaw);
+  const hay = normalizeScriptForAnchorMatch(scriptRaw);
+  if (!needle || !hay) return -1;
+  let idx = hay.indexOf(needle);
+  if (idx >= 0) return idx;
+  const words = needle.split(" ").filter(Boolean);
+  for (let w = Math.min(words.length, 10); w >= 3; w--) {
+    const probe = words.slice(0, w).join(" ");
+    idx = hay.indexOf(probe);
+    if (idx >= 0) return idx;
+  }
+  if (words.length >= 2) {
+    idx = hay.indexOf(words.slice(0, 2).join(" "));
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+/**
+ * Map each card to a start time from anchor phrases in the script; interpolate gaps.
+ */
+function computeExplainerStartTimesFromAnchors(
+  cards: SceneExplainerCard[],
+  script: string,
+  totalMs: number
+): number[] {
+  const n = cards.length;
+  const hay = normalizeScriptForAnchorMatch(script);
+  const L = Math.max(hay.length, 1);
+  const rawMs: (number | null)[] = cards.map((c) => {
+    const primary = (c.anchorText || "").trim();
+    const fallback = (c.headline || "").trim();
+    let off =
+      primary.length >= 6 ? findAnchorCharOffset(primary, script) : -1;
+    if (off < 0 && fallback.length >= 6) {
+      off = findAnchorCharOffset(fallback, script);
+    }
+    if (off < 0) return null;
+    return Math.round((off / L) * totalMs);
+  });
+  if (!rawMs.some((x) => x != null)) {
+    const seg = totalMs / Math.max(n, 1);
+    return cards.map((_, i) => Math.round(i * seg));
+  }
+  const out: number[] = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    if (rawMs[i] != null) {
+      out[i] = rawMs[i]!;
+      continue;
+    }
+    let l = i - 1;
+    while (l >= 0 && rawMs[l] == null) l--;
+    let r = i + 1;
+    while (r < n && rawMs[r] == null) r++;
+    const leftT = l >= 0 ? rawMs[l]! : 0;
+    const rightT = r < n ? rawMs[r]! : totalMs;
+    const leftIdx = l >= 0 ? l : 0;
+    const rightIdx = r < n ? r : n - 1;
+    const span = Math.max(1, rightIdx - leftIdx);
+    const frac = (i - leftIdx) / span;
+    out[i] = Math.round(leftT + (rightT - leftT) * frac);
+  }
+  const MIN_STEP = 550;
+  for (let i = 1; i < n; i++) {
+    if (out[i]! < out[i - 1]! + MIN_STEP) {
+      out[i] = out[i - 1]! + MIN_STEP;
+    }
+  }
+  const maxStart = Math.max(0, totalMs - 400);
+  for (let i = 0; i < n; i++) {
+    out[i] = Math.min(out[i]!, maxStart);
+  }
+  for (let i = n - 2; i >= 0; i--) {
+    if (out[i]! > out[i + 1]! - MIN_STEP) {
+      out[i] = Math.max(0, out[i + 1]! - MIN_STEP);
+    }
+  }
+  return out;
+}
+
+function buildExplainerCanvasElementsFromSchedule(
+  sorted: SceneExplainerCard[],
+  totalMs: number,
+  startTimesMs: number[]
+): CanvasElement[] {
+  const n = sorted.length;
+  const out: CanvasElement[] = [];
+  for (let i = 0; i < n; i++) {
+    const card = sorted[i]!;
+    const startMs = Math.round(Math.min(startTimesMs[i]!, totalMs - 400));
+    const endMs = i < n - 1 ? Math.round(Math.min(startTimesMs[i + 1]!, totalMs)) : totalMs;
+    const cinema = card.sceneStyle === "subtitle-cinema";
+    const rawDur = Math.max(600, endMs - startMs);
+    const dur = cinema
+      ? Math.min(CINEMA_BLACK_OVERLAY_MS, rawDur)
+      : rawDur;
+    const vibe = MAGIC_BROLL_VIBES[i % MAGIC_BROLL_VIBES.length];
+    const stockUrl = card.stockImageUrl?.trim();
+    const stockHttps =
+      stockUrl && /^https?:\/\//i.test(stockUrl) ? stockUrl : undefined;
+
+    const heroWord =
+      card.sceneStyle === "emphasis-explode" && typeof card.heroWord === "string"
+        ? card.heroWord.trim()
+        : "";
+    const wantsItems =
+      card.sceneStyle === "checklist-reveal" || card.sceneStyle === "ticker-stack";
+    const items =
+      wantsItems && Array.isArray(card.items)
+        ? card.items
+            .map((s) => (typeof s === "string" ? s.trim() : ""))
+            .filter((s) => s.length >= 2)
+            .slice(0, 5)
+        : [];
+    const emoji =
+      card.sceneStyle === "reaction-burst" && typeof card.emoji === "string"
+        ? card.emoji.trim().slice(0, 8)
+        : "";
+    const sideA =
+      card.sceneStyle === "vs-split" && typeof card.sideA === "string"
+        ? card.sideA.trim().slice(0, 32)
+        : "";
+    const sideB =
+      card.sceneStyle === "vs-split" && typeof card.sideB === "string"
+        ? card.sideB.trim().slice(0, 32)
+        : "";
+    const iconEmoji =
+      typeof card.iconEmoji === "string" ? card.iconEmoji.trim().slice(0, 8) : "";
+    const logoUrl =
+      typeof card.logoUrl === "string" && /^https?:\/\//i.test(card.logoUrl)
+        ? card.logoUrl
+        : "";
+
+    out.push({
+      id: uuid(),
+      type: "text",
+      text: card.headline.trim(),
+      explainerSubline: card.subline?.trim() || undefined,
+      explainerGraphicVariant: i,
+      explainerLevel: i + 1,
+      explainerAccentLabel: card.accentLabel?.trim() || undefined,
+      explainerSceneStyle: card.sceneStyle,
+      explainerTypographyStyle: card.typographyStyle,
+      explainerAccentHex: card.accentHex,
+      explainerSegmentDurationMs: dur,
+      magicSceneExplainer: true,
+      explainerSceneVibe: vibe,
+      ...(stockHttps ? { explainerIllustrationUrl: stockHttps } : {}),
+      ...(heroWord ? { explainerHeroWord: heroWord } : {}),
+      ...(items.length > 0 ? { explainerItems: items } : {}),
+      ...(emoji ? { explainerEmoji: emoji } : {}),
+      ...(sideA ? { explainerSideA: sideA } : {}),
+      ...(sideB ? { explainerSideB: sideB } : {}),
+      ...(iconEmoji ? { explainerIconEmoji: iconEmoji } : {}),
+      ...(logoUrl ? { explainerLogoUrl: logoUrl } : {}),
+      x: 0,
+      y: 0,
+      width: 100,
+      height: cinema ? 100 : 50,
+      rotation: 0,
+      opacity: 1,
+      zIndex: cinema ? 945 : 932,
+      startTime: Math.max(0, startMs),
+      duration: dur,
+      fontSize: cinema ? 21 : 22,
+      fontColor: cinema ? "#ffffff" : "#0a0a0a",
+      fontFamily: "var(--font-montserrat), ui-sans-serif, system-ui, sans-serif",
+    });
+  }
+  return out;
+}
+
+/** Evenly distribute explainer cards (fallback when script anchors unavailable). */
+function buildMagicExplainerElementsEven(totalMs: number, cards: SceneExplainerCard[]): CanvasElement[] {
+  const sorted = pickExplainerCardsForTimeline(cards, totalMs);
+  const n = sorted.length;
+  if (n === 0 || totalMs <= 0) return [];
+  const segment = totalMs / n;
+  const starts = sorted.map((_, i) => Math.round(i * segment));
+  return buildExplainerCanvasElementsFromSchedule(sorted, totalMs, starts);
+}
+
+/**
+ * Place explainer beats on the timeline using LLM anchor phrases in the script when possible;
+ * otherwise fall back to even spacing + subsampling.
+ */
+function buildMagicExplainerElements(
+  totalMs: number,
+  cards: SceneExplainerCard[],
+  script?: string
+): CanvasElement[] {
+  const sorted = [...cards]
+    .filter((c) => c.headline?.trim())
+    .sort((a, b) => (a.sceneIndex ?? 0) - (b.sceneIndex ?? 0));
+  if (sorted.length === 0 || totalMs <= 0) return [];
+
+  const scriptTrim = script?.trim() ?? "";
+  if (scriptTrim.length < 16) {
+    return buildMagicExplainerElementsEven(totalMs, sorted);
+  }
+
+  const starts = computeExplainerStartTimesFromAnchors(sorted, scriptTrim, totalMs);
+  return buildExplainerCanvasElementsFromSchedule(sorted, totalMs, starts);
+}
+
+type MagicRhythmSceneMode = {
+  sceneTexts: string[];
+  sceneStockBRolls: Array<{ sceneIndex: number; bRoll: BRoll | null }>;
+};
+
+/**
+ * Magic layout scheduler:
+ *   INTRO (fixed, 0–9s):
+ *     0–4s : split-bottom (main in bottom half, b-roll in top half)
+ *     4–7s : NO layout segment — intro subtitle-cinema explainer covers main
+ *     7–9s : NO layout segment — full-frame b-roll covers main
+ *   POST-INTRO (9s → end):
+ *     Every text-card beat shows the MAIN video behind the card — never a
+ *     b-roll. Layouts alternate for rhythm:
+ *       - circle-pip : main visible in circle + caption bar (card on top)
+ *       - split-5050 : card on top half + main video on bottom half
+ *     subtitle-cinema beats keep their own black full-frame overlay, and any
+ *     post-cinema tail (before the next beat starts) is covered with a
+ *     full-frame b-roll so there's no raw main-video cut.
+ */
+function buildMagicRhythmElements(
+  mainVideoUrl: string,
+  totalMs: number,
+  bRollPool: BRoll[],
+  _script: string,
+  thumbnail?: string,
+  sceneMode?: MagicRhythmSceneMode,
+  explainerEls: CanvasElement[] = []
+): { elements: CanvasElement[]; primaryMainId: string; usedBRollIds: string[] } {
+  console.log('[B-roll] buildMagicRhythmElements start', {
+    totalMs,
+    mainVideoPrefix: mainVideoUrl.slice(0, 80),
+    poolSize: bRollPool.length,
+    scriptLen: _script.length,
+    sceneMode: !!sceneMode?.sceneTexts?.length,
+    explainerBeats: explainerEls.filter(
+      (e) => e.magicSceneExplainer && !e.magicSceneExplainerStock
+    ).length,
+  });
+
+  let sceneTimings: { startMs: number; endMs: number; sceneIndex: number }[] = [];
+  let bRollBySceneIndex: (BRoll | null)[] = [];
+  if (
+    sceneMode?.sceneTexts?.length &&
+    sceneMode.sceneStockBRolls?.length
+  ) {
+    sceneTimings = buildSceneTimings(sceneMode.sceneTexts, totalMs);
+    const n = sceneMode.sceneTexts.length;
+    bRollBySceneIndex = Array.from({ length: n }, (_, i) => {
+      const row = sceneMode.sceneStockBRolls.find((r) => r.sceneIndex === i);
+      return row?.bRoll ?? null;
+    });
+  }
+
+  const magicLayoutSegments: {
+    startMs: number;
+    endMs: number;
+    mode: "split-bottom" | "circle-pip";
+    topSlot?: boolean;
+  }[] = [];
+  const elements: CanvasElement[] = [];
+  const usedSet = new Set<string>();
+  let brollLayer = 0;
+
+  const pickBRoll = (atTimeMs: number): BRoll | null => {
+    if (sceneTimings.length && bRollBySceneIndex.length) {
+      const idx = sceneIndexAtTime(atTimeMs, sceneTimings);
+      const br = bRollBySceneIndex[idx];
+      if (br?.url) return br;
+    }
+    const pool = bRollPool.filter((b) => b.url);
+    if (!pool.length) return null;
+    return pool[Math.floor(Math.random() * pool.length)]!;
+  };
+
+  /**
+   * Push a single b-roll clip.
+   *   fullScreen=true  → height: 100 (covers main video; used for broll-full beats)
+   *   fullScreen=false → height: 50 (top half, pairs with split-bottom main)
+   * Duration is capped at MAGIC_BROLL_CLIP_MS; callers needing to cover a
+   * longer window should use `pushBrollChain` below, which stitches multiple
+   * b-rolls back-to-back.
+   */
+  const pushBroll = (startTime: number, durMs: number, bRoll: BRoll, fullScreen: boolean) => {
+    if (!bRoll.url) return;
+    usedSet.add(bRoll.id);
+    const cappedDur = Math.min(Math.max(200, durMs), MAGIC_BROLL_CLIP_MS);
+    const clipSec = cappedDur / 1000;
+    const bDur = bRoll.durationSeconds || 12;
+    const maxOff = Math.max(0, bDur - clipSec);
+    const rOff = maxOff > 0 ? Math.random() * maxOff : 0;
+    const vibe = bRollVibeForStartMs(startTime, sceneTimings);
+    console.log('[B-roll] pushBroll canvas clip', {
+      id: bRoll.id,
+      name: bRoll.name,
+      startTime,
+      durMs: cappedDur,
+      fullScreen,
+      vibe,
+      videoStartOffsetMs: rOff * 1000,
+      hasThumb: !!bRoll.thumbnailUrl,
+    });
+    elements.push({
+      id: uuid(),
+      type: "video",
+      url: bRoll.url,
+      thumbnail: bRoll.thumbnailUrl || undefined,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: fullScreen ? 100 : 50,
+      rotation: 0,
+      opacity: 1,
+      zIndex: 850 + brollLayer,
+      startTime,
+      duration: cappedDur,
+      videoStartOffset: rOff * 1000,
+      muted: true,
+      bRollOverlay: true,
+      bRollSceneVibe: vibe,
+      bRollSourceId: bRoll.id,
+    });
+    brollLayer += 1;
+  };
+
+  /**
+   * Cover [startMs, endMs) fully with one or more b-roll clips, each ≤
+   * MAGIC_BROLL_CLIP_MS. Each sub-window gets an independently-picked b-roll
+   * so long beats get visual variety instead of a single static clip.
+   */
+  const pushBrollChain = (startMs: number, endMs: number, fullScreen: boolean) => {
+    if (endMs <= startMs) return;
+    let cursor = startMs;
+    let guard = 0;
+    while (cursor < endMs && guard < 16) {
+      const slice = Math.min(MAGIC_BROLL_CLIP_MS, endMs - cursor);
+      const br = pickBRoll(cursor);
+      if (!br) return;
+      pushBroll(cursor, slice, br, fullScreen);
+      cursor += slice;
+      guard += 1;
+    }
+  };
+
+  const pushLayout = (
+    startMs: number,
+    endMs: number,
+    mode: "split-bottom" | "circle-pip",
+    topSlot?: boolean
+  ) => {
+    if (endMs <= startMs) return;
+    magicLayoutSegments.push({ startMs, endMs, mode, topSlot });
+  };
+
+  // ─── INTRO (0–9s, fixed) ──────────────────────────────────────────────
+  const introSplitEnd = Math.min(OPENING_SPLIT_MS, totalMs);         // 4s
+  const introCinemaEnd = Math.min(introSplitEnd + OPENING_CINEMA_MS, totalMs); // 7s
+  const introBrollEnd = Math.min(introCinemaEnd + OPENING_BROLL_FULL_MS, totalMs); // 9s
+
+  // 0–4s: main in bottom half, b-roll in top half. Chain multiple b-rolls
+  // here so the top half stays live for the full 4 seconds (single b-rolls
+  // are capped at MAGIC_BROLL_CLIP_MS = 3s).
+  pushLayout(0, introSplitEnd, "split-bottom");
+  if (introSplitEnd > 0) {
+    pushBrollChain(0, introSplitEnd, false);
+  }
+
+  // 4–7s: NO layout segment. The intro subtitle-cinema explainer (injected by
+  // enforceExplainerOpeningAndMaxSceneDuration) covers the main video.
+
+  // 7–9s: NO layout segment. Full-frame b-roll covers the main video so the
+  // jumpcut into post-intro is hidden behind motion.
+  if (introBrollEnd > introCinemaEnd) {
+    const br7 = pickBRoll(introCinemaEnd);
+    if (br7) {
+      pushBroll(introCinemaEnd, introBrollEnd - introCinemaEnd, br7, true);
+    }
+  }
+
+  // ─── POST-INTRO (9s → end) ────────────────────────────────────────────
+  // Walk the pre-scheduled explainer beats and assign each window a layout.
+  // For every non-cinema beat we either:
+  //   • cover the main with a full-frame b-roll (default — maximizes coverage)
+  //   • promote to split-5050 or circle-pip (main visible) until the
+  //     MAIN_VISIBLE_REMAINING_RATIO budget is exhausted.
+  const postIntroStart = introBrollEnd;
+  if (postIntroStart < totalMs) {
+    const beats = explainerEls
+      .filter(
+        (e) => e.magicSceneExplainer && !e.magicSceneExplainerStock && (e.startTime ?? 0) >= postIntroStart - 50
+      )
+      .sort((a, b) => (a.startTime ?? 0) - (b.startTime ?? 0));
+
+    // Build beat windows (each beat covers [startMs, nextBeatStartOrEnd)).
+    type BeatWin = {
+      el: CanvasElement;
+      startMs: number;
+      endMs: number;
+      isCinema: boolean;
+    };
+    const windows: BeatWin[] = [];
+    for (let i = 0; i < beats.length; i++) {
+      const el = beats[i]!;
+      const s = Math.max(postIntroStart, el.startTime ?? postIntroStart);
+      const nextStart =
+        i < beats.length - 1 ? beats[i + 1]!.startTime ?? totalMs : totalMs;
+      const e = Math.min(totalMs, nextStart);
+      if (e <= s) continue;
+      windows.push({
+        el,
+        startMs: s,
+        endMs: e,
+        isCinema: el.explainerSceneStyle === "subtitle-cinema",
+      });
+    }
+
+    // If the LLM returned nothing for post-intro, still cover the tail with
+    // rotating b-rolls / circle segments so the viewer isn't staring at raw
+    // main-video cuts.
+    if (windows.length === 0) {
+      windows.push({
+        el: { id: "", type: "text", x: 0, y: 0, width: 0, height: 0 } as CanvasElement,
+        startMs: postIntroStart,
+        endMs: totalMs,
+        isCinema: false,
+      });
+    }
+
+    // Rule (per user): whenever a text card is on screen, the background MUST
+    // be the main (talking-head) video — NEVER a b-roll. B-roll-full only
+    // covers raw gaps (e.g. after a cinema beat ended before the next beat
+    // started). Circle-pip and split-5050 (main visible) alternate across
+    // card beats purely for visual rhythm — with a 2:1 circle-pip bias so
+    // the circle layout (most dynamic) dominates.
+    //
+    // To inject more black-overlay + broll-full variety beyond what the LLM
+    // picked, every 3rd non-cinema card is client-side demoted to
+    // subtitle-cinema: its text becomes a black-overlay punchline for ~2s
+    // and the remainder of the window is covered by a full-frame b-roll.
+    let nonCinemaSeen = 0;
+    let cardBeatCount = 0;
+    let forcedCinemaCount = 0;
+    let cinemaGapMs = 0;
+    let circleCount = 0;
+    let splitCount = 0;
+
+    for (const w of windows) {
+      const windowDur = w.endMs - w.startMs;
+      if (windowDur <= 0) continue;
+
+      let isCinema = w.isCinema;
+      if (!isCinema) {
+        nonCinemaSeen += 1;
+        // Every 3rd non-cinema beat → force cinema (black overlay) + broll tail.
+        // This diversifies a sequence of otherwise-identical fancy-* cards.
+        if (nonCinemaSeen % 3 === 0) {
+          w.el.explainerSceneStyle = "subtitle-cinema";
+          w.el.height = 100;
+          w.el.zIndex = Math.max(945, w.el.zIndex ?? 0);
+          w.el.fontColor = w.el.fontColor || "#ffffff";
+          // Cap cinema to CINEMA_BLACK_OVERLAY_MS; the tail will be broll-full.
+          const newDur = Math.min(CINEMA_BLACK_OVERLAY_MS, windowDur);
+          w.el.duration = newDur;
+          w.el.explainerSegmentDurationMs = newDur;
+          // Subtitle-cinema is a clean dark overlay — hide the paired stock
+          // illustration so we don't get a random icon floating on black.
+          const variant = w.el.explainerGraphicVariant;
+          if (variant !== undefined) {
+            for (const o of explainerEls) {
+              if (o.magicSceneExplainerStock && o.explainerGraphicVariant === variant) {
+                o.opacity = 0;
+                o.duration = 0;
+              }
+            }
+          }
+          isCinema = true;
+          forcedCinemaCount += 1;
+        }
+      }
+
+      if (isCinema) {
+        // Cinema explainer covers [startMs, startMs + el.duration). The tail
+        // after the cinema overlay would otherwise expose a raw main-video
+        // cut — fill it with a full-frame b-roll.
+        const cinemaDur = Math.min(windowDur, Math.max(600, w.el.duration ?? 0));
+        const cinemaEnd = w.startMs + cinemaDur;
+        const gap = w.endMs - cinemaEnd;
+        if (gap > 200 && bRollPool.length) {
+          pushBrollChain(cinemaEnd, w.endMs, true);
+          cinemaGapMs += gap;
+        } else if (gap > 200) {
+          pushLayout(cinemaEnd, w.endMs, "circle-pip");
+        }
+        continue;
+      }
+
+      // Card beat → always show main video behind the card. Bias 2:1 toward
+      // circle-pip because it's the most dynamic layout. `topSlot: true` keeps
+      // the main video anchored to the bottom half even if the user deletes
+      // the card on this beat (the vacated top area renders as canvas white).
+      cardBeatCount += 1;
+      const useCircle = cardBeatCount % 3 !== 0;
+      if (useCircle) {
+        pushLayout(w.startMs, w.endMs, "circle-pip", true);
+        circleCount += 1;
+      } else {
+        pushLayout(w.startMs, w.endMs, "split-bottom", true);
+        splitCount += 1;
+      }
+    }
+
+    console.log("[B-roll] post-intro layout plan", {
+      remainingMs: totalMs - postIntroStart,
+      windows: windows.length,
+      cardBeats: cardBeatCount,
+      circlePip: circleCount,
+      split5050: splitCount,
+      forcedCinema: forcedCinemaCount,
+      cinemaGapBrollMs: cinemaGapMs,
+    });
+  }
+
+  const mainId = uuid();
+  elements.unshift({
+    id: mainId,
+    type: "video",
+    url: mainVideoUrl,
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 100,
+    rotation: 0,
+    opacity: 1,
+    zIndex: 8,
+    startTime: 0,
+    duration: totalMs,
+    videoStartOffset: 0,
+    thumbnail,
+    muted: false,
+    magicLayoutSegments,
+  });
+
+  console.log('[B-roll] buildMagicRhythmElements done', {
+    elementCount: elements.length,
+    primaryMainId: mainId,
+    usedBRollIds: [...usedSet],
+  });
+  return {
+    elements,
+    primaryMainId: mainId,
+    usedBRollIds: [...usedSet],
+  };
+}
+
+/** Default script when opening Magic create (user can edit or replace). */
+const MAGIC_CREATE_SAMPLE_SCRIPT = `Wait — nobody told you this about going viral on Reels?
+
+Here's the one thing every faceless creator wishes they knew before posting. The algorithm looks random — but it's actually testing hooks first. Nail the first two seconds, and watch time follows.
+
+Save this. Comment "HOOK" and I'll send you my full script template.`;
 
 type SidebarSection = "avatars" | "media" | "templates" | "elements" | "audio" | "text" | "captions" | "brolls";
 
@@ -225,26 +1780,55 @@ type Avatar = {
   id: string;
   name: string;
   url: string;
+  /** Preset voice name (e.g. "Rachel") — saved with avatar_characters row. Used by Magic Create wizard to pre-pick an ElevenLabs voice. */
+  presetVoiceName?: string | null;
 };
 
 const DEFAULT_AVATAR_IDS = new Set(["avatar_1", "avatar_2", "avatar_3", "avatar_4", "avatar_5", "avatar_6", "avatar_7"]);
+
+/** Freepik often returns .mov; browsers usually cannot decode that in video/canvas for thumbnails. */
+function isVideoUrlUnlikelyToDecodeForThumbnail(url: string): boolean {
+  const u = url.toLowerCase();
+  if (u.includes(".mov") || u.includes(".mxf")) return true;
+  if (/[?&]filename=[^&]*\.mov/i.test(u)) return true;
+  return false;
+}
 
 // Component to generate thumbnail for videos that don't have one yet
 const VideoThumbnailGenerator = ({ 
   videoUrl, 
   elementId, 
-  onThumbnailGenerated 
+  onThumbnailGenerated,
+  posterUrl,
 }: { 
   videoUrl: string; 
   elementId: string; 
   onThumbnailGenerated: (thumbnail: string) => void;
+  /** Static image (e.g. Freepik thumbnail) — avoids canvas grab from .mov CDN URLs */
+  posterUrl?: string | null;
 }) => {
   const [thumbnail, setThumbnail] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState(false);
 
+  // Use API-provided poster image immediately (no video element decode).
+  useEffect(() => {
+    if (thumbnail || error) return;
+    const p = posterUrl?.trim();
+    if (p && p.startsWith("http")) {
+      setThumbnail(p);
+      onThumbnailGenerated(p);
+    }
+  }, [posterUrl, thumbnail, error, onThumbnailGenerated]);
+
   useEffect(() => {
     if (!videoRef.current || thumbnail || error) return;
+    if (posterUrl?.trim()?.startsWith("http")) return;
+
+    if (isVideoUrlUnlikelyToDecodeForThumbnail(videoUrl)) {
+      setError(true);
+      return;
+    }
 
     const video = videoRef.current;
     let timeoutId: NodeJS.Timeout;
@@ -322,7 +1906,10 @@ const VideoThumbnailGenerator = ({
     };
 
     const handleError = () => {
-      console.error('Video failed to load for thumbnail:', videoUrl);
+      // Common for .mov / exotic codecs — avoid console noise; timeline shows placeholder.
+      if (process.env.NODE_ENV === "development") {
+        console.debug("[thumbnail] video decode not available:", videoUrl.slice(0, 120));
+      }
       setError(true);
     };
 
@@ -336,7 +1923,7 @@ const VideoThumbnailGenerator = ({
       video.removeEventListener('error', handleError);
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [videoUrl, thumbnail, onThumbnailGenerated, error]);
+  }, [videoUrl, posterUrl, thumbnail, onThumbnailGenerated, error]);
 
   if (thumbnail) {
     return (
@@ -354,8 +1941,8 @@ const VideoThumbnailGenerator = ({
 
   if (error) {
     return (
-      <div className="h-full w-full flex items-center justify-center bg-gray-300 text-[8px] text-gray-600 rounded">
-        Error
+      <div className="h-full w-full flex items-center justify-center bg-muted text-[8px] text-muted-foreground rounded">
+        Clip
       </div>
     );
   }
@@ -554,7 +2141,55 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   const [canvasZoom, setCanvasZoom] = useState(90); // Canvas zoom level (percentage)
   const [isMuted, setIsMuted] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
+  /** Slower word-by-word + beat fade on magic explainer text layers (preview only). */
+  const [magicExplainerSlowAnimations, setMagicExplainerSlowAnimations] = useState(false);
   const mainVideoPlayerRef = useRef<HTMLVideoElement>(null);
+  /**
+   * Tracks the currently-mounted <video> DOM node for each canvas element id.
+   *
+   * The Magic main video renders through one of four mutually-exclusive JSX
+   * branches (split-bottom / circle-pip w/ top card / circle-pip / default).
+   * When `magicSeg.mode` flips at a beat boundary React unmounts the old
+   * branch's <video> and mounts a new one; in some browsers the unmounted
+   * node can keep decoding audio for a moment, producing a delayed echo.
+   *
+   * IMPORTANT: the ref callback lives on an inline `(videoEl) =>` arrow, so
+   * React re-creates it every render → React calls the OLD ref with `null`
+   * and then the NEW ref with the SAME node on every render cycle. We must
+   * not treat the `null` as a real unmount (doing so stripped `src` on the
+   * live video and broke all playback). Instead, we only act when we see a
+   * REAL replacement: the new `videoEl` is a node that differs from the one
+   * currently tracked for this element id. Null calls are ignored.
+   */
+  const activeCanvasVideoRefsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
+  const attachCanvasVideoRef = useCallback(
+    (elementId: string, videoEl: HTMLVideoElement | null) => {
+      // Ignore detach-style callbacks — with inline refs these fire on every
+      // render even though the underlying DOM node is unchanged.
+      if (!videoEl) return;
+      const map = activeCanvasVideoRefsRef.current;
+      const prev = map.get(elementId);
+      if (prev && prev !== videoEl) {
+        // Genuine branch-swap: React mounted a new <video> for the same
+        // element id. Hard-silence the outgoing node so its audio can't
+        // linger as a delayed copy of the main track.
+        try {
+          prev.pause();
+          prev.muted = true;
+        } catch (_) {
+          /* noop */
+        }
+      }
+      map.set(elementId, videoEl);
+      if ("preservesPitch" in videoEl) (videoEl as any).preservesPitch = true;
+      try {
+        videoEl.setAttribute("preservespitch", "true");
+      } catch (_) {
+        /* noop */
+      }
+    },
+    []
+  );
   const [activeSidebarSection, setActiveSidebarSection] = useState<SidebarSection>("captions");
   const [avatarsDialogOpen, setAvatarsDialogOpen] = useState(false);
   const [savedAvatars, setSavedAvatars] = useState<Avatar[]>([]);
@@ -666,12 +2301,65 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   const [generatedVideos, setGeneratedVideos] = useState<UGCGeneratedVideo[]>([]);
   const [loadingVideos, setLoadingVideos] = useState(false);
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [magicCreateOpen, setMagicCreateOpen] = useState(false);
+  const [magicCreateScript, setMagicCreateScript] = useState("");
+  const [magicCreateLoading, setMagicCreateLoading] = useState(false);
+  const [magicCreateTranscribeLoading, setMagicCreateTranscribeLoading] = useState(false);
+  /** `gen:${id}` or `upload:${id}` — main video for Magic create (not forced to latest lip-sync) */
+  const [magicCreateMainVideoKey, setMagicCreateMainVideoKey] = useState<string | null>(null);
+  /** Wizard step for the Magic Create 3-step flow. */
+  type MagicWizardStep = "source" | "media" | "generate";
+  const [magicWizardStep, setMagicWizardStep] = useState<MagicWizardStep>("source");
+  /** Source chosen in Step 1: `"avatar"` or `"media"` */
+  const [magicSource, setMagicSource] = useState<"avatar" | "media" | null>(null);
+  /**
+   * Set when the user picked "Select an Avatar" in Step 1 and we delegated to the existing
+   * Avatars → Speech → Lipsync flow. When lipsync completes we reopen Magic Create on Step 3.
+   */
+  const [magicPendingReopenOnLipsync, setMagicPendingReopenOnLipsync] = useState(false);
   // Track where to insert a new element (after which element)
   const [insertAfterElementId, setInsertAfterElementId] = useState<string | null>(null);
-  
+  /** Dedupe concurrent Supabase project creates (client insert has no built-in timeout) */
+  const ensureProjectInFlightRef = useRef<Promise<UGCVideoProject> | null>(null);
+
   // Track timeline container width to calculate scale that fits on screen
   const [timelineContainerWidth, setTimelineContainerWidth] = useState<number>(0);
   const timelineContainerRef = useRef<HTMLDivElement>(null);
+  /** When canvas <video> fails (e.g. MOV in Chrome), show thumbnail; keyed by element id + failed url */
+  const [canvasVideoFailedUrlByElementId, setCanvasVideoFailedUrlByElementId] = useState<
+    Record<string, string>
+  >({});
+
+  const magicMainVideoOptions = useMemo(() => {
+    const gen = [...generatedVideos]
+      .sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      )
+      .map((v) => ({
+        key: `gen:${v.id}` as const,
+        label: `Lip sync · ${new Date(v.created_at).toLocaleString()}`,
+        url: v.video_url,
+        created_at: v.created_at,
+        duration_seconds: v.duration_seconds,
+      }));
+    const up = uploadedVideos.map((v) => ({
+      key: `upload:${v.id}` as const,
+      label: `Upload · ${v.name || "Video"}`,
+      url: v.url,
+      created_at: v.created_at,
+      duration_seconds: null as number | null,
+    }));
+    return [...gen, ...up];
+  }, [generatedVideos, uploadedVideos]);
+
+  useEffect(() => {
+    if (!magicCreateOpen || magicMainVideoOptions.length === 0) return;
+    setMagicCreateMainVideoKey((k) => {
+      if (k && magicMainVideoOptions.some((o) => o.key === k)) return k;
+      return magicMainVideoOptions[0]!.key;
+    });
+  }, [magicCreateOpen, magicMainVideoOptions]);
 
   // Load project if projectId is provided
   useEffect(() => {
@@ -822,6 +2510,17 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   const [panStart, setPanStart] = useState({ x: 0, y: 0 }); // Initial pan position
   const [timelineHeight, setTimelineHeight] = useState(160); // Timeline height in pixels (default: 160px = h-40)
   const [isResizingTimeline, setIsResizingTimeline] = useState(false);
+
+  // ---------------------------------------------------------------------------
+  // Magic layout circle editing (the "Circle" on the canvas during circle-pip).
+  // `selectedLayoutSegmentIdx` points into the main video's magicLayoutSegments
+  // array while the user has that specific circle-pip segment selected for
+  // editing. `isResizingCircle` + `circleResizeStartRef` drive the drag-resize
+  // handle on the bottom-right of the circle.
+  // ---------------------------------------------------------------------------
+  const [selectedLayoutSegmentIdx, setSelectedLayoutSegmentIdx] = useState<number | null>(null);
+  const [isResizingCircle, setIsResizingCircle] = useState(false);
+  const circleResizeStartRef = useRef<{ x: number; y: number; scale: number; canvasWidth: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const lastPlayingStateRef = useRef<boolean>(false);
   const [removingBackground, setRemovingBackground] = useState<string | null>(null); // Element ID being processed
@@ -1541,6 +3240,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   };
 
   const loadBRolls = useCallback(async () => {
+    console.log('[B-roll] loadBRolls: start (stockOnly=true)');
     setLoadingBRolls(true);
     try {
       const timeoutPromise = new Promise<never>((_, reject) => 
@@ -1548,19 +3248,24 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       );
       
       const result = await Promise.race([
-        bRollsApi.list(),
+        bRollsApi.list({ stockOnly: true }),
         timeoutPromise
       ]);
       
-      console.log("Loaded B-rolls:", result.bRolls);
+      console.log('[B-roll] loadBRolls: success', {
+        count: result.bRolls?.length ?? 0,
+        stockSearchTerm: result.stockSearchTerm ?? null,
+        ids: (result.bRolls || []).slice(0, 12).map((b) => b.id),
+      });
       setBRolls(result.bRolls || []);
     } catch (error: any) {
-      console.error("Error loading B-rolls:", error);
+      console.error('[B-roll] loadBRolls: error', error);
       setBRolls([]);
       if (error.message !== 'Request timeout') {
         console.warn("Failed to load B-rolls, continuing with empty list");
       }
     } finally {
+      console.log('[B-roll] loadBRolls: finished');
       setLoadingBRolls(false);
     }
   }, []);
@@ -1584,7 +3289,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     intervalSeconds: number,
     selectedBRolls: BRoll[]
   ): CanvasElement[] => {
-    console.log('🔍 generateBRollClips called with:', {
+    console.log('[B-roll] generateBRollClips start', {
       totalDurationMs,
       intervalSeconds,
       selectedBRollsCount: selectedBRolls.length,
@@ -1592,7 +3297,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     });
 
     if (selectedBRolls.length === 0 || intervalSeconds <= 0) {
-      console.warn('⚠️ generateBRollClips: Invalid input - selectedBRolls.length:', selectedBRolls.length, 'intervalSeconds:', intervalSeconds);
+      console.warn('[B-roll] generateBRollClips: invalid input', { selectedBRollsLength: selectedBRolls.length, intervalSeconds });
       return [];
     }
 
@@ -1601,20 +3306,21 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     const clipDurationMs = 3000; // 3 seconds per clip
     const totalDurationSeconds = totalDurationMs / 1000;
 
-    console.log('📊 Generating clips:', {
+    console.log('[B-roll] generateBRollClips timing', {
       totalDurationSeconds,
       intervalSeconds,
       expectedClips: Math.floor((totalDurationSeconds - intervalSeconds) / intervalSeconds) + 1
     });
 
-    // Generate clips at each interval (start from intervalSeconds, end before totalDurationSeconds)
+    // Round-robin through selected B-rolls so the same clip is not chosen back-to-back
+    let rr = 0;
     for (let time = intervalSeconds; time < totalDurationSeconds; time += intervalSeconds) {
-      console.log(`🔄 Generating clip at ${time}s`);
-      // Randomly select a B-roll from the selected ones
-      const randomBRoll = selectedBRolls[Math.floor(Math.random() * selectedBRolls.length)];
-      
+      console.log('[B-roll] generateBRollClips interval', { timeSec: time });
+      const randomBRoll = selectedBRolls[rr % selectedBRolls.length]!;
+      rr += 1;
+
       if (!randomBRoll || !randomBRoll.url) {
-        console.warn('⚠️ B-roll missing URL:', randomBRoll);
+        console.warn('[B-roll] generateBRollClips: missing URL', randomBRoll);
         continue;
       }
 
@@ -1630,6 +3336,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
         id: uuid(),
         type: "video",
         url: randomBRoll.url,
+        thumbnail: randomBRoll.thumbnailUrl || undefined,
         x: 0, // Full screen overlay
         y: 0,
         width: 100,
@@ -1644,8 +3351,15 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
       };
 
       clips.push(clip);
+      console.log('[B-roll] generateBRollClips pushed clip', {
+        clipId: clip.id,
+        bRollId: randomBRoll.id,
+        startTimeMs: clip.startTime,
+        videoStartOffsetMs,
+      });
     }
 
+    console.log('[B-roll] generateBRollClips done', { clipCount: clips.length });
     return clips;
   };
 
@@ -2034,12 +3748,36 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     const hasCanvasVideos = canvasElements.some(el => el.type === "video" && el.url);
     const wasPlaying = lastPlayingStateRef.current;
     const justStartedPlaying = isPlaying && !wasPlaying;
-    
+
+    // Echo guard: every tick, sweep the DOM for orphan <video> tags that no
+    // longer correspond to a current canvasElement (e.g. React left one
+    // behind after a magicLayoutSegments branch swap). Hard-mute them so
+    // their audio can't linger as a delayed copy of the main track.
+    {
+      const liveIds = new Set<string>(
+        canvasElements.filter(el => el.type === "video" && el.url).map(el => el.id)
+      );
+      const allCanvasVideos = document.querySelectorAll<HTMLVideoElement>(
+        'video[id^="canvas-video-"]'
+      );
+      allCanvasVideos.forEach((node) => {
+        const id = node.id.replace(/^canvas-video-/, "");
+        if (!liveIds.has(id)) {
+          try {
+            node.pause();
+            node.muted = true;
+          } catch (_) {
+            /* noop */
+          }
+        }
+      });
+    }
+
     if (isPlaying) {
       // Start playing all canvas videos
       canvasElements.forEach(element => {
         if (element.type === "video" && element.url) {
-          const video = document.querySelector(`#canvas-video-${element.id}`) as HTMLVideoElement;
+          const video = getActiveCanvasVideo(element.id);
           if (video) {
             const elementStartTime = element.startTime || 0;
             const elementDuration = element.duration || (video.duration * 1000 || 5000);
@@ -2066,8 +3804,15 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   Math.min(videoTime, Math.min(trimmedEndTime, video.duration || Infinity))
                 );
                 
+                const driftTol = element.bRollOverlay
+                  ? BROLL_VIDEO_SYNC_DRIFT_SEC
+                  : VIDEO_SYNC_DRIFT_SEC;
                 // Sync time when just starting playback or if video is paused (newly added)
-                if (justStartedPlaying || video.paused || Math.abs(video.currentTime - clampedVideoTime) > 0.1) {
+                if (
+                  justStartedPlaying ||
+                  video.paused ||
+                  Math.abs(video.currentTime - clampedVideoTime) > driftTol
+                ) {
                   video.currentTime = clampedVideoTime;
                 }
                 
@@ -2173,7 +3918,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     
     canvasElements.forEach(element => {
       if (element.type === "video" && element.url) {
-        const video = document.querySelector(`#canvas-video-${element.id}`) as HTMLVideoElement;
+        const video = getActiveCanvasVideo(element.id);
         if (!video) return;
         
         const elementStartTime = element.startTime || 0;
@@ -2199,8 +3944,11 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
               Math.min(videoTime, Math.min(trimmedEndTime, video.duration || Infinity))
             );
             
-            // Sync video time if it's significantly different
-            if (Math.abs(video.currentTime - clampedVideoTime) > 0.1) {
+            const driftTol = element.bRollOverlay
+              ? BROLL_VIDEO_SYNC_DRIFT_SEC
+              : VIDEO_SYNC_DRIFT_SEC;
+            // Sync only on meaningful drift — micro-seeks every frame cause visible jerk
+            if (Math.abs(video.currentTime - clampedVideoTime) > driftTol) {
               video.currentTime = clampedVideoTime;
             }
             
@@ -2445,9 +4193,9 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     };
   }, [selectedElementId]);
 
-  // Load saved characters when avatar dialog opens
+  // Load saved characters when the avatar dialog OR the Magic Create wizard opens.
   useEffect(() => {
-    if (!avatarsDialogOpen) return;
+    if (!avatarsDialogOpen && !magicCreateOpen) return;
     let cancelled = false;
     listCharacters()
       .then(({ characters }) => {
@@ -2456,7 +4204,12 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
           .map((c: Record<string, unknown>) => {
             const videoUrl = (c.animationVideoUrl as string) || (c.selectedAvatarUrl as string) || "";
             const url = !videoUrl ? "" : videoUrl.startsWith("http") ? videoUrl : `${config.remotionServerUrl}${videoUrl}`;
-            return { id: (c._id as string) || `char-${c.createdAt}`, name: (c.characterName as string) || "My avatar", url };
+            return {
+              id: (c._id as string) || `char-${c.createdAt}`,
+              name: (c.characterName as string) || "My avatar",
+              url,
+              presetVoiceName: (c.presetVoiceName as string) ?? null,
+            };
           })
           .filter((a: Avatar) => a.url);
         setSavedAvatars(list);
@@ -2465,7 +4218,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
         if (!cancelled) console.warn("[Avatars] Failed to load saved characters:", err);
       });
     return () => { cancelled = true; };
-  }, [avatarsDialogOpen]);
+  }, [avatarsDialogOpen, magicCreateOpen]);
 
   const defaultAvatars: Avatar[] = [
     { id: "avatar_1", name: "Avatar 1", url: `${config.remotionServerUrl}/avatars/Avatar_1.mp4` },
@@ -2856,12 +4609,12 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   }, [user?.id]);
 
   useEffect(() => {
-    if (!showSpeechGeneration) return;
+    if (!showSpeechGeneration && !magicCreateOpen) return;
     if (elevenLabsVoices.length === 0 && !loadingVoices) fetchElevenLabsVoices();
     fetchUserSavedVoices();
     checkApiKey("elevenlabs").then((r) => setHasElevenLabsKey(r.hasKey));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showSpeechGeneration]);
+  }, [showSpeechGeneration, magicCreateOpen]);
 
   // Handle lip sync generation
   const handleGenerateLipSync = useCallback(async (e?: React.MouseEvent) => {
@@ -3644,6 +5397,51 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     }
   }, [currentTime, showSubtitles, subtitleSegments]);
 
+  const magicCinemaExplainerCoversVideo = useMemo(
+    () => isMagicCinemaExplainerActiveAt(currentTime, canvasElements),
+    [currentTime, canvasElements]
+  );
+  const activeMagicCinemaExplainer = useMemo(
+    () => getActiveMagicCinemaExplainerAt(currentTime, canvasElements),
+    [currentTime, canvasElements]
+  );
+  /** Pre-warm circle layout just before black overlay ends to avoid a visible pop. */
+  const cinemaToCirclePrewarm = useMemo(() => {
+    if (!activeMagicCinemaExplainer) return false;
+    const endMs =
+      (activeMagicCinemaExplainer.startTime ?? 0) +
+      (activeMagicCinemaExplainer.duration ?? 0);
+    return endMs - currentTime <= 260;
+  }, [activeMagicCinemaExplainer, currentTime]);
+
+  const magicCircleLayoutActive = useMemo(
+    () => isMagicCircleLayoutActiveAt(currentTime, canvasElements),
+    [currentTime, canvasElements]
+  );
+
+  const magicTopTextCardActive = useMemo(
+    () => isMagicTopTextCardExplainerActiveAt(currentTime, canvasElements),
+    [currentTime, canvasElements]
+  );
+
+  // "Top slot, no card" = the segment was authored to pair with a top explainer
+  // card (topSlot=true) but the user deleted that card. The main video stays in
+  // the bottom-half rectangle and the top half renders as empty white canvas.
+  // We pin the subtitle to the canvas middle (50%) so it visually sits in the
+  // centre of the frame, rather than dropping to the user's default y (which
+  // would bury it inside the video).
+  const magicTopSlotNoCardActive = useMemo(
+    () => isMagicTopSlotNoCardAt(currentTime, canvasElements),
+    [currentTime, canvasElements]
+  );
+
+  // "Full circle" = centered circle-pip with no explainer card on top AND no
+  // topSlot reservation (so the circle really does fill the frame). In that
+  // layout we pin the subtitle near the bottom of the circle so it reads like
+  // a caption on the pip itself.
+  const magicFullCircleActive =
+    magicCircleLayoutActive && !magicTopTextCardActive && !magicTopSlotNoCardActive;
+
   // Subtitle drag handlers
   const handleSubtitleMouseDown = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -3739,27 +5537,38 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
           const videoStartOffsetSeconds = videoStartOffset / 1000;
           
           for (const seg of segments) {
-            // seg.startSec and seg.endSec are relative to the video file start
-            // Adjust for videoStartOffset (trim start)
-            const adjustedStartSec = seg.startSec - videoStartOffsetSeconds;
-            const adjustedEndSec = seg.endSec - videoStartOffsetSeconds;
-            
-            // Only include segments that are within the trimmed portion
-            if (adjustedStartSec < 0 || adjustedEndSec > (elementDuration / 1000)) {
-              continue; // Segment is outside the trimmed portion
+            const times = sttSegmentTimesSec(seg);
+            if (!times) {
+              console.warn("[Subtitles] Skip segment with invalid times:", seg);
+              continue;
             }
-            
-            // Map to timeline time
-            const segmentStartMs = timelineStartTime + (adjustedStartSec * 1000);
-            const segmentEndMs = timelineStartTime + (adjustedEndSec * 1000);
-            
-            // Only include segments that are within the element's duration
-            if (segmentStartMs >= timelineStartTime && segmentEndMs <= (timelineStartTime + elementDuration)) {
+            const rawText = typeof (seg as { text?: unknown }).text === "string" ? (seg as { text: string }).text : "";
+            const line = rawText.trim();
+            if (!line) continue;
+
+            // Times are relative to the video file start — adjust for videoStartOffset (trim start)
+            const adjustedStartSec = times.startSec - videoStartOffsetSeconds;
+            const adjustedEndSec = times.endSec - videoStartOffsetSeconds;
+
+            // Only include segments that are within the trimmed portion
+            if (adjustedStartSec < 0 || adjustedEndSec > elementDuration / 1000) {
+              continue;
+            }
+
+            const segmentStartMs = timelineStartTime + adjustedStartSec * 1000;
+            const segmentEndMs = timelineStartTime + adjustedEndSec * 1000;
+
+            if (
+              segmentStartMs >= timelineStartTime &&
+              segmentEndMs <= timelineStartTime + elementDuration &&
+              Number.isFinite(segmentStartMs) &&
+              Number.isFinite(segmentEndMs)
+            ) {
               allSegments.push({
                 startMs: Math.round(segmentStartMs),
                 endMs: Math.round(segmentEndMs),
-                speaker: 'A', // Default speaker, could be enhanced later
-                text: seg.text.trim(),
+                speaker: "A",
+                text: line,
               });
             }
           }
@@ -4139,171 +5948,557 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
 
   // Handle selecting a generated video from media dialog
   const handleSelectGeneratedVideo = async (video: UGCGeneratedVideo) => {
-    // Don't set lipSyncVideoUrl when adding to canvas - this prevents the main video player from playing
-    // and causing echo. Only set it when generating a new lip-sync video for preview.
     setMediaDialogOpen(false);
-    // Optionally add to assets
-    const newAsset: Asset = {
-      id: uuid(),
-      name: `Generated Video ${new Date(video.created_at).toLocaleDateString()}`,
-      type: "video",
-      url: video.video_url,
-    };
-    setAssets([...assets, newAsset]);
-    
-    // Generate thumbnail and get duration for the video
+
+    setAssets((prev) => [
+      ...prev,
+      {
+        id: uuid(),
+        name: `Generated Video ${new Date(video.created_at).toLocaleDateString()}`,
+        type: "video",
+        url: video.video_url,
+      },
+    ]);
+
     let thumbnail: string | undefined;
-    let videoDuration = 5000; // Default 5s fallback
-    
+    let videoDuration =
+      video.duration_seconds != null && video.duration_seconds > 0
+        ? Math.round(video.duration_seconds * 1000)
+        : 5000;
+
     try {
-      // Get both thumbnail and duration in parallel
-      const [thumb, duration] = await Promise.all([
-        generateVideoThumbnail(video.video_url).catch(() => undefined),
-        getVideoDuration(video.video_url).catch(() => 5000)
+      const [thumb, dur] = await Promise.all([
+        generateVideoThumbnail(video.video_url),
+        getVideoDuration(video.video_url),
       ]);
       thumbnail = thumb;
-      videoDuration = duration;
+      videoDuration = dur;
     } catch (error) {
       console.error("Failed to get video metadata:", error);
-      // Thumbnail will be generated by VideoThumbnailGenerator component
-      // Duration will use default 5000ms
     }
-    
-    // Calculate start time: if inserting after a specific element, use that; otherwise place after the last video
-    let videoStartTime = 0;
-    if (insertAfterElementId) {
-      const afterElement = canvasElements.find(el => el.id === insertAfterElementId);
-      if (afterElement) {
-        const elementStartTime = afterElement.startTime || 0;
-        // Use actual duration if available, otherwise fallback
-        const elementDuration = afterElement.duration || (afterElement.type === "video" ? 5000 : 3000);
-        // Calculate exact end time - this ensures the new video starts immediately after
-        videoStartTime = elementStartTime + elementDuration;
-        console.log('📍 Inserting video after element:', {
-          afterElementId: insertAfterElementId,
-          elementStartTime,
-          elementDuration,
-          calculatedStartTime: videoStartTime
-        });
-      }
-      setInsertAfterElementId(null); // Reset after use
-    } else {
-      // Place after the last video ends
-      const videoElements = canvasElements.filter(el => el.type === "video");
-      if (videoElements.length > 0) {
-        const endTimes = videoElements.map(el => {
-          const startTime = el.startTime || 0;
-          // Use actual duration if available
-          const duration = el.duration || 5000;
-          return startTime + duration;
-        });
-        videoStartTime = Math.max(...endTimes);
-      }
-    }
-    
-    // Add to canvas with timeline properties
-    const newElement: CanvasElement = {
-      id: uuid(),
-      type: "video",
-      url: video.video_url,
-      x: 50,
-      y: 50,
-      width: 80,
-      height: 80,
-      rotation: 0,
-      opacity: 1,
-      zIndex: canvasElements.length,
-      // Timeline properties - start after the last video ends, use actual duration
-      startTime: videoStartTime,
-      duration: videoDuration, // Use actual video duration
-      thumbnail, // Include thumbnail so it shows immediately
-      muted: false,
-    };
-    
-    // Ensure project exists before adding element
+
+    const afterId = insertAfterElementId;
+    if (afterId) setInsertAfterElementId(null);
+
     await ensureProjectExists();
-    
-    setCanvasElements([...canvasElements, newElement]);
-    setSelectedElementId(newElement.id);
+
+    const newId = uuid();
+
+    setCanvasElements((prev) => {
+      let videoStartTime = 0;
+      if (afterId) {
+        const afterElement = prev.find((el) => el.id === afterId);
+        if (afterElement) {
+          const elementStartTime = afterElement.startTime || 0;
+          const elementDuration =
+            afterElement.duration || (afterElement.type === "video" ? 5000 : 3000);
+          videoStartTime = elementStartTime + elementDuration;
+        }
+      } else {
+        const videoElements = prev.filter((el) => el.type === "video");
+        if (videoElements.length > 0) {
+          const endTimes = videoElements.map((el) => {
+            const startTime = el.startTime || 0;
+            const dur = el.duration || 5000;
+            return startTime + dur;
+          });
+          videoStartTime = Math.max(...endTimes);
+        }
+      }
+
+      const newElement: CanvasElement = {
+        id: newId,
+        type: "video",
+        url: video.video_url,
+        x: 50,
+        y: 50,
+        width: 80,
+        height: 80,
+        rotation: 0,
+        opacity: 1,
+        zIndex: prev.length,
+        startTime: videoStartTime,
+        duration: videoDuration,
+        thumbnail,
+        muted: false,
+      };
+
+      return [...prev, newElement];
+    });
+
+    setSelectedElementId(newId);
   };
 
-  // Get video duration from URL
+  // Get video duration from URL (no crossOrigin — avoids CORS blocking metadata on some CDNs)
   const getVideoDuration = async (videoUrl: string): Promise<number> => {
-    return new Promise((resolve, reject) => {
-      const video = document.createElement('video');
-      video.crossOrigin = 'anonymous';
-      video.src = videoUrl;
+    return new Promise((resolve) => {
+      const video = document.createElement("video");
       video.muted = true;
-      video.preload = 'metadata';
-      
+      video.preload = "metadata";
+      video.playsInline = true;
+      video.src = videoUrl;
+
+      const TIMEOUT_MS = 12000;
+      const fallbackMs = 10000;
+      const timer = window.setTimeout(() => {
+        cleanup();
+        resolve(fallbackMs);
+      }, TIMEOUT_MS);
+
       const handleLoadedMetadata = () => {
         if (video.duration && video.duration > 0 && isFinite(video.duration)) {
-          resolve(video.duration * 1000); // Return in milliseconds
-        } else {
-          reject(new Error('Could not get video duration'));
+          window.clearTimeout(timer);
+          cleanup();
+          resolve(video.duration * 1000);
         }
-        cleanup();
       };
-      
+
       const handleError = () => {
-        reject(new Error('Failed to load video'));
+        window.clearTimeout(timer);
         cleanup();
+        resolve(fallbackMs);
       };
-      
+
       const cleanup = () => {
-        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
-        video.removeEventListener('error', handleError);
-        video.src = ''; // Release video element
+        video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+        video.removeEventListener("error", handleError);
+        video.removeAttribute("src");
+        video.load();
       };
-      
-      video.addEventListener('loadedmetadata', handleLoadedMetadata);
-      video.addEventListener('error', handleError);
-      
-      // Load the video
+
+      video.addEventListener("loadedmetadata", handleLoadedMetadata);
+      video.addEventListener("error", handleError);
       video.load();
     });
   };
 
-  // Generate thumbnail from video
+  // Generate thumbnail from video (anonymous CORS when needed for canvas; fallback to URL)
   const generateVideoThumbnail = async (videoUrl: string): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const video = document.createElement('video');
-      video.crossOrigin = 'anonymous';
-      video.src = videoUrl;
-      video.muted = true;
-      video.preload = 'metadata';
-      
-      const handleLoadedMetadata = () => {
-        // Seek to the very beginning (0 seconds) for thumbnail
-        video.currentTime = 0;
-      };
-      
-      const handleSeeked = () => {
-        try {
-          const canvas = document.createElement('canvas');
-          // Use a reasonable size for thumbnails (16:9 aspect ratio)
-          canvas.width = 160;
-          canvas.height = 90;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const thumbnail = canvas.toDataURL('image/jpeg', 0.8);
-            resolve(thumbnail);
-          } else {
-            reject(new Error('Could not get canvas context'));
+    const tryThumbnail = (useCors: boolean) =>
+      new Promise<string>((resolve, reject) => {
+        const video = document.createElement("video");
+        if (useCors) video.crossOrigin = "anonymous";
+        video.src = videoUrl;
+        video.muted = true;
+        video.preload = "metadata";
+
+        const TIMEOUT_MS = 12000;
+        const timer = window.setTimeout(() => {
+          cleanup();
+          reject(new Error("thumbnail timeout"));
+        }, TIMEOUT_MS);
+
+        const cleanup = () => {
+          window.clearTimeout(timer);
+          video.removeEventListener("loadedmetadata", onMeta);
+          video.removeEventListener("seeked", onSeeked);
+          video.removeEventListener("error", onErr);
+          video.removeAttribute("src");
+          video.load();
+        };
+
+        const onMeta = () => {
+          video.currentTime = 0;
+        };
+
+        const onSeeked = () => {
+          try {
+            const canvas = document.createElement("canvas");
+            canvas.width = 160;
+            canvas.height = 90;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              cleanup();
+              resolve(canvas.toDataURL("image/jpeg", 0.8));
+            } else {
+              cleanup();
+              reject(new Error("no canvas context"));
+            }
+          } catch {
+            cleanup();
+            reject(new Error("draw failed"));
           }
-        } catch (error) {
-          reject(error);
+        };
+
+        const onErr = () => {
+          cleanup();
+          reject(new Error("video error"));
+        };
+
+        video.addEventListener("loadedmetadata", onMeta);
+        video.addEventListener("seeked", onSeeked);
+        video.addEventListener("error", onErr);
+        video.load();
+      });
+
+    try {
+      return await tryThumbnail(true);
+    } catch {
+      try {
+        return await tryThumbnail(false);
+      } catch {
+        return videoUrl;
+      }
+    }
+  };
+
+  /** Speech-to-text: transcribe latest generated video into the Magic create script box (uses STT server, e.g. localhost:5009). */
+  const handleMagicTranscribeScriptFromVideo = async () => {
+    setMagicCreateTranscribeLoading(true);
+    try {
+      const opt =
+        magicMainVideoOptions.find((o) => o.key === magicCreateMainVideoKey) ||
+        magicMainVideoOptions[0];
+      if (!opt) {
+        alert(
+          "No videos in Media. Generate a lip-sync clip or upload a video, then transcribe."
+        );
+        return;
+      }
+      const url = opt.url;
+
+      const res = await fetch(`${config.sttServerUrl}/transcribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          audioPath: url,
+          language: "en",
+          wordTimestamps: true,
+        }),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        throw new Error(
+          errText.trim() ||
+            `STT request failed (${res.status}). Start the STT server: cd saas/stt-server && .venv/bin/uvicorn app:app --host 127.0.0.1 --port 5009 — or set NEXT_PUBLIC_STT_SERVER_URL (${config.sttServerUrl}).`
+        );
+      }
+
+      const data = (await res.json()) as { segments?: Array<{ text?: string }> };
+      const segs = data.segments || [];
+      const text = segs
+        .map((s) => (s.text || "").trim())
+        .filter(Boolean)
+        .join(" ");
+
+      if (!text.trim()) {
+        alert(
+          `No speech detected in that video. Check audio, or verify STT at ${config.sttServerUrl}.`
+        );
+        return;
+      }
+
+      setMagicCreateScript(text);
+    } catch (e) {
+      console.error("[Magic create transcribe]", e);
+      alert(e instanceof Error ? e.message : "Transcription failed");
+    } finally {
+      setMagicCreateTranscribeLoading(false);
+    }
+  };
+
+  /**
+   * Magic Create wizard — clear the avatar-delegation flag if the user bailed out.
+   * If both the avatars picker and the speech/lipsync panels are closed without a lipsync
+   * landing, drop the pending-reopen flag so we don't auto-reopen later on some unrelated
+   * lipsync.
+   */
+  useEffect(() => {
+    if (!magicPendingReopenOnLipsync) return;
+    if (avatarsDialogOpen || showSpeechGeneration) return;
+    if (generatingLipSync) return; // lipsync in progress — wait for completion watcher
+    if (lipSyncVideoUrl) return; // success path — let the completion watcher handle it
+    // All avatar-flow dialogs are closed and there's no lipsync — user cancelled.
+    const t = setTimeout(() => setMagicPendingReopenOnLipsync(false), 200);
+    return () => clearTimeout(t);
+  }, [
+    magicPendingReopenOnLipsync,
+    avatarsDialogOpen,
+    showSpeechGeneration,
+    generatingLipSync,
+    lipSyncVideoUrl,
+  ]);
+
+  /**
+   * Magic Create wizard — completion watcher for the Avatar branch.
+   *
+   * When the user picked "Select an Avatar" in Step 1, we hand off to the existing
+   * (working) Avatars → Speech → Lipsync flow. `magicPendingReopenOnLipsync` remembers
+   * that we should jump them back into Magic Create once the lipsync lands.
+   *
+   * We fire when `lipSyncVideoUrl` becomes truthy, pre-pick that fresh clip as the main
+   * video, copy the typed script (from `speechText`) into `magicCreateScript`, and reopen
+   * the wizard straight on Step 3 (Generate).
+   */
+  useEffect(() => {
+    if (!magicPendingReopenOnLipsync) return;
+    if (!lipSyncVideoUrl) return;
+    // Wait a tick for the lipsync save to register in generatedVideos → magicMainVideoOptions.
+    const t = setTimeout(() => {
+      const latest = magicMainVideoOptions[0];
+      if (latest) setMagicCreateMainVideoKey(latest.key);
+      if (speechText.trim()) setMagicCreateScript(speechText);
+      setMagicPendingReopenOnLipsync(false);
+      setMagicWizardStep("generate");
+      setMagicCreateOpen(true);
+      // Clean up the other open dialogs from the avatar flow.
+      setShowSpeechGeneration(false);
+    }, 600);
+    return () => clearTimeout(t);
+  }, [magicPendingReopenOnLipsync, lipSyncVideoUrl, magicMainVideoOptions, speechText]);
+
+  /**
+   * Magic create: 3s half/half (main + B-roll), then centered circle + caption bar (no B-roll).
+   * Subtitles off by default.
+   */
+  const handleMagicCreate = async () => {
+    const script = magicCreateScript.trim();
+    if (!script) {
+      alert("Paste your script first.");
+      return;
+    }
+    const runT0 = performance.now();
+    const mcLog = (step: string, extra?: Record<string, unknown>) => {
+      console.log(`[Magic create] ${step}`, {
+        elapsedMs: Math.round(performance.now() - runT0),
+        ...extra,
+      });
+    };
+
+    setMagicCreateLoading(true);
+    try {
+      mcLog("start", { scriptChars: script.length });
+      mcLog("step:ensureProject (await)");
+      await ensureProjectExists();
+      mcLog("step:ensureProject done");
+
+      const mainPick =
+        magicMainVideoOptions.find((o) => o.key === magicCreateMainVideoKey) ||
+        magicMainVideoOptions[0];
+      if (!mainPick) {
+        alert(
+          "No videos in Media. Generate a lip-sync clip or upload a video under Media, then run Magic create."
+        );
+        return;
+      }
+      mcLog("step:mainVideo", {
+        key: magicCreateMainVideoKey,
+        urlPrefix: mainPick.url?.slice(0, 72),
+      });
+
+      const sceneTexts = splitScriptIntoScenes(script);
+      mcLog("step:scenes split", { sceneCount: sceneTexts.length });
+
+      mcLog("step:explainer API (script → many cards, started in parallel)");
+      const explainerPromise =
+        !script.trim()
+          ? Promise.resolve([] as SceneExplainerCard[])
+          : magicSceneExplainersApi
+              .getCardsFromScript(script.trim())
+              .then((r) => r.cards || [])
+              .catch((e) => {
+                console.warn("[Magic create] explainer API failed:", e);
+                return [] as SceneExplainerCard[];
+              });
+
+      let bRollPool: BRoll[] = [];
+      let sceneRows: SceneStockBRollRow[] = [];
+      try {
+        mcLog("step:B-roll fetch (await) — per-scene stock can take up to ~180s server timeout");
+        console.log('[B-roll] Magic create: requesting stock (per-scene)', {
+          scriptLen: script.length,
+          sceneCount: sceneTexts.length,
+        });
+        const res = await bRollsApi.list({ scenes: sceneTexts, stockOnly: true });
+        sceneRows = res.sceneStockBRolls || [];
+        bRollPool = (res.bRolls || []).filter((b) => !!b.url);
+        mcLog("step:B-roll fetch done", {
+          poolSize: bRollPool.length,
+          sceneRows: sceneRows.length,
+        });
+        console.log('[B-roll] Magic create: pool ready', {
+          count: bRollPool.length,
+          sceneRows: sceneRows.length,
+          stockSearchTerms: res.stockSearchTerms?.length ?? 0,
+        });
+        setBRolls(bRollPool);
+        if (bRollPool.length === 0) {
+          alert(
+            "No Freepik B-roll clips could be loaded. Check that the Remotion server is running (see NEXT_PUBLIC_REMOTION_SERVER_URL), FREEPIK_API_KEY or FREEPICK_API_KEY is set on the server, and try Magic create again."
+          );
         }
-      };
-      
-      video.addEventListener('loadedmetadata', handleLoadedMetadata);
-      video.addEventListener('seeked', handleSeeked);
-      video.addEventListener('error', () => reject(new Error('Failed to load video')));
-      
-      // Load the video
-      video.load();
-    });
+      } catch (e) {
+        mcLog("step:B-roll fetch error", {
+          message: e instanceof Error ? e.message : String(e),
+        });
+        console.warn("[Magic create] B-roll list failed, continuing without B-roll:", e);
+        alert(
+          `Could not load Freepik B-rolls: ${e instanceof Error ? e.message : "Unknown error"}. Magic layout will run without stock overlays.`
+        );
+      }
+
+      const pick = mainPick;
+
+      let totalMs =
+        pick.duration_seconds != null && pick.duration_seconds > 0
+          ? Math.round(pick.duration_seconds * 1000)
+          : 10_000;
+
+      let thumbnail: string | undefined;
+      try {
+        mcLog("step:thumbnail+duration (await) — may be slow on large videos");
+        const [thumb, dur] = await Promise.all([
+          generateVideoThumbnail(pick.url),
+          getVideoDuration(pick.url),
+        ]);
+        thumbnail = thumb;
+        totalMs = dur;
+        mcLog("step:thumbnail+duration done", { totalMs, hasThumb: !!thumb });
+      } catch (e) {
+        mcLog("step:thumbnail+duration warn", {
+          message: e instanceof Error ? e.message : String(e),
+        });
+        console.warn("[Magic create] metadata:", e);
+      }
+
+      const fallbackMs =
+        pick.duration_seconds != null && pick.duration_seconds > 0
+          ? Math.round(pick.duration_seconds * 1000)
+          : 10_000;
+      const safeTotalMs =
+        Number.isFinite(totalMs) && totalMs > 500 ? totalMs : fallbackMs;
+
+      const sttPromise = transcribeUrlToSubtitleSegments(pick.url, {
+        timelineStartMs: 0,
+        videoStartOffsetMs: 0,
+        elementDurationMs: safeTotalMs,
+      });
+
+      mcLog("step:explainer await (if still in flight — up to ~120s for long scripts)", {});
+      let explainerCards: SceneExplainerCard[] = await explainerPromise;
+      mcLog("step:explainer await done", { cardCount: explainerCards.length });
+      if (!explainerCards.length) {
+        explainerCards = fallbackExplainerCardsFromScript(script);
+        mcLog("step:explainer fallback from script chunks", {
+          cardCount: explainerCards.length,
+        });
+      }
+      let explainerEls = buildMagicExplainerElements(
+        safeTotalMs,
+        explainerCards,
+        script.trim()
+      );
+
+      const sttCaptionSegments = await sttPromise;
+      const captionSegments =
+        sttCaptionSegments.length > 0
+          ? sttCaptionSegments
+          : buildMagicCreateSubtitleSegments(script, safeTotalMs);
+      if (sttCaptionSegments.length > 0) {
+        mcLog("step:STT captions for cinema overlays", {
+          segmentCount: sttCaptionSegments.length,
+        });
+      } else {
+        mcLog("step:STT empty — cinema overlays use script-timed stub captions", {
+          stubSegments: captionSegments.length,
+        });
+      }
+      explainerEls = snapExplainerStartsToCaptionBoundaries(
+        explainerEls,
+        captionSegments,
+        safeTotalMs
+      );
+      mcLog("step:snapped scene switches to phrase boundaries", {
+        beats: explainerEls.filter((e) => e.magicSceneExplainer && !e.magicSceneExplainerStock).length,
+        captions: captionSegments.length,
+      });
+      explainerEls = stretchCinemaExplainerTimingsToCaptions(
+        explainerEls,
+        captionSegments,
+        safeTotalMs
+      );
+      explainerEls = enforceExplainerOpeningAndMaxSceneDuration(explainerEls, safeTotalMs);
+      explainerEls = applyCaptionTextToCinemaExplainers(explainerEls, captionSegments);
+
+      console.log("[Magic create] scene explainer cards", {
+        count: explainerCards.length,
+        canvasEls: explainerEls.length,
+      });
+
+      const sceneMode: MagicRhythmSceneMode | undefined =
+        sceneTexts.length > 0 && sceneRows.length > 0
+          ? {
+              sceneTexts,
+              sceneStockBRolls: sceneRows.map((r) => ({
+                sceneIndex: r.sceneIndex,
+                bRoll: r.bRoll,
+              })),
+            }
+          : undefined;
+
+      mcLog("step:buildMagicRhythmElements");
+      const { elements: rhythmEls, primaryMainId, usedBRollIds } = buildMagicRhythmElements(
+        pick.url,
+        safeTotalMs,
+        bRollPool,
+        script,
+        thumbnail,
+        sceneMode,
+        explainerEls
+      );
+
+      console.log('[B-roll] Magic create: rhythm elements', {
+        clipCount: rhythmEls.length,
+        primaryMainId,
+        usedBRollIds,
+      });
+      mcLog("step:rhythm built", {
+        rhythmClipCount: rhythmEls.length,
+        explainerEls: explainerEls.length,
+      });
+
+      if (usedBRollIds.length > 0) {
+        setSelectedBRollIds(usedBRollIds.slice(0, 5));
+      }
+
+      mcLog("step:React setState (canvas + assets)");
+      setAssets((prev) => [
+        ...prev,
+        {
+          id: uuid(),
+          name: `Magic ${new Date(pick.created_at).toLocaleDateString()}`,
+          type: "video",
+          url: pick.url,
+        },
+      ]);
+
+      setCanvasElements((prev) => [...prev, ...rhythmEls, ...explainerEls]);
+      setSelectedElementId(primaryMainId || rhythmEls[0]?.id || null);
+
+      setSubtitleSegments(captionSegments);
+      // Keep subtitles ON so they reach the final render. Circle-pip beats and
+      // subtitle-cinema beats already have their own built-in caption overlays;
+      // the main subtitle layer is gated against both in the editor canvas AND
+      // in UGCVideoComposition, so turning this off here silently drops every
+      // non-cinema / non-circle scene's captions from the exported MP4.
+      setShowSubtitles(true);
+      setActiveSidebarSection(bRollPool.length > 0 ? "brolls" : "media");
+      setMagicCreateOpen(false);
+      setMagicCreateScript("");
+      mcLog("complete OK", { totalElapsedMs: Math.round(performance.now() - runT0) });
+    } catch (e) {
+      console.error("[Magic create]", e);
+      mcLog("FAILED", {
+        message: e instanceof Error ? e.message : String(e),
+        totalElapsedMs: Math.round(performance.now() - runT0),
+      });
+      alert(e instanceof Error ? e.message : "Magic create failed");
+    } finally {
+      mcLog("finally: closing modal loading state");
+      setMagicCreateLoading(false);
+    }
   };
 
   // Helper function to calculate the end time of the last video in the timeline
@@ -4324,129 +6519,171 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
   // Ensure a project exists - auto-create if needed
   const ensureProjectExists = useCallback(async () => {
     if (currentProject) {
+      console.log('[Project] Already open — skip create', { id: currentProject.id });
       return currentProject;
     }
-    
-    try {
-      console.log('[Project] Auto-creating project...');
-      const project = await createUGCProject(
-        `UGC Video - ${new Date().toLocaleDateString()}`,
-        'Auto-created project'
-      );
-      setCurrentProject(project);
-      setProjectTitle(project.title || project.id);
-      console.log('[Project] Auto-created project:', project.id);
-      return project;
-    } catch (error: any) {
-      console.error('[Project] Error auto-creating project:', error);
-      throw error;
+
+    if (ensureProjectInFlightRef.current) {
+      console.log('[Project] Create already in flight — awaiting same promise');
+      return ensureProjectInFlightRef.current;
     }
+
+    const started = (async () => {
+      try {
+        console.log('[Project] No project yet — Auto-creating via Supabase (25s timeout on insert)…');
+        const project = await createUGCProject(
+          `UGC Video - ${new Date().toLocaleDateString()}`,
+          'Auto-created project'
+        );
+        setCurrentProject(project);
+        setProjectTitle(project.title || project.id);
+        console.log('[Project] Auto-created project:', project.id);
+        return project;
+      } catch (error: any) {
+        console.error('[Project] Error auto-creating project:', error);
+        throw error;
+      } finally {
+        ensureProjectInFlightRef.current = null;
+      }
+    })();
+
+    ensureProjectInFlightRef.current = started;
+    return started;
   }, [currentProject]);
 
   // Add element to canvas
   const addElementToCanvas = async (type: "video" | "image" | "text", url?: string) => {
-    let width = 30;
-    let height = 30;
-    let x = 50;
-    let y = 50;
-    
-    // For images, fill the canvas (100%) - user can resize/expand beyond canvas bounds (like Canva)
-    if (type === "image") {
-      width = 100;
-      height = 100;
-      x = 0;
-      y = 0;
-    } else if (type === "video") {
-      // For videos, make it fit the canvas (9:16 aspect ratio)
-      width = 90; // 90% width for portrait videos
-      height = 90; // 90% height for portrait videos
-      x = 5; // Center horizontally: (100 - 90) / 2 = 5
-      y = 5; // Center vertically: (100 - 90) / 2 = 5
-    } else if (type === "text") {
-      width = 30;
-      height = 10;
-      x = 50;
-      y = 50;
-    }
-    
-    // Calculate default timeline position
-    // If inserting after a specific element, use that position
-    // Otherwise, for videos: start after the last video ends
-    // For other elements: start at current playhead
-    let defaultStartTime = 0;
-    if (insertAfterElementId) {
-      const afterElement = canvasElements.find(el => el.id === insertAfterElementId);
-      if (afterElement) {
-        const elementStartTime = afterElement.startTime || 0;
-        const elementDuration = afterElement.duration || (type === "video" ? 5000 : 3000);
-        // Calculate exact end time - this ensures the new element starts immediately after
-        defaultStartTime = elementStartTime + elementDuration;
-        console.log('📍 Inserting element after:', {
-          type,
-          afterElementId: insertAfterElementId,
-          elementStartTime,
-          elementDuration,
-          calculatedStartTime: defaultStartTime
-        });
+    try {
+      console.log("[Media add] start", {
+        type,
+        urlPrefix: url?.slice(0, 80),
+        insertAfterElementId,
+        currentTime,
+      });
+      let width = 30;
+      let height = 30;
+      let x = 50;
+      let y = 50;
+
+      if (type === "image") {
+        width = 100;
+        height = 100;
+        x = 0;
+        y = 0;
+      } else if (type === "video") {
+        width = 90;
+        height = 90;
+        x = 5;
+        y = 5;
+      } else if (type === "text") {
+        width = 30;
+        height = 10;
+        x = 50;
+        y = 50;
       }
-      setInsertAfterElementId(null); // Reset after use
-    } else {
-      defaultStartTime = type === "video" ? getLastVideoEndTime() : (currentTime || 0);
-    }
-    // Get actual video duration for videos, default for others
-    let defaultDuration = type === "image" ? 3000 : (type === "text" ? 3000 : 5000);
-    
-    // Generate thumbnail and get duration for videos
-    let thumbnail: string | undefined;
-    if (type === "video" && url) {
-      try {
-        // Get both thumbnail and duration in parallel
-        const [thumb, duration] = await Promise.all([
-          generateVideoThumbnail(url).catch(() => url),
-          getVideoDuration(url).catch(() => 5000)
-        ]);
-        thumbnail = thumb;
-        defaultDuration = duration; // Use actual video duration
-      } catch (error) {
-        console.error("Failed to get video metadata:", error);
-        // Use video URL as fallback (will be handled in timeline)
+
+      const afterId = insertAfterElementId;
+      if (afterId) setInsertAfterElementId(null);
+
+      // Do not block adding clips on project row — Supabase client insert can hang indefinitely;
+      // canvas/timeline should still update. Project is created in the background for save/export.
+      void ensureProjectExists().catch((err) => {
+        console.warn(
+          '[Project] Background auto-create failed (media still added). Save may prompt again:',
+          err
+        );
+      });
+
+      let defaultDuration = type === "image" ? 3000 : type === "text" ? 3000 : 5000;
+      let thumbnail: string | undefined;
+
+      if (type === "video" && url) {
+        try {
+          const [thumb, dur] = await Promise.all([
+            generateVideoThumbnail(url),
+            getVideoDuration(url),
+          ]);
+          thumbnail = thumb;
+          defaultDuration = dur;
+        } catch (error) {
+          console.error("Failed to get video metadata:", error);
+          thumbnail = url;
+          defaultDuration = 5000;
+        }
+      } else if (type === "image" && url) {
         thumbnail = url;
-        defaultDuration = 5000; // Fallback duration
       }
-    } else if (type === "image" && url) {
-      thumbnail = url;
+
+      const newId = uuid();
+      // Compute insertion time from current snapshot so we can seek there immediately.
+      let defaultStartTime = 0;
+      if (afterId) {
+        const afterElement = canvasElements.find((el) => el.id === afterId);
+        if (afterElement) {
+          const elementStartTime = afterElement.startTime || 0;
+          const elementDuration =
+            afterElement.duration || (type === "video" ? 5000 : 3000);
+          defaultStartTime = elementStartTime + elementDuration;
+        }
+      } else if (type === "video") {
+        const videoEls = canvasElements.filter((el) => el.type === "video");
+        if (videoEls.length > 0) {
+          const endTimes = videoEls.map((el) => {
+            const st = el.startTime || 0;
+            const dur = el.duration || 5000;
+            return st + dur;
+          });
+          defaultStartTime = Math.max(...endTimes);
+        }
+      } else {
+        defaultStartTime = currentTime || 0;
+      }
+
+      setCanvasElements((prev) => {
+        const newElement: CanvasElement = {
+          id: newId,
+          type,
+          url,
+          text: type === "text" ? "Double click to edit" : undefined,
+          x,
+          y,
+          width,
+          height,
+          rotation: 0,
+          opacity: 1,
+          zIndex: prev.length,
+          fontSize: type === "text" ? 24 : undefined,
+          fontColor: type === "text" ? "#000000" : undefined,
+          fontFamily: type === "text" ? "Arial" : undefined,
+          imageOffsetX: type === "image" ? 50 : undefined,
+          imageOffsetY: type === "image" ? 50 : undefined,
+          startTime: defaultStartTime,
+          duration: defaultDuration,
+          thumbnail,
+          muted: type === "video" ? false : undefined,
+          // User-added media from the Media panel should show the whole frame
+          // (no cropping). Other element sources (avatars, magic main video,
+          // b-rolls, etc.) leave this undefined → default to `cover`.
+          objectFit: type === "video" || type === "image" ? "contain" : undefined,
+        };
+
+        return [...prev, newElement];
+      });
+
+      setSelectedElementId(newId);
+      // Jump playhead to the newly inserted element so it appears immediately on canvas.
+      setCurrentTime(defaultStartTime);
+      setIsPlaying(false);
+      console.log("[Media add] inserted", {
+        id: newId,
+        type,
+        startTime: defaultStartTime,
+        duration: defaultDuration,
+      });
+    } catch (e) {
+      console.error("[addElementToCanvas]", e);
+      alert(e instanceof Error ? e.message : "Could not add media to the timeline.");
     }
-    
-    const newElement: CanvasElement = {
-      id: uuid(),
-      type,
-      url,
-      text: type === "text" ? "Double click to edit" : undefined,
-      x,
-      y,
-      width,
-      height,
-      rotation: 0,
-      opacity: 1,
-      zIndex: canvasElements.length,
-      fontSize: type === "text" ? 24 : undefined,
-      fontColor: type === "text" ? "#000000" : undefined,
-      fontFamily: type === "text" ? "Arial" : undefined,
-      // Image panning (default center position for images)
-      imageOffsetX: type === "image" ? 50 : undefined,
-      imageOffsetY: type === "image" ? 50 : undefined,
-      // Timeline properties (TEMPORAL - independent from canvas position)
-      startTime: defaultStartTime,
-      duration: defaultDuration, // Use actual video duration for videos
-      thumbnail,
-      muted: type === "video" ? false : undefined, // Initialize videos as unmuted
-    };
-    
-    // Ensure project exists before adding element
-    await ensureProjectExists();
-    
-    setCanvasElements([...canvasElements, newElement]);
-    setSelectedElementId(newElement.id);
   };
 
   // Update canvas element - memoized to prevent stale closures
@@ -4462,6 +6699,62 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     if (selectedElementId === id) {
       setSelectedElementId(null);
     }
+  };
+
+  // Find the main magic-rhythm video element (the one carrying layout segments).
+  const getMainMagicVideo = useCallback(() => {
+    return canvasElements.find(
+      (el) => el.type === "video" && el.magicLayoutSegments?.length
+    );
+  }, [canvasElements]);
+
+  // Mutate one segment on the main video's magicLayoutSegments array by index.
+  // Passing `null` as the patch removes the segment (used by "Full Screen" and
+  // the delete button in the circle toolbar).
+  const updateMagicLayoutSegment = useCallback(
+    (
+      idx: number,
+      patch:
+        | Partial<{ mode: "split-bottom" | "circle-pip"; circleScale: number; startMs: number; endMs: number }>
+        | null
+    ) => {
+      setCanvasElements((prev) =>
+        prev.map((el) => {
+          if (el.type !== "video" || !el.magicLayoutSegments?.length) return el;
+          const segs = el.magicLayoutSegments.slice();
+          if (idx < 0 || idx >= segs.length) return el;
+          if (patch === null) {
+            segs.splice(idx, 1);
+          } else {
+            segs[idx] = { ...segs[idx], ...patch };
+          }
+          return { ...el, magicLayoutSegments: segs };
+        })
+      );
+    },
+    []
+  );
+
+  // Delete a magic scene-explainer card together with its paired stock-image
+  // companion (matched by `explainerGraphicVariant`). Used by the Scenes track.
+  const deleteExplainerCardWithCompanion = (cardId: string) => {
+    setCanvasElements(elements => {
+      const card = elements.find(el => el.id === cardId);
+      if (!card) return elements;
+      const variant = card.explainerGraphicVariant;
+      return elements.filter(el => {
+        if (el.id === cardId) return false;
+        if (
+          variant !== undefined &&
+          el.magicSceneExplainerStock &&
+          el.explainerGraphicVariant === variant
+        ) {
+          return false;
+        }
+        return true;
+      });
+    });
+    if (selectedElementId === cardId) setSelectedElementId(null);
   };
 
   // Split video/image element at current playhead time
@@ -4945,7 +7238,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
           if (el.type === 'audio') return !!el.url;
           return !!el.url;
         })
-        .map(el => ({
+        .map((el) => ({
           id: el.id,
           type: el.type,
           url: el.url,
@@ -4960,7 +7253,7 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
           startTime: el.startTime || 0,
           duration: el.duration || 5000,
           videoStartOffset: el.videoStartOffset || 0,
-          audioStartOffset: el.audioStartOffset || 0, // Include audioStartOffset for trimming
+          audioStartOffset: el.audioStartOffset || 0,
           muted: el.muted || false,
           imageOffsetX: el.imageOffsetX,
           imageOffsetY: el.imageOffsetY,
@@ -4969,9 +7262,39 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
           cropWidth: el.cropWidth,
           cropHeight: el.cropHeight,
           circleFrame: el.circleFrame || false,
+          objectFit: el.objectFit,
           fontSize: el.fontSize,
           fontColor: el.fontColor,
           fontFamily: el.fontFamily,
+          thumbnail: el.thumbnail,
+          intrinsicSize: el.intrinsicSize,
+          // Magic rhythm + B-roll (must match Remotion UGCVideoComposition)
+          magicLayoutSegments: el.magicLayoutSegments,
+          bRollOverlay: el.bRollOverlay,
+          bRollSceneVibe: el.bRollSceneVibe,
+          explainerSceneVibe: el.explainerSceneVibe,
+          magicViralStyle: el.magicViralStyle,
+          magicWhiteSlide: el.magicWhiteSlide,
+          magicSceneExplainer: el.magicSceneExplainer,
+          magicSceneExplainerStock: el.magicSceneExplainerStock,
+          magicJumpCutCinema: el.magicJumpCutCinema,
+          explainerIllustrationUrl: el.explainerIllustrationUrl,
+          explainerGraphicVariant: el.explainerGraphicVariant,
+          explainerLevel: el.explainerLevel,
+          explainerAccentLabel: el.explainerAccentLabel,
+          explainerSubline: el.explainerSubline,
+          explainerSceneStyle: el.explainerSceneStyle,
+          explainerTypographyStyle: el.explainerTypographyStyle,
+          explainerAccentHex: el.explainerAccentHex,
+          explainerSegmentDurationMs: el.explainerSegmentDurationMs,
+          explainerHeroWord: el.explainerHeroWord,
+          explainerItems: el.explainerItems,
+          explainerEmoji: el.explainerEmoji,
+          explainerSideA: el.explainerSideA,
+          explainerSideB: el.explainerSideB,
+          explainerIconEmoji: el.explainerIconEmoji,
+          explainerLogoUrl: el.explainerLogoUrl,
+          textBackgroundColor: el.textBackgroundColor,
         }));
 
       if (exportElements.length === 0) {
@@ -5536,9 +7859,102 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
 
     const element = canvasElements.find(el => el.id === trimElementId);
     console.log('🔍 TRIM MOVE - Element found:', { element: element ? { id: element.id, type: element.type } : null });
-    
-    if (!element || (element.type !== "video" && element.type !== "image" && element.type !== "audio")) {
-      console.log('❌ TRIM MOVE - Blocked: Invalid element', { element: element ? element.type : 'not found' });
+
+    if (!element) {
+      console.log('❌ TRIM MOVE - Blocked: Invalid element', { element: 'not found' });
+      return;
+    }
+    const isExplainerCardTrim = element.type === "text" && !!element.magicSceneExplainer;
+    if (
+      element.type !== "video" &&
+      element.type !== "image" &&
+      element.type !== "audio" &&
+      !isExplainerCardTrim
+    ) {
+      console.log('❌ TRIM MOVE - Blocked: Invalid element', { element: element.type });
+      return;
+    }
+
+    // Explainer scene cards (type === "text" + magicSceneExplainer) have no media
+    // file, so trimming is a simple startTime/duration adjustment with a minimum
+    // beat length. The paired stock-image companion (matched by
+    // explainerGraphicVariant) is kept aligned to the card's window.
+    if (isExplainerCardTrim) {
+      const tracksContainerSimple =
+        document.querySelector('.timeline-tracks-container')?.parentElement as HTMLElement | null;
+      if (!tracksContainerSimple) return;
+      const rectSimple = tracksContainerSimple.getBoundingClientRect();
+      const contentWidthSimple = rectSimple.width - 80 - 16;
+      const deltaMouseXSimple = e.clientX - trimStartRef.current.x;
+      const deltaTimeSimple =
+        (deltaMouseXSimple / contentWidthSimple) * (duration || 1000);
+      const MIN_CARD_MS = 600; // Keep every scene on screen at least ~0.6s.
+      const initStart = trimStartRef.current.startTime;
+      const initDur = trimStartRef.current.duration;
+      let newStart = initStart;
+      let newDur = initDur;
+      if (trimEdge === "left") {
+        newStart = Math.max(0, Math.min(initStart + initDur - MIN_CARD_MS, initStart + deltaTimeSimple));
+        newDur = initDur - (newStart - initStart);
+      } else {
+        newDur = Math.max(MIN_CARD_MS, Math.min((duration || Infinity) - initStart, initDur + deltaTimeSimple));
+      }
+      setCanvasElements(prev =>
+        prev.map(el => {
+          if (el.id === trimElementId) {
+            // Keep the scene's enter/exit animation window in sync with the
+            // new clip duration — otherwise beatEnvelope fades the card out
+            // at the *original* end time and the tail of an extended scene
+            // renders invisible.
+            return {
+              ...el,
+              startTime: newStart,
+              duration: newDur,
+              explainerSegmentDurationMs: newDur,
+            };
+          }
+          if (
+            element.explainerGraphicVariant !== undefined &&
+            el.magicSceneExplainerStock &&
+            el.explainerGraphicVariant === element.explainerGraphicVariant
+          ) {
+            return {
+              ...el,
+              startTime: newStart,
+              duration: newDur,
+              explainerSegmentDurationMs: newDur,
+            };
+          }
+          return el;
+        })
+      );
+      // When the user extends a non-cinema card, stretch the matching main-video
+      // layout segment so the split / circle-pip window follows the card. Without
+      // this the main video snaps back to full-frame (or the next segment's mode)
+      // halfway through the newly extended scene.
+      const origStart = trimStartRef.current.startTime;
+      const origEnd = origStart + trimStartRef.current.duration;
+      setCanvasElements(prev =>
+        prev.map(el => {
+          if (el.type !== 'video' || !el.magicLayoutSegments?.length) return el;
+          const segs = el.magicLayoutSegments.slice();
+          let matchIdx = segs.findIndex((s) => Math.abs(s.startMs - origStart) <= 250);
+          if (matchIdx < 0) {
+            matchIdx = segs.findIndex((s) => origStart >= s.startMs && origStart < s.endMs);
+          }
+          if (matchIdx < 0) return el;
+          const seg = segs[matchIdx]!;
+          const isCinema =
+            element.explainerSceneStyle === 'subtitle-cinema';
+          const newSegStart = isCinema ? seg.startMs : newStart;
+          const newSegEnd = isCinema
+            ? seg.endMs
+            : Math.max(seg.endMs, newStart + newDur);
+          if (newSegStart === seg.startMs && newSegEnd === seg.endMs) return el;
+          segs[matchIdx] = { ...seg, startMs: newSegStart, endMs: newSegEnd };
+          return { ...el, magicLayoutSegments: segs };
+        })
+      );
       return;
     }
 
@@ -6005,7 +8421,16 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     if (!isDraggingTimeline || !draggingTimelineElementId) return;
 
     const element = canvasElements.find(el => el.id === draggingTimelineElementId);
-    if (!element || (element.type !== "video" && element.type !== "image" && element.type !== "audio")) return;
+    if (!element) return;
+    const isExplainerCard = element.type === "text" && !!element.magicSceneExplainer;
+    if (
+      element.type !== "video" &&
+      element.type !== "image" &&
+      element.type !== "audio" &&
+      !isExplainerCard
+    ) {
+      return;
+    }
 
     // Find the tracks container - it's the parent of the timeline tracks
     const tracksContainer = document.querySelector('.timeline-tracks-container')?.parentElement as HTMLElement;
@@ -6031,6 +8456,34 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     
     newStartTime = Math.max(minStartTime, Math.min(maxStartTime, newStartTime));
     
+    // Explainer scene cards (type === "text" + magicSceneExplainer) have no backing
+    // media file, so skip every constraint based on original video/audio duration.
+    if (isExplainerCard) {
+      const prevStart = element.startTime || 0;
+      const shift = newStartTime - prevStart;
+      // Move the card and keep its paired stock-image companion in lock-step so
+      // the illustration stays glued to the scene window visually.
+      setCanvasElements(prev =>
+        prev.map(el => {
+          if (el.id === draggingTimelineElementId) {
+            return { ...el, startTime: newStartTime };
+          }
+          if (
+            element.explainerGraphicVariant !== undefined &&
+            el.magicSceneExplainerStock &&
+            el.explainerGraphicVariant === element.explainerGraphicVariant
+          ) {
+            return {
+              ...el,
+              startTime: Math.max(0, (el.startTime || 0) + shift),
+            };
+          }
+          return el;
+        })
+      );
+      return;
+    }
+
     // HARD STOP: Ensure video/audio doesn't exceed original duration even after moving
     // Get video/audio element to check original duration - prioritize stored duration
     const video = element.type === "video" ? document.querySelector(`#canvas-video-${draggingTimelineElementId}`) as HTMLVideoElement : null;
@@ -6101,6 +8554,42 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
     setIsDraggingTimeline(false);
     setDraggingTimelineElementId(null);
   };
+
+  // -- Circle-resize drag handlers -------------------------------------------
+  // The bottom-right handle on the selected circle-pip segment drives this.
+  // We translate horizontal mouse movement into a scale multiplier on the
+  // segment's `circleScale`, clamped to 0.4–1.2.
+  const handleCircleResizeMove = useCallback(
+    (e: MouseEvent) => {
+      if (!isResizingCircle || selectedLayoutSegmentIdx === null) return;
+      const start = circleResizeStartRef.current;
+      if (!start) return;
+      // Use the rendered canvas width to translate pixels into scale: the circle
+      // grows from ~24% of canvas width at scale 0.4 to ~100% at scale ~1.2.
+      const deltaX = e.clientX - start.x;
+      const deltaY = e.clientY - start.y;
+      const delta = (deltaX + deltaY) / 2; // average diagonal drag
+      const pxPerScaleUnit = Math.max(80, start.canvasWidth * 0.5); // tuned for gentle resize
+      const nextScale = Math.max(0.4, Math.min(1.2, start.scale + delta / pxPerScaleUnit));
+      updateMagicLayoutSegment(selectedLayoutSegmentIdx, { circleScale: nextScale });
+    },
+    [isResizingCircle, selectedLayoutSegmentIdx, updateMagicLayoutSegment]
+  );
+
+  const handleCircleResizeUp = useCallback(() => {
+    setIsResizingCircle(false);
+    circleResizeStartRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (!isResizingCircle) return;
+    window.addEventListener("mousemove", handleCircleResizeMove);
+    window.addEventListener("mouseup", handleCircleResizeUp);
+    return () => {
+      window.removeEventListener("mousemove", handleCircleResizeMove);
+      window.removeEventListener("mouseup", handleCircleResizeUp);
+    };
+  }, [isResizingCircle, handleCircleResizeMove, handleCircleResizeUp]);
 
   // Handle playhead drag move
   const handlePlayheadDragMove = useCallback((e: MouseEvent) => {
@@ -6387,6 +8876,17 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
           <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
             <Hand className="h-4 w-4" />
           </Button>
+          <Button
+            type="button"
+            variant={magicExplainerSlowAnimations ? "secondary" : "ghost"}
+            size="sm"
+            className="h-8 gap-1 px-2"
+            onClick={() => setMagicExplainerSlowAnimations((v) => !v)}
+            title="Slow down explainer text animations (word-by-word + beat fade)"
+          >
+            <Snail className="h-4 w-4 shrink-0" />
+            <span className="hidden text-xs text-gray-700 sm:inline">Slow anim</span>
+          </Button>
           <div className="text-xs text-gray-600">{zoom}%</div>
           <Button 
             variant="ghost" 
@@ -6411,6 +8911,21 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 gap-1.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 px-3 text-xs text-white hover:from-violet-700 hover:to-fuchsia-700"
+            onClick={() => {
+              if (!magicCreateScript.trim()) {
+                setMagicCreateScript(MAGIC_CREATE_SAMPLE_SCRIPT);
+              }
+              setMagicCreateOpen(true);
+            }}
+            title="Magic create: pick main video from Media; B-roll from Freepik for the first 3s split only; then centered circle + caption bar."
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            Magic create
+          </Button>
           {/* Save Button - Always visible */}
           <Button 
             size="sm" 
@@ -6635,55 +9150,11 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                       )}
 
           {activeSidebarSection === "brolls" && (
-            <div className="border-t border-border/60 flex flex-col overflow-hidden" style={{ height: "40%", minHeight: 0, maxHeight: "40%" }}>
-              <div className="p-4 space-y-2">
-                {/* Upload B-roll Button */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                  onClick={() => document.getElementById("broll-upload")?.click()}
-                  disabled={isUploading && uploadingFileName?.endsWith('.mp4')}
-                >
-                  {isUploading && uploadingFileName?.endsWith('.mp4') ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Uploading...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="h-4 w-4 mr-2" />
-                      Upload B-roll
-                    </>
-                  )}
-                </Button>
-                <Input
-                  id="broll-upload"
-                  type="file"
-                  accept="video/*"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    
-                    setIsUploading(true);
-                    setUploadingFileName(file.name);
-                    
-                    try {
-                      const result = await bRollsApi.upload(file);
-                      await loadBRolls(); // Reload B-rolls list
-                      setUploadingFileName(null);
-                    } catch (error) {
-                      console.error("Error uploading B-roll:", error);
-                      alert(`Failed to upload B-roll: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                    } finally {
-                      setIsUploading(false);
-                      setUploadingFileName(null);
-                      // Reset file input
-                      if (e.target) e.target.value = '';
-                    }
-                  }}
-                  className="hidden"
-                />
+            <div className="border-t border-border/60 relative z-10 flex min-h-[220px] min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
+              <div className="pointer-events-auto space-y-2 p-4">
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  B-roll clips come from the Freepik stock library. Magic create splits your script into scenes and picks a unique stock clip per scene; jump cuts use the clips you select below (round-robin so clips do not repeat back-to-back).
+                </p>
 
                 {/* Fill Jump Cuts Button */}
                 <Button
@@ -6697,7 +9168,53 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                 >
                   Fill Jump cuts
                 </Button>
-                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="w-full border border-border bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/90"
+                  title="Adds a 2s full-screen black subtitle overlay at each jump-cut time. Uses your jump cut interval if set, otherwise 5s."
+                  disabled={duration <= 0}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (duration <= 0) {
+                      alert("Add a video and ensure the project has a duration first.");
+                      return;
+                    }
+                    const intervalSec =
+                      jumpCutInterval && jumpCutInterval > 0 ? jumpCutInterval : 5;
+                    const overlays = generateJumpCutCinemaOverlays(
+                      duration,
+                      intervalSec,
+                      subtitleSegments
+                    );
+                    if (overlays.length === 0) {
+                      alert(
+                        "No jump-cut times fit in the current duration. Try a shorter interval in Fill Jump cuts or a longer video."
+                      );
+                      return;
+                    }
+                    setCanvasElements((prev) => {
+                      const rest = prev.filter((el) => !el.magicJumpCutCinema);
+                      return [...rest, ...overlays];
+                    });
+                    console.log("[Jump cut cinema] added overlays:", overlays.length, {
+                      intervalSec,
+                    });
+                  }}
+                >
+                  Black overlays at jump cuts (2s)
+                </Button>
+                <p className="text-[11px] text-muted-foreground leading-snug">
+                  Every{" "}
+                  <strong>
+                    {jumpCutInterval && jumpCutInterval > 0 ? `${jumpCutInterval}s` : "5s (default)"}
+                  </strong>{" "}
+                  — set interval in Fill Jump cuts to match B-roll jump cuts. Full-screen black + captions
+                  when subtitles exist.
+                </p>
+              </div>
             </div>
           )}
 
@@ -7056,10 +9573,16 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
               {/* Canvas Container - TikTok Size (9:16 aspect ratio) */}
               <div 
                 ref={canvasRef}
-                className="relative bg-white rounded-lg shadow-lg"
+                className="relative rounded-lg shadow-lg"
                 style={{
                   width: 'min(100vw, 400px)', // Max width for TikTok size
                   aspectRatio: '9 / 16', // TikTok aspect ratio
+                  // Canvas root is always white so that any uncovered area
+                  // (e.g. when the user deletes the top scene card of a split
+                  // layout) renders as a clean white fill rather than a dark
+                  // void. Full-bleed scenes (b-roll, circle-pip with card,
+                  // subtitle-cinema, etc.) still cover the frame exactly the
+                  // same way — only truly empty regions pick up this color.
                   backgroundColor: '#ffffff',
                   overflow: 'hidden' // Clip elements that go outside canvas bounds
                 }}
@@ -7100,8 +9623,29 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   shouldRender = currentTime >= elementStartTime && currentTime < elementEndTime;
                   
                   if (element.type === "video") {
-                    // Find videos on the same track (same x, y, width, height position = same canvas position)
-                    // This means they're stacked on top of each other, which indicates same track
+                    const transitionDuration = element.bRollOverlay ? 400 : 300;
+
+                    if (element.bRollOverlay) {
+                      // B-roll overlays ALWAYS fade in at start and fade out
+                      // at end (regardless of whether another b-roll neighbors
+                      // them). This prevents jump-cuts when b-roll appears or
+                      // disappears on bare layout boundaries (e.g. intro's
+                      // 0-4s split b-roll ending at 4s, 7-9s full-frame b-roll
+                      // ending at 9s, post-cinema gap fillers, etc.).
+                      const fadeInEnd = elementStartTime + transitionDuration;
+                      const fadeOutStart = elementEndTime - transitionDuration;
+                      let op = 1;
+                      if (currentTime < fadeInEnd) {
+                        op = Math.min(1, Math.max(0, (currentTime - elementStartTime) / transitionDuration));
+                      } else if (currentTime >= fadeOutStart) {
+                        op = Math.min(1, Math.max(0, (elementEndTime - currentTime) / transitionDuration));
+                      }
+                      transitionOpacity = op;
+                      // Keep mounted a little past the edges so the fade is visible.
+                      shouldRender =
+                        currentTime >= elementStartTime - transitionDuration &&
+                        currentTime < elementEndTime + transitionDuration;
+                    } else {
                     const sameTrackVideos = canvasElements.filter(el => 
                       el.type === "video" && 
                       el.id !== element.id &&
@@ -7111,64 +9655,142 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                       el.height === element.height
                     );
                     
-                    // Find the next sequential video (starts right after this one ends)
                     const nextVideo = sameTrackVideos.find(el => {
                       const elStartTime = el.startTime || 0;
-                      return Math.abs(elStartTime - elementEndTime) < 100; // Within 100ms (sequential)
+                      return Math.abs(elStartTime - elementEndTime) < 100;
                     });
                     
-                    // Find the previous sequential video (ends right before this one starts)
                     const prevVideo = sameTrackVideos.find(el => {
                       const elStartTime = el.startTime || 0;
                       const elEndTime = elStartTime + (el.duration || 5000);
-                      return Math.abs(elEndTime - elementStartTime) < 100; // Within 100ms (sequential)
+                      return Math.abs(elEndTime - elementStartTime) < 100;
                     });
                     
-                    const transitionDuration = 300; // 300ms crossfade duration
-                    
-                    // Crossfade out when next video is starting (fade out in last 300ms)
                     if (nextVideo) {
-                      const nextStartTime = nextVideo.startTime || 0;
                       const fadeOutStart = elementEndTime - transitionDuration;
                       if (currentTime >= fadeOutStart && currentTime < elementEndTime) {
-                        // Fade out: opacity goes from 1 to 0
                         const fadeProgress = (currentTime - fadeOutStart) / transitionDuration;
                         transitionOpacity = Math.max(0, 1 - fadeProgress);
-                        shouldRender = true; // Keep rendering during fade out
+                        shouldRender = true;
                       }
                     }
                     
-                    // Crossfade in when previous video is ending (fade in first 300ms)
                     if (prevVideo) {
-                      const prevEndTime = (prevVideo.startTime || 0) + (prevVideo.duration || 5000);
                       const fadeInEnd = elementStartTime + transitionDuration;
                       if (currentTime >= elementStartTime && currentTime < fadeInEnd) {
-                        // Fade in: opacity goes from 0 to 1
                         const fadeProgress = (currentTime - elementStartTime) / transitionDuration;
                         transitionOpacity = Math.min(1, fadeProgress);
-                        shouldRender = true; // Keep rendering during fade in
+                        shouldRender = true;
                       }
                     }
                     
-                    // Also render slightly before/after for smooth transitions
                     const transitionMargin = transitionDuration;
                     if (nextVideo || prevVideo) {
                       shouldRender = currentTime >= (elementStartTime - transitionMargin) && 
                                     currentTime < (elementEndTime + transitionMargin);
                     }
+                    }
                   }
                   
+                  // Magic scene companions (stock illustrations, hero images
+                  // paired with explainer cards) hard-pop without this — fade
+                  // them in/out over ~320ms so scene swaps feel continuous.
+                  if (
+                    element.type === "image" &&
+                    element.magicSceneExplainerStock
+                  ) {
+                    const fadeMs = 320;
+                    const fadeInEnd = elementStartTime + fadeMs;
+                    const fadeOutStart = elementEndTime - fadeMs;
+                    if (currentTime < fadeInEnd) {
+                      transitionOpacity = Math.min(1, Math.max(0, (currentTime - elementStartTime) / fadeMs));
+                      shouldRender = currentTime >= elementStartTime - fadeMs;
+                    } else if (currentTime >= fadeOutStart) {
+                      transitionOpacity = Math.min(1, Math.max(0, (elementEndTime - currentTime) / fadeMs));
+                      shouldRender = currentTime < elementEndTime + fadeMs;
+                    }
+                  }
+
+                  // Text magic-scene explainer cards: wrapper fade so the
+                  // outer DIV cross-blends while the inner SceneTransitionShell
+                  // handles type reveals. Prevents hard shell pops.
+                  if (
+                    element.type === "text" &&
+                    element.magicSceneExplainer &&
+                    !element.magicSceneExplainerStock
+                  ) {
+                    const fadeMs = 260;
+                    const fadeInEnd = elementStartTime + fadeMs;
+                    const fadeOutStart = elementEndTime - fadeMs;
+                    if (currentTime < fadeInEnd) {
+                      transitionOpacity = Math.min(1, Math.max(0, (currentTime - elementStartTime) / fadeMs));
+                      shouldRender = currentTime >= elementStartTime - fadeMs;
+                    } else if (currentTime >= fadeOutStart) {
+                      transitionOpacity = Math.min(1, Math.max(0, (elementEndTime - currentTime) / fadeMs));
+                      shouldRender = currentTime < elementEndTime + fadeMs;
+                    }
+                  }
+
                   // Don't render element if timeline is outside its range (unless transitioning)
                   if (!shouldRender) {
                     return null;
                   }
                 }
+
+                if (
+                  element.bRollOverlay &&
+                  isMagicCircleLayoutActiveAt(currentTime, canvasElements)
+                ) {
+                  return null;
+                }
                 
                 // Calculate final opacity with transition
                 const baseOpacity = element.opacity || 1;
-                const finalOpacity = element.type === "video" && transitionOpacity !== undefined 
-                  ? transitionOpacity * baseOpacity 
+                const finalOpacity = transitionOpacity !== undefined
+                  ? transitionOpacity * baseOpacity
                   : baseOpacity;
+
+                const magicSegIdx =
+                  element.type === "video" && element.magicLayoutSegments?.length
+                    ? element.magicLayoutSegments.findIndex(
+                        (s) => currentTime >= s.startMs && currentTime < s.endMs
+                      )
+                    : -1;
+                const magicSeg =
+                  element.type === "video" && element.magicLayoutSegments?.length && magicSegIdx >= 0
+                    ? element.magicLayoutSegments[magicSegIdx]
+                    : undefined;
+
+                let layoutX = element.x;
+                let layoutY = element.y;
+                let layoutW = element.width;
+                let layoutH = element.height;
+                let layoutZ = element.zIndex ?? 0;
+                if (element.type === "video" && element.magicLayoutSegments?.length) {
+                  const box = blendMagicMainVideoLayout(
+                    element.magicLayoutSegments,
+                    currentTime,
+                    element.zIndex ?? 0,
+                    magicCinemaExplainerCoversVideo && !cinemaToCirclePrewarm,
+                    magicTopTextCardActive
+                  );
+                  layoutX = box.lx;
+                  layoutY = box.ly;
+                  layoutW = box.lw;
+                  layoutH = box.lh;
+                  layoutZ = box.lz;
+                }
+
+                // `topSlot` means this segment was authored to pair with a top card.
+                // Even if the user deleted that card, keep treating it like a "split-with-card"
+                // scene: render the main video as a bottom-half rect (not a centered circle).
+                const segTopSlot = magicSeg?.topSlot === true;
+                const useMagicCircle =
+                  element.type === "video" &&
+                  magicSeg?.mode === "circle-pip" &&
+                  (!magicCinemaExplainerCoversVideo || cinemaToCirclePrewarm) &&
+                  !magicTopTextCardActive &&
+                  !segTopSlot;
                 
                 return (
                   <div
@@ -7178,15 +9800,25 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                       isSelected && "ring-2 ring-blue-500"
                     )}
                     style={{
-                      left: `${element.x}%`,
-                      top: `${element.y}%`,
-                      width: `${element.width}%`,
-                      height: `${element.height}%`,
+                      left: `${layoutX}%`,
+                      top: `${layoutY}%`,
+                      width: `${layoutW}%`,
+                      height: `${layoutH}%`,
                       transform: `rotate(${element.rotation}deg)`,
                       opacity: finalOpacity,
-                      zIndex: element.zIndex ?? 0,
+                      zIndex: layoutZ,
                       overflow: "visible", // Allow buttons to show outside element bounds
-                      transition: element.type === "video" ? "opacity 0.05s linear" : undefined, // Smooth opacity transition for videos
+                      /* Magic layout: position/size updated every frame via blendMagicMainVideoLayout — avoid CSS layout transition (caused glitches with inner tree swaps). Opacity cross-fade is applied uniformly so any transitionOpacity (b-roll, stock image, card wrapper) lands smoothly even on coarse frame steps. */
+                      transition:
+                        element.type === "video"
+                          ? element.magicLayoutSegments?.length
+                            ? transitionOpacity !== undefined
+                              ? "opacity 0.1s linear"
+                              : "opacity 0.06s linear"
+                            : "opacity 0.05s linear"
+                          : transitionOpacity !== undefined
+                          ? "opacity 0.12s linear"
+                          : undefined,
                     }}
                     onMouseDown={(e) => handleCanvasMouseDown(e, element.id)}
                     onContextMenu={(e) => {
@@ -7198,27 +9830,318 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   >
                     {/* Element Content Container - Clips content but allows buttons to show */}
                     {/* When circleFrame: use a square (min dimension) centered wrapper so we get a true circle, not an oval */}
-                    <div className={cn(
-                      "w-full h-full overflow-hidden",
-                      !element.circleFrame && "rounded"
-                    )}>
-                      {element.circleFrame ? (
-                        <div className="w-full h-full flex items-center justify-center min-w-0 min-h-0">
+                    <div
+                      className={cn(
+                        "w-full h-full overflow-hidden",
+                        !element.circleFrame &&
+                          !useMagicCircle &&
+                          !(element.type === "text" && element.magicSceneExplainer) &&
+                          "rounded"
+                      )}
+                    >
+                      {(magicTopTextCardActive || segTopSlot) &&
+                      magicSeg?.mode === "circle-pip" &&
+                      !magicCinemaExplainerCoversVideo &&
+                      element.type === "video" &&
+                      element.url ? (
+                        // No dedicated caption band — just render the main
+                        // video full-bleed in the bottom half of the split
+                        // layout and let the global subtitle overlay handle
+                        // the caption like it does on b-roll scenes.
+                        // `segTopSlot` keeps this branch active even if the
+                        // user deleted the top card (top area stays white).
+                        <div className="relative h-full w-full overflow-hidden">
+                          <div className="h-full w-full overflow-hidden">
+                            <BrollVibeVideoWrap
+                              vibeKey={element.bRollOverlay ? element.bRollSceneVibe : undefined}
+                            >
+                              {canvasVideoFailedUrlByElementId[element.id] === element.url &&
+                              element.thumbnail ? (
+                                <img
+                                  src={element.thumbnail}
+                                  alt=""
+                                  className="h-full w-full object-cover"
+                                  draggable={false}
+                                />
+                              ) : (
+                                <video
+                                  id={`canvas-video-${element.id}`}
+                                  src={element.url}
+                                  poster={element.thumbnail}
+                                  className="h-full w-full object-cover"
+                                  loop={false}
+                                  muted={(element.muted ?? false) || isMuted}
+                                  playsInline
+                                  ref={(videoEl) => attachCanvasVideoRef(element.id, videoEl)}
+                                  onError={() => {
+                                    console.warn(
+                                      "[Canvas video] load/decode error — showing poster or thumbnail fallback",
+                                      element.id,
+                                      element.url?.slice(0, 96)
+                                    );
+                                    setCanvasVideoFailedUrlByElementId((p) => ({
+                                      ...p,
+                                      [element.id]: element.url!,
+                                    }));
+                                  }}
+                                  onTimeUpdate={(e) => {
+                                    if (isPlaying) {
+                                      const video = e.currentTarget;
+                                      const elementStartTime = element.startTime || 0;
+                                      const elementDuration = element.duration || 5000;
+                                      const videoStartOffset = element.videoStartOffset || 0;
+                                      const trimmedEndTime = (videoStartOffset + elementDuration) / 1000;
+                                      if (video.currentTime >= trimmedEndTime - 0.1) video.pause();
+                                    }
+                                  }}
+                                  onLoadedMetadata={(e) => {
+                                    const video = e.currentTarget;
+                                    if (video.playbackRate !== playbackRate)
+                                      setVideoPlaybackRate(video, playbackRate);
+                                    if (duration === 0 && video.duration) setDuration(video.duration * 1000);
+                                  }}
+                                  onEnded={(e) => {
+                                    const elementEndTime =
+                                      (element.startTime || 0) + (element.duration || 5000);
+                                    if (currentTime >= elementEndTime - 100) e.currentTarget.pause();
+                                  }}
+                                />
+                              )}
+                            </BrollVibeVideoWrap>
+                          </div>
+                        </div>
+                      ) : useMagicCircle && element.type === "video" && element.url ? (
+                        (() => {
+                          // Circle-pip segment editing controls:
+                          // - Click the circle → select this segment (blue ring).
+                          // - Bottom-right handle drag-resizes (circleScale 0.4-1.2).
+                          // - Floating toolbar offers "Full screen", "Bottom half", "Delete".
+                          const circleSeg = magicSeg; // narrow non-null for the closure
+                          const circleScale = circleSeg?.circleScale ?? 1;
+                          // Base cap: min(96%, 400px). Scale multiplies the 400px side and
+                          // lets the circle also grow past 96% up to 100% at 1.2×.
+                          const scaledPx = Math.round(400 * circleScale);
+                          const widthCssCap = `min(${Math.min(100, Math.round(96 * Math.max(1, circleScale)))}%, ${scaledPx}px)`;
+                          const isSegSelected =
+                            magicSegIdx >= 0 && selectedLayoutSegmentIdx === magicSegIdx;
+                          return (
+                            <div className="relative flex h-full w-full flex-col items-center overflow-y-auto bg-black">
+                              {/* Circle + caption: vertically centered as a group; scroll if taller than frame */}
+                              <div
+                                className="relative my-auto flex shrink-0 flex-col items-stretch gap-3 px-[4%] py-4"
+                                style={{ width: "100%", maxWidth: widthCssCap }}
+                              >
+                                <div
+                                  className={cn(
+                                    "relative w-full shrink-0 overflow-visible",
+                                    isSegSelected && "outline-none"
+                                  )}
+                                  // Padding-bottom: 100% trick guarantees the box is a
+                                  // perfect square even inside flex containers where
+                                  // `aspect-ratio: 1/1` can be overridden by sibling
+                                  // height distribution. Without this the circle can
+                                  // render as a tall oval in certain layouts.
+                                  style={{ paddingBottom: "100%", height: 0 }}
+                                  onMouseDown={(e) => {
+                                    // Only intercept clicks that are inside the actual
+                                    // circle area — the toolbar buttons / resize handle
+                                    // live outside this node and stopPropagation themselves.
+                                    const tgt = e.target as HTMLElement;
+                                    if (tgt.closest(".circle-resize-handle") || tgt.closest(".circle-toolbar-btn")) return;
+                                    e.stopPropagation();
+                                    if (magicSegIdx >= 0) setSelectedLayoutSegmentIdx(magicSegIdx);
+                                  }}
+                                >
+                                  <div
+                                    className={cn(
+                                      "absolute inset-0 overflow-hidden rounded-full shadow-[0_8px_40px_rgba(0,0,0,0.45)]",
+                                      isSegSelected && "ring-4 ring-blue-500"
+                                    )}
+                                  >
+                              <BrollVibeVideoWrap
+                                vibeKey={element.bRollOverlay ? element.bRollSceneVibe : undefined}
+                              >
+                                {canvasVideoFailedUrlByElementId[element.id] === element.url &&
+                                element.thumbnail ? (
+                                  <img
+                                    src={element.thumbnail}
+                                    alt=""
+                                    className="h-full w-full object-cover"
+                                    draggable={false}
+                                  />
+                                ) : (
+                                  <video
+                                    id={`canvas-video-${element.id}`}
+                                    src={element.url}
+                                    poster={element.thumbnail}
+                                    className="h-full w-full object-cover"
+                                    loop={false}
+                                    muted={(element.muted ?? false) || isMuted}
+                                    playsInline
+                                    ref={(videoEl) => attachCanvasVideoRef(element.id, videoEl)}
+                                    onError={() => {
+                                      console.warn(
+                                        "[Canvas video] load/decode error — showing poster or thumbnail fallback",
+                                        element.id,
+                                        element.url?.slice(0, 96)
+                                      );
+                                      setCanvasVideoFailedUrlByElementId((p) => ({
+                                        ...p,
+                                        [element.id]: element.url!,
+                                      }));
+                                    }}
+                                    onTimeUpdate={(e) => {
+                                      if (isPlaying) {
+                                        const video = e.currentTarget;
+                                        const elementStartTime = element.startTime || 0;
+                                        const elementDuration = element.duration || 5000;
+                                        const videoStartOffset = element.videoStartOffset || 0;
+                                        const trimmedEndTime = (videoStartOffset + elementDuration) / 1000;
+                                        if (video.currentTime >= trimmedEndTime - 0.1) video.pause();
+                                      }
+                                    }}
+                                    onLoadedMetadata={(e) => {
+                                      const video = e.currentTarget;
+                                      if (video.playbackRate !== playbackRate)
+                                        setVideoPlaybackRate(video, playbackRate);
+                                      if (duration === 0 && video.duration) setDuration(video.duration * 1000);
+                                    }}
+                                    onEnded={(e) => {
+                                      const elementEndTime =
+                                        (element.startTime || 0) + (element.duration || 5000);
+                                      if (currentTime >= elementEndTime - 100) e.currentTarget.pause();
+                                    }}
+                                  />
+                                )}
+                                  </BrollVibeVideoWrap>
+                                  </div>
+
+                                  {/* -- Selected-segment overlay UI ---------- */}
+                                  {isSegSelected ? (
+                                    <>
+                                      {/* Floating toolbar (above the circle) */}
+                                      <div
+                                        className="absolute left-1/2 -top-10 z-[150] flex -translate-x-1/2 items-center gap-1 rounded-full bg-white/95 px-2 py-1 shadow-lg"
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                      >
+                                        <button
+                                          type="button"
+                                          className="circle-toolbar-btn rounded-full px-2 py-1 text-[11px] font-medium text-neutral-800 hover:bg-neutral-100"
+                                          title="Make full-screen for this beat (removes this segment)"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            updateMagicLayoutSegment(magicSegIdx, null);
+                                            setSelectedLayoutSegmentIdx(null);
+                                          }}
+                                        >
+                                          Full screen
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="circle-toolbar-btn rounded-full px-2 py-1 text-[11px] font-medium text-neutral-800 hover:bg-neutral-100"
+                                          title="Switch this beat to a bottom-half B-roll split"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            updateMagicLayoutSegment(magicSegIdx, { mode: "split-bottom" });
+                                          }}
+                                        >
+                                          Bottom half
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="circle-toolbar-btn rounded-full px-2 py-1 text-[11px] font-medium text-neutral-800 hover:bg-neutral-100"
+                                          title="Reset circle size"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            updateMagicLayoutSegment(magicSegIdx, { circleScale: 1 });
+                                          }}
+                                        >
+                                          Reset size
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="circle-toolbar-btn rounded-full bg-red-500 px-2 py-1 text-[11px] font-medium text-white hover:bg-red-600"
+                                          title="Delete this layout segment"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            updateMagicLayoutSegment(magicSegIdx, null);
+                                            setSelectedLayoutSegmentIdx(null);
+                                          }}
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                        </button>
+                                      </div>
+                                      {/* Scale readout chip (top-right) */}
+                                      <div className="pointer-events-none absolute right-0 top-0 z-[140] rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-medium text-white">
+                                        {Math.round(circleScale * 100)}%
+                                      </div>
+                                      {/* Resize handle (bottom-right). Drag to scale. */}
+                                      <div
+                                        className="circle-resize-handle absolute bottom-1 right-1 z-[150] h-5 w-5 cursor-nwse-resize rounded-full border-2 border-white bg-blue-500 shadow-md hover:scale-110 transition-transform"
+                                        onMouseDown={(e) => {
+                                          e.stopPropagation();
+                                          e.preventDefault();
+                                          if (magicSegIdx < 0) return;
+                                          setIsResizingCircle(true);
+                                          circleResizeStartRef.current = {
+                                            x: e.clientX,
+                                            y: e.clientY,
+                                            scale: circleScale,
+                                            canvasWidth:
+                                              canvasRef.current?.getBoundingClientRect().width || 400,
+                                          };
+                                        }}
+                                        title="Drag to resize circle"
+                                      />
+                                    </>
+                                  ) : null}
+                                </div>
+                                {/* Caption card removed — rely on the global
+                                    subtitle overlay so the circle-pip scene
+                                    shares the same caption treatment as b-roll. */}
+                              </div>
+                            </div>
+                          );
+                        })()
+                      ) : element.circleFrame || useMagicCircle ? (
+                        <div className="flex h-full w-full min-h-0 min-w-0 items-center justify-center">
                           {/* Square wrapper (flex + aspect-ratio so side = min(width, height)) then rounded-full = true circle */}
-                          <div className="rounded-full overflow-hidden min-w-0 min-h-0" style={{ flex: '1 1 0', aspectRatio: '1', maxWidth: '100%', maxHeight: '100%' }}>
+                          <div
+                            className="min-h-0 min-w-0 overflow-hidden rounded-full"
+                            style={{ flex: "1 1 0", aspectRatio: "1", maxWidth: "100%", maxHeight: "100%" }}
+                          >
                       {element.type === "video" && element.url && (
+                        <BrollVibeVideoWrap
+                          vibeKey={element.bRollOverlay ? element.bRollSceneVibe : undefined}
+                        >
+                        {canvasVideoFailedUrlByElementId[element.id] === element.url &&
+                        element.thumbnail ? (
+                          <img
+                            src={element.thumbnail}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            draggable={false}
+                          />
+                        ) : (
                         <video
                           id={`canvas-video-${element.id}`}
                           src={element.url}
+                          poster={element.thumbnail}
                           className="w-full h-full object-cover"
                           loop={false}
                           muted={(element.muted ?? false) || isMuted}
                           playsInline
-                                ref={(videoEl) => {
-                                  if (videoEl) {
-                                    if ('preservesPitch' in videoEl) (videoEl as any).preservesPitch = true;
-                                    try { videoEl.setAttribute('preservespitch', 'true'); } catch (_) {}
-                                  }
+                                ref={(videoEl) => attachCanvasVideoRef(element.id, videoEl)}
+                                onError={() => {
+                                  console.warn(
+                                    "[Canvas video] load/decode error — showing poster or thumbnail fallback",
+                                    element.id,
+                                    element.url?.slice(0, 96)
+                                  );
+                                  setCanvasVideoFailedUrlByElementId((p) => ({
+                                    ...p,
+                                    [element.id]: element.url!,
+                                  }));
                                 }}
                                 onTimeUpdate={(e) => {
                                   if (isPlaying) {
@@ -7240,6 +10163,9 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                                   if (currentTime >= elementEndTime - 100) e.currentTarget.pause();
                                 }}
                               />
+                        )
+                        }
+                        </BrollVibeVideoWrap>
                             )}
                             {element.type === "image" && element.url && (
                               <img
@@ -7260,27 +10186,38 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                       ) : (
                       <>
                       {element.type === "video" && element.url && (
+                        <BrollVibeVideoWrap
+                          vibeKey={element.bRollOverlay ? element.bRollSceneVibe : undefined}
+                        >
+                        {canvasVideoFailedUrlByElementId[element.id] === element.url &&
+                        element.thumbnail ? (
+                          <img
+                            src={element.thumbnail}
+                            alt=""
+                            className={cn("w-full h-full", element.objectFit === "contain" ? "object-contain" : "object-cover")}
+                            draggable={false}
+                          />
+                        ) : (
                         <video
                           id={`canvas-video-${element.id}`}
                           src={element.url}
-                          className="w-full h-full object-cover"
+                          poster={element.thumbnail}
+                          className={cn("w-full h-full", element.objectFit === "contain" ? "object-contain" : "object-cover")}
                           loop={false}
                           muted={(element.muted ?? false) || isMuted}
                           playsInline
-                          ref={(videoEl) => {
-                            // Set preservesPitch when video element is mounted to prevent audio distortion
-                            if (videoEl) {
-                              if ('preservesPitch' in videoEl) {
-                                (videoEl as any).preservesPitch = true;
-                              }
-                              // Also set as attribute for maximum compatibility
-                              try {
-                                videoEl.setAttribute('preservespitch', 'true');
-                              } catch (e) {
-                                // Ignore if attribute setting fails
-                              }
-                            }
-                          }}
+                          ref={(videoEl) => attachCanvasVideoRef(element.id, videoEl)}
+                        onError={() => {
+                          console.warn(
+                            "[Canvas video] load/decode error — showing poster or thumbnail fallback",
+                            element.id,
+                            element.url?.slice(0, 96)
+                          );
+                          setCanvasVideoFailedUrlByElementId((p) => ({
+                            ...p,
+                            [element.id]: element.url!,
+                          }));
+                        }}
                         onTimeUpdate={(e) => {
                           // Update timeline from video playback - account for element's startTime and videoStartOffset
                           if (isPlaying) {
@@ -7333,13 +10270,20 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                           }
                         }}
                       />
+                        )
+                        }
+                        </BrollVibeVideoWrap>
                     )}
                     {element.type === "image" && element.url && (
                       <>
                       <img
                         src={element.url}
                         alt=""
-                        className={cn("w-full h-full object-cover", element.circleFrame ? "rounded-full" : "rounded")}
+                        className={cn(
+                          "w-full h-full",
+                          element.objectFit === "contain" ? "object-contain" : "object-cover",
+                          element.circleFrame ? "rounded-full" : "rounded"
+                        )}
                         draggable={false}
                         style={{
                             objectPosition: `${element.imageOffsetX || 50}% ${element.imageOffsetY || 50}%`,
@@ -7370,18 +10314,111 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                     )}
                     </>
                     )}
-                    {element.type === "text" && (
-                      <div
-                        className="w-full h-full flex items-center justify-center"
-                        style={{
-                          fontSize: `${(element.fontSize || 24) * (element.width / 30)}px`,
-                          color: element.fontColor || "#000000",
-                          fontFamily: element.fontFamily || "Arial",
-                          fontWeight: "bold",
-                        }}
-                      >
-                        {element.text || "Double click to edit"}
+                                       {element.type === "text" && (
+                      element.magicSceneExplainer ? (
+                        <div className="relative h-full w-full overflow-hidden rounded-none">
+                          {(() => {
+                            const start = element.startTime || 0;
+                            const tRel = Math.max(0, currentTime - start);
+                            // Prefer the live clip duration so trimming the
+                            // scene pill on the timeline immediately extends
+                            // (or shortens) the enter/exit animation window.
+                            // Falling back to `explainerSegmentDurationMs`
+                            // is only useful for legacy / unset data.
+                            const segDur =
+                              element.duration ??
+                              element.explainerSegmentDurationMs ??
+                              5000;
+                            const isCinema =
+                              element.explainerSceneStyle === "subtitle-cinema";
+                            const activeCap =
+                              isCinema && subtitleSegments.length > 0
+                                ? subtitleSegments.find(
+                                    (s) =>
+                                      s &&
+                                      currentTime >= s.startMs &&
+                                      currentTime < s.endMs
+                                  )
+                                : undefined;
+                            const cinemaSync = Boolean(
+                              isCinema && activeCap?.text?.trim()
+                            );
+                            const capText = activeCap?.text?.trim() ?? "";
+                            const titleForGraphic = cinemaSync
+                              ? capText
+                              : element.text || "";
+                            const karaokeTRel =
+                              cinemaSync && activeCap
+                                ? Math.max(0, currentTime - activeCap.startMs)
+                                : undefined;
+                            const karaokeSegDur =
+                              cinemaSync && activeCap
+                                ? Math.max(1, activeCap.endMs - activeCap.startMs)
+                                : undefined;
+
+                            return (
+                              <MagicSceneExplainerGraphic
+                                sceneStyle={element.explainerSceneStyle}
+                                typographyStyle={element.explainerTypographyStyle}
+                                accentHex={element.explainerAccentHex}
+                                beatIndex={element.explainerGraphicVariant ?? 0}
+                                title={titleForGraphic}
+                                subline={element.explainerSubline}
+                                accentLabel={element.explainerAccentLabel}
+                                stockImageUrl={element.explainerIllustrationUrl}
+                                heroWord={element.explainerHeroWord}
+                                items={element.explainerItems}
+                                emoji={element.explainerEmoji}
+                                sideA={element.explainerSideA}
+                                sideB={element.explainerSideB}
+                                iconEmoji={element.explainerIconEmoji}
+                                logoUrl={element.explainerLogoUrl}
+                                tRelMs={tRel}
+                                segmentDurationMs={segDur}
+                                karaokeTRelMs={karaokeTRel}
+                                karaokeSegmentDurationMs={karaokeSegDur}
+                                cinemaCaptionSync={cinemaSync}
+                                masterOpacity={shouldRender ? 1 : 0}
+                                titleColor={element.fontColor || "#0a0a0a"}
+                                widthPct={element.width}
+                                fontSizeBase={element.fontSize || 20}
+                                animationPace={
+                                  magicExplainerSlowAnimations ? "slow" : "normal"
+                                }
+                              />
+                            );
+                          })()}
+                        </div>
+                      ) : (
+                      <div className="relative w-full h-full overflow-hidden">
+                        {element.textBackgroundColor ? (
+                          <div
+                            className="absolute inset-0 rounded-none"
+                            style={{ backgroundColor: element.textBackgroundColor }}
+                            aria-hidden
+                          />
+                        ) : null}
+                        <div
+                          className="relative z-[1] w-full h-full flex items-center justify-center px-2 text-center leading-tight"
+                          style={{
+                            fontSize: `${(element.fontSize || 24) * (element.width / 28)}px`,
+                            color: element.fontColor || "#000000",
+                            fontFamily: element.fontFamily || "Arial",
+                            fontWeight: element.magicViralStyle || element.magicWhiteSlide ? 800 : "bold",
+                            textTransform:
+                              element.magicViralStyle || element.magicWhiteSlide ? "uppercase" : undefined,
+                            letterSpacing: element.magicWhiteSlide ? "-0.02em" : undefined,
+                            textShadow: element.magicWhiteSlide
+                              ? undefined
+                              : element.magicViralStyle
+                                ? "2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 0 2px 12px rgba(0,0,0,0.85)"
+                                : undefined,
+                          }}
+                        >
+                          {element.text || "Double click to edit"}
+                        </div>
                       </div>
+                      )
                     )}
                     </div>
                     
@@ -7514,24 +10551,89 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   />
                 ))}
               
-              {/* Render Subtitles */}
-              {activeSubtitle && showSubtitles && (
+              {/* Render Subtitles — Fancy: fixed bottom half + gradient (no drag) */}
+              {activeSubtitle &&
+                showSubtitles &&
+                !magicCinemaExplainerCoversVideo &&
+                subtitleStyle === "fancy" && (
+                <div
+                  className="pointer-events-none absolute bottom-0 left-0 right-0 flex h-1/2 flex-col justify-end"
+                  style={{ zIndex: CANVAS_SUBTITLE_Z }}
+                  aria-hidden
+                >
+                  <div
+                    className="flex min-h-full w-full flex-col justify-end px-3 pb-4 pt-10"
+                    style={{
+                      background:
+                        "linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.55) 42%, rgba(0,0,0,0.12) 78%, transparent 100%)",
+                    }}
+                  >
+                    <p
+                      className="w-full max-w-[100%] text-balance text-center font-black uppercase leading-[1.02] tracking-tight text-white"
+                      style={{
+                        ...STYLE_FANCY,
+                        fontSize: `${Math.min(72, Math.max(20, subtitleFontSize * 0.52))}px`,
+                        fontFamily:
+                          subtitleFontFamily === "impact"
+                            ? "var(--font-impact)"
+                            : subtitleFontFamily === "montserrat"
+                              ? "var(--font-montserrat)"
+                              : subtitleFontFamily === "poppins"
+                                ? "var(--font-poppins)"
+                                : subtitleFontFamily === "futura"
+                                  ? "var(--font-futura)"
+                                  : subtitleFontFamily === "roboto"
+                                    ? "var(--font-roboto)"
+                                    : subtitleFontFamily === "inter"
+                                      ? "var(--font-inter)"
+                                      : subtitleFontFamily === "zy-resolve"
+                                        ? "var(--font-zy-resolve)"
+                                        : "var(--font-bebas-neue), Arial Black, system-ui, sans-serif",
+                      }}
+                    >
+                      {activeSubtitle.text}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {activeSubtitle &&
+                showSubtitles &&
+                !magicCinemaExplainerCoversVideo &&
+                subtitleStyle !== "fancy" && (
                 <div
                   data-subtitle-element="true"
                   className={cn(
-                    "absolute cursor-grab select-none transition-all",
+                    "absolute select-none transition-all",
+                    !magicFullCircleActive && !magicTopSlotNoCardActive && "cursor-grab",
                     isDraggingSubtitle && "cursor-grabbing opacity-90 scale-105"
                   )}
                   style={{
                     left: `${subtitlePosition.x}%`,
-                    top: `${subtitlePosition.y}%`,
+                    // Circle-pip (full, no top card) forces the subtitle to sit
+                    // near the bottom edge of the centered circle (~72%) so it
+                    // reads as a caption on the pip rather than floating in the
+                    // middle of the face. When the segment had a topSlot card
+                    // that got deleted the video occupies only the bottom half
+                    // — pin the subtitle to the canvas middle (50%) so it sits
+                    // at the boundary between the empty top and the video.
+                    top: magicFullCircleActive
+                      ? "72%"
+                      : magicTopSlotNoCardActive
+                        ? "50%"
+                        : `${subtitlePosition.y}%`,
                     transform: "translate(-50%, -50%)",
                     width: "95%",
                     maxWidth: "95%",
-                    pointerEvents: "auto",
-                    zIndex: isDraggingSubtitle ? 50 : 10,
+                    pointerEvents:
+                      magicFullCircleActive || magicTopSlotNoCardActive ? "none" : "auto",
+                    zIndex: isDraggingSubtitle ? CANVAS_SUBTITLE_DRAG_Z : CANVAS_SUBTITLE_Z,
                   }}
-                  onMouseDown={handleSubtitleMouseDown}
+                  onMouseDown={
+                    magicFullCircleActive || magicTopSlotNoCardActive
+                      ? undefined
+                      : handleSubtitleMouseDown
+                  }
                 >
                   <div
                     className={cn(
@@ -7545,7 +10647,8 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                         getSubtitleStyle(subtitleStyle).className
                           .replace(/text-(xs|sm|base|lg|xl|2xl|3xl|4xl|5xl|6xl|7xl|8xl|9xl)/g, '')
                           .replace(/font-(sans|serif|mono|black|bold|semibold|medium|normal|light|thin|extralight)/g, ''),
-                        subtitleStyle === 'magic-loops' ? "text-center w-full" : "break-words text-center w-full"
+                        subtitleStyle === 'magic-loops' ? "text-center w-full" :
+                          subtitleStyle === 'chip' ? "break-words text-center" : "break-words text-center w-full"
                       )}
                       style={{
                         fontSize: `${subtitleFontSize / 100 * 24}px`,
@@ -7570,6 +10673,15 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                           ? { ...STYLE_MAGIC_LOOPS, display: 'flex' as const, flexDirection: 'column' as const, alignItems: 'center' as const, textTransform: 'uppercase' as const, whiteSpace: 'normal' as const }
                           : subtitleStyle === "bold-green"
                           ? { ...STYLE_BOLD_GREEN, textTransform: 'uppercase' as const }
+                          : subtitleStyle === "chip"
+                          ? {
+                              ...STYLE_CHIP_TEXT,
+                              ...STYLE_CHIP_PILL,
+                              // hug the text, center the pill
+                              width: 'auto' as const,
+                              maxWidth: '92%',
+                              margin: '0 auto',
+                            }
                           : {})
                       }}
                     >
@@ -8046,6 +11158,21 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                     {/* Text Properties (if text element) */}
                     {element.type === "text" && (
                       <>
+                        {element.magicSceneExplainer && (
+                          <div>
+                            <Label className="text-xs text-gray-600 mb-2 block">Subline (explainer)</Label>
+                            <Input
+                              value={element.explainerSubline || ""}
+                              onChange={(e) =>
+                                updateCanvasElement(selectedElementId, {
+                                  explainerSubline: e.target.value || undefined,
+                                })
+                              }
+                              className="h-8 text-xs"
+                              placeholder="Optional short line under headline"
+                            />
+                          </div>
+                        )}
                         <div>
                           <Label className="text-xs text-gray-600 mb-2 block">Text</Label>
                           <Input
@@ -8341,7 +11468,15 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
               
               const audioElements = canvasElements.filter(el => el.type === "audio");
               const hasAudio = audioElements.length > 0;
-              const totalTracks = mediaTracks.length + (hasAudio ? 1 : 0);
+              // Magic scene-explainer cards (the title/subline text slides auto-placed by
+              // Magic Create). Each one gets its own row in the timeline so the user can
+              // click to edit it, trim its duration, drag it, or delete it.
+              const explainerCards = canvasElements.filter(
+                el => el.type === "text" && !!el.magicSceneExplainer && !el.magicSceneExplainerStock
+              );
+              const hasExplainerTrack = explainerCards.length > 0;
+              const totalTracks =
+                mediaTracks.length + (hasExplainerTrack ? 1 : 0) + (hasAudio ? 1 : 0);
               const minHeight = Math.max(200, totalTracks * 56); // 56px per track, minimum 200px
               
               return (
@@ -8461,13 +11596,15 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                           // Determine border color and label based on element type
                           const isImage = element.type === "image";
                           // Check if this is a B-roll clip (muted video overlay with videoStartOffset)
-                          const isBRollClip = element.type === "video" && 
-                            element.muted === true && 
+                          const isBRollClip =
+                            element.type === "video" &&
+                            element.muted === true &&
                             element.videoStartOffset !== undefined &&
-                            element.x === 0 && 
-                            element.y === 0 && 
-                            element.width === 100 && 
-                            element.height === 100;
+                            (element.bRollOverlay === true ||
+                              (element.x === 0 &&
+                                element.y === 0 &&
+                                element.width === 100 &&
+                                element.height === 100));
                           const borderColor = isImage 
                             ? "border-purple-300 hover:border-purple-500" 
                             : isBRollClip 
@@ -8721,13 +11858,201 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   </div>
                 ));
               })()}
-              
+
+              {/* ---- Scenes Track (Magic scene-explainer cards) ---------------
+               * Placed between the media tracks and the audio track. Each pill
+               * represents one explainer beat (type === "text" + magicSceneExplainer)
+               * from Magic Create; clicking selects it so the right-side
+               * inspector lets you edit its text / subline / font, the trim
+               * handles resize the beat's on-screen window, and the × button
+               * deletes the beat along with its paired Freepik illustration
+               * (magicSceneExplainerStock) companion.
+               */}
+              {(() => {
+                const explainerCards = canvasElements
+                  .filter(el => el.type === "text" && !!el.magicSceneExplainer && !el.magicSceneExplainerStock)
+                  .sort((a, b) => (a.startTime || 0) - (b.startTime || 0));
+                if (explainerCards.length === 0) return null;
+
+                const mediaTracksCount = (() => {
+                  const mediaElements = canvasElements.filter(el => el.type === "video" || el.type === "image").sort((a, b) => (a.startTime || 0) - (b.startTime || 0));
+                  const tracks: Array<Array<typeof mediaElements[0]>> = [];
+                  mediaElements.forEach((element) => {
+                    let placed = false;
+                    for (const track of tracks) {
+                      const canPlace = track.every(existing => {
+                        const existingStart = existing.startTime || 0;
+                        const existingEnd = existingStart + (existing.duration || 5000);
+                        const elementStart = element.startTime || 0;
+                        const elementEnd = elementStart + (element.duration || 5000);
+                        return elementEnd <= existingStart || elementStart >= existingEnd;
+                      });
+                      if (canPlace) { track.push(element); placed = true; break; }
+                    }
+                    if (!placed) tracks.push([element]);
+                  });
+                  return tracks.length;
+                })();
+
+                const scenesTrackTop = mediaTracksCount * 56;
+
+                // Tint the pill by scene style so the user can spot at a glance
+                // which beat is a cinematic black overlay, a split card, etc.
+                const sceneStyleColor = (style?: string): { bg: string; border: string; label: string } => {
+                  switch (style) {
+                    case "subtitle-cinema":
+                      return { bg: "bg-neutral-900", border: "border-neutral-700 hover:border-neutral-400", label: "Cinema" };
+                    case "fancy-split":
+                      return { bg: "bg-indigo-500", border: "border-indigo-300 hover:border-indigo-500", label: "Split" };
+                    case "fancy-minimal":
+                      return { bg: "bg-sky-500", border: "border-sky-300 hover:border-sky-500", label: "Minimal" };
+                    case "emphasis-explode":
+                      return { bg: "bg-rose-500", border: "border-rose-300 hover:border-rose-500", label: "Explode" };
+                    case "checklist-reveal":
+                      return { bg: "bg-emerald-500", border: "border-emerald-300 hover:border-emerald-500", label: "Checklist" };
+                    case "ticker-stack":
+                      return { bg: "bg-amber-500", border: "border-amber-300 hover:border-amber-500", label: "Ticker" };
+                    case "reaction-burst":
+                      return { bg: "bg-fuchsia-500", border: "border-fuchsia-300 hover:border-fuchsia-500", label: "Reaction" };
+                    case "vs-split":
+                      return { bg: "bg-orange-500", border: "border-orange-300 hover:border-orange-500", label: "VS" };
+                    case "question-shrug":
+                      return { bg: "bg-violet-500", border: "border-violet-300 hover:border-violet-500", label: "Question" };
+                    default:
+                      return { bg: "bg-slate-500", border: "border-slate-300 hover:border-slate-500", label: "Scene" };
+                  }
+                };
+
+                return (
+                  <div
+                    key="scenes-track"
+                    className="absolute left-0 right-0 h-14 border-b border-gray-200 bg-white"
+                    style={{ top: `${scenesTrackTop}px` }}
+                  >
+                    <div className="h-full flex items-center">
+                      <div className="w-20 flex-shrink-0 border-r border-gray-200 bg-gray-50 flex items-center justify-center">
+                        <div className="text-xs text-gray-600 font-medium">Scenes</div>
+                      </div>
+                      <div className="flex-1 h-full relative overflow-visible timeline-tracks-container">
+                        {explainerCards.map((element) => {
+                          const elementStartTime = element.startTime || 0;
+                          const elementDuration = element.duration || 2000;
+                          const trackLeft = duration > 0 ? (elementStartTime / duration) * 100 : 0;
+                          const trackWidth = duration > 0 ? (elementDuration / duration) * 100 : 10;
+                          const tint = sceneStyleColor(element.explainerSceneStyle);
+                          const previewText = (element.text || element.explainerAccentLabel || tint.label).trim();
+                          return (
+                            <div
+                              key={element.id}
+                              className={cn(
+                                "group absolute top-2 bottom-2 overflow-visible cursor-move transition-opacity border-2 bg-gray-100 z-20 rounded",
+                                tint.border,
+                                selectedElementId === element.id ? "ring-2 ring-blue-500" : "hover:opacity-90"
+                              )}
+                              style={{ left: `${trackLeft}%`, width: `${trackWidth}%`, minWidth: "40px" }}
+                              onMouseDown={(e) => {
+                                const target = e.target as HTMLElement;
+                                if (target.closest(".trim-handle") || target.closest("button")) return;
+                                e.stopPropagation();
+                                e.preventDefault();
+                                setSelectedElementId(element.id);
+                                setIsDraggingTimeline(true);
+                                setDraggingTimelineElementId(element.id);
+                                setDragTimelineStart({ x: e.clientX, startTime: elementStartTime });
+                              }}
+                              title={`${tint.label} scene — click to edit, drag to move, × to delete`}
+                            >
+                              {/* Pill body with scene label + preview text */}
+                              <div className={cn("h-full w-full flex items-center overflow-hidden rounded pointer-events-none relative", tint.bg)}>
+                                <div className="px-2 text-white text-[10px] leading-tight truncate w-full">
+                                  <span className="font-semibold opacity-90">{tint.label}</span>
+                                  {previewText ? <span className="opacity-80"> · {previewText}</span> : null}
+                                </div>
+                              </div>
+
+                              {/* Delete button */}
+                              <button
+                                className="absolute -top-2 -right-2 z-30 w-5 h-5 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-auto"
+                                style={{ pointerEvents: "auto" }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  deleteExplainerCardWithCompanion(element.id);
+                                }}
+                                title="Delete this scene (also removes its illustration)"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+
+                              {/* Left trim handle */}
+                              <div
+                                className="trim-handle absolute left-0 top-0 bottom-0 cursor-ew-resize bg-white/70 hover:bg-white transition-all shadow"
+                                style={{
+                                  width: "8px",
+                                  opacity: selectedElementId === element.id ? 1 : 0.5,
+                                  zIndex: 100,
+                                  pointerEvents: "auto",
+                                }}
+                                onMouseDown={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  setIsTrimming(true);
+                                  setTrimElementId(element.id);
+                                  setTrimEdge("left");
+                                  setTrimStart({ x: e.clientX });
+                                  trimStartRef.current = {
+                                    x: e.clientX,
+                                    startTime: elementStartTime,
+                                    duration: elementDuration,
+                                    videoStartOffset: 0,
+                                    audioStartOffset: 0,
+                                  };
+                                }}
+                                title={`Start: ${(elementStartTime / 1000).toFixed(2)}s`}
+                              />
+
+                              {/* Right trim handle */}
+                              <div
+                                className="trim-handle absolute right-0 top-0 bottom-0 cursor-ew-resize bg-white/70 hover:bg-white transition-all shadow"
+                                style={{
+                                  width: "8px",
+                                  opacity: selectedElementId === element.id ? 1 : 0.5,
+                                  zIndex: 100,
+                                  pointerEvents: "auto",
+                                }}
+                                onMouseDown={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  setIsTrimming(true);
+                                  setTrimElementId(element.id);
+                                  setTrimEdge("right");
+                                  setTrimStart({ x: e.clientX });
+                                  trimStartRef.current = {
+                                    x: e.clientX,
+                                    startTime: elementStartTime,
+                                    duration: elementDuration,
+                                    videoStartOffset: 0,
+                                    audioStartOffset: 0,
+                                  };
+                                }}
+                                title={`Duration: ${(elementDuration / 1000).toFixed(2)}s`}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Audio Track - Single track for all audio elements */}
               {(() => {
                 const audioElements = canvasElements.filter(el => el.type === "audio").sort((a, b) => (a.startTime || 0) - (b.startTime || 0));
                 if (audioElements.length === 0) return null;
                 
-                // Calculate the top position for audio track (after all media tracks)
+                // Calculate the top position for audio track (after all media tracks
+                // AND the Scenes track if it's present).
                 const mediaTracksCount = (() => {
                   const mediaElements = canvasElements.filter(el => el.type === "video" || el.type === "image").sort((a, b) => (a.startTime || 0) - (b.startTime || 0));
                   const tracks: Array<Array<typeof mediaElements[0]>> = [];
@@ -8753,8 +12078,11 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                   });
                   return tracks.length;
                 })();
-                
-                const audioTrackTop = mediaTracksCount * 56; // 56px per track
+
+                const hasExplainerTrack = canvasElements.some(
+                  el => el.type === "text" && !!el.magicSceneExplainer && !el.magicSceneExplainerStock
+                );
+                const audioTrackTop = (mediaTracksCount + (hasExplainerTrack ? 1 : 0)) * 56;
                 
                 return (
                   <div 
@@ -9650,6 +12978,319 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
         </Dialog>
       )}
 
+      <Dialog
+        open={magicCreateOpen}
+        onOpenChange={(open) => {
+          if (magicCreateLoading || magicCreateTranscribeLoading) return;
+          if (open) {
+            void loadUploadedVideos();
+            if (!magicCreateScript.trim()) {
+              setMagicCreateScript(MAGIC_CREATE_SAMPLE_SCRIPT);
+            }
+            // Start wizard fresh every open unless we're being reopened for Step 3 after the
+            // existing Avatars → Speech → Lipsync flow completed (magicPendingReopenOnLipsync).
+            if (!magicPendingReopenOnLipsync) {
+              setMagicWizardStep("source");
+              setMagicSource(null);
+            }
+          }
+          setMagicCreateOpen(open);
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              Magic create
+            </DialogTitle>
+            <DialogDescription>
+              {magicWizardStep === "source" && "Step 1 of 3 — pick a main video source."}
+              {magicWizardStep === "media" && "Step 2 of 3 — transcribe your uploaded video into a script."}
+              {magicWizardStep === "generate" && "Step 3 of 3 — review and build your scenes."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Stepper dots */}
+          <div className="flex items-center gap-2 pb-2">
+            {[
+              { key: "source", label: "Source" },
+              { key: "work", label: magicSource === "avatar" ? "Avatar flow" : magicSource === "media" ? "Transcribe" : "Script" },
+              { key: "generate", label: "Generate" },
+            ].map((s, idx) => {
+              const activeIdx =
+                magicWizardStep === "source" ? 0
+                : magicWizardStep === "media" ? 1
+                : 2;
+              const isActive = idx === activeIdx;
+              const isDone = idx < activeIdx;
+              return (
+                <div key={s.key} className="flex items-center gap-2 flex-1">
+                  <div
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-colors",
+                      isActive
+                        ? "bg-primary text-primary-foreground"
+                        : isDone
+                        ? "bg-primary/15 text-primary"
+                        : "bg-muted text-muted-foreground"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold",
+                        isActive ? "bg-primary-foreground/20" : isDone ? "bg-primary/20" : "bg-muted-foreground/20"
+                      )}
+                    >
+                      {idx + 1}
+                    </span>
+                    <span>{s.label}</span>
+                  </div>
+                  {idx < 2 && <div className="flex-1 h-px bg-border" />}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* STEP 1 — Source picker */}
+          {magicWizardStep === "source" && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Avatar card — delegates to the existing Avatars → Speech → Lipsync flow */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Remember that we started this via Magic Create so we can auto-reopen
+                    // the wizard at Step 3 once lipsync completes.
+                    setMagicSource("avatar");
+                    setMagicPendingReopenOnLipsync(true);
+                    // Hand off to the existing (working) Avatars dialog. From there the user
+                    // picks an avatar → Next → Speech panel → Lipsync panel. Same flow as the navbar button.
+                    setMagicCreateOpen(false);
+                    setAvatarsDialogOpen(true);
+                  }}
+                  className={cn(
+                    "group relative flex flex-col items-start gap-3 rounded-xl border-2 p-5 text-left transition-all",
+                    "hover:border-primary hover:bg-primary/5",
+                    "border-border"
+                  )}
+                >
+                  <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Sparkles className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="font-semibold">Select an Avatar</div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      We'll take you through avatar → script → voice → lipsync, then bring you back here.
+                    </div>
+                  </div>
+                </button>
+
+                {/* Media card */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMagicSource("media");
+                    setMagicWizardStep("media");
+                  }}
+                  disabled={magicMainVideoOptions.length === 0}
+                  className={cn(
+                    "group relative flex flex-col items-start gap-3 rounded-xl border-2 p-5 text-left transition-all",
+                    "hover:border-primary hover:bg-primary/5",
+                    "border-border",
+                    "disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:bg-transparent"
+                  )}
+                >
+                  <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600">
+                    <Mic className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="font-semibold">Choose from Media</div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Pick an uploaded video or prior lipsync — we'll transcribe it into a script.
+                    </div>
+                  </div>
+                  {magicMainVideoOptions.length === 0 && (
+                    <span className="text-[10px] text-muted-foreground font-medium">
+                      No videos in Media yet
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setMagicCreateOpen(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 2B — Media branch */}
+          {magicWizardStep === "media" && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="magic-wizard-media">Video</Label>
+                <Select
+                  value={magicCreateMainVideoKey ?? undefined}
+                  onValueChange={(v) => setMagicCreateMainVideoKey(v)}
+                  disabled={magicMainVideoOptions.length === 0}
+                >
+                  <SelectTrigger id="magic-wizard-media" className="w-full">
+                    <SelectValue
+                      placeholder={
+                        magicMainVideoOptions.length === 0
+                          ? "No videos — upload one first"
+                          : "Choose a video"
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {magicMainVideoOptions.map((o) => (
+                      <SelectItem key={o.key} value={o.key}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="magic-wizard-media-script">Script</Label>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={magicCreateTranscribeLoading || !magicCreateMainVideoKey}
+                    onClick={() => void handleMagicTranscribeScriptFromVideo()}
+                  >
+                    {magicCreateTranscribeLoading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Mic className="h-3.5 w-3.5" />
+                    )}
+                    Transcribe
+                  </Button>
+                </div>
+                <Textarea
+                  id="magic-wizard-media-script"
+                  value={magicCreateScript}
+                  onChange={(e) => setMagicCreateScript(e.target.value)}
+                  placeholder="Click Transcribe to fill this from the video — or type it manually."
+                  rows={8}
+                  className="min-h-[160px] resize-y font-mono text-sm leading-relaxed"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Use blank lines between paragraphs to split scenes.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setMagicWizardStep("source")}
+                >
+                  Back
+                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setMagicCreateOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={!magicCreateMainVideoKey || !magicCreateScript.trim() || magicCreateTranscribeLoading}
+                    onClick={() => setMagicWizardStep("generate")}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 3 — Generate */}
+          {magicWizardStep === "generate" && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+                <div className="font-medium mb-1">Ready to build</div>
+                <p className="text-xs text-muted-foreground">
+                  Freepik B-roll, dynamic 50/50 splits, circle-pip & black-overlay cards,
+                  synced to your script. This can take ~30-60s.
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-xs font-medium text-muted-foreground">Main video</div>
+                <div className="text-sm truncate">
+                  {magicMainVideoOptions.find((o) => o.key === magicCreateMainVideoKey)?.label || "—"}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-xs font-medium text-muted-foreground">Script preview</div>
+                <div className="rounded-md border bg-background p-3 text-xs max-h-32 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+                  {magicCreateScript.trim() || "(empty)"}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={magicCreateLoading}
+                  onClick={() => setMagicWizardStep(magicSource === "media" ? "media" : "source")}
+                >
+                  Back
+                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setMagicCreateOpen(false)}
+                    disabled={magicCreateLoading}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => void handleMagicCreate()}
+                    disabled={
+                      magicCreateLoading ||
+                      !magicCreateMainVideoKey ||
+                      !magicCreateScript.trim()
+                    }
+                  >
+                    {magicCreateLoading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Working…
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="mr-2 h-4 w-4" />
+                        Generate scenes
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Add voice to user library (name + Eleven Labs voice ID) */}
       <Dialog open={addVoiceDialogOpen} onOpenChange={setAddVoiceDialogOpen}>
         <DialogContent className="sm:max-w-md">
@@ -10156,7 +13797,14 @@ export function AIUGCVideoEditor({ projectId: initialProjectId }: { projectId?: 
                         >
                           {/* Video Preview */}
                           <div className="relative aspect-video w-full overflow-hidden bg-black">
-                            {bRoll.url ? (
+                            {bRoll.thumbnailUrl ? (
+                              <img
+                                src={bRoll.thumbnailUrl}
+                                alt=""
+                                className="h-full w-full object-cover"
+                                draggable={false}
+                              />
+                            ) : bRoll.url ? (
                               <video
                                 src={bRoll.url}
                                 className="h-full w-full object-cover"

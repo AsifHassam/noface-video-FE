@@ -128,7 +128,9 @@ export type SubtitleStyle =
   | "outlined"
   | "elegant"
   | "bold-green"
-  | "karaoke-pink";
+  | "karaoke-pink"
+  | "fancy"
+  | "chip";
 
 export type SubtitleFontFamily = 'bebas-neue' | 'impact' | 'montserrat' | 'poppins' | 'futura' | 'roboto' | 'inter' | 'zy-resolve';
 

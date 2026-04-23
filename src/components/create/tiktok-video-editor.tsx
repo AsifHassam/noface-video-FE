@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { getImageOverlaySlideOffsetPx } from "@/lib/utils/image-overlay-slide";
 import { v4 as uuid } from "uuid";
 import { getSubtitleStyle, OUTLINED_STYLE, STYLE_KARAOKE_PINK, STYLE_MAGIC_LOOPS, STYLE_BOLD_GREEN } from "@/lib/data/subtitle-styles";
+import { CANVAS_SUBTITLE_DRAG_Z, CANVAS_SUBTITLE_Z } from "@/lib/canvas-subtitle-z";
 import Image from "next/image";
 import { RedditPostOverlay } from "./reddit-post-overlay";
 import { motion } from "framer-motion";
@@ -2568,7 +2569,7 @@ export const TikTokVideoEditor = ({
               width: "95%",
               maxWidth: "95%",
               pointerEvents: isDraggingSubtitle ? "auto" : "auto",
-              zIndex: isDraggingSubtitle ? 50 : 10,
+              zIndex: isDraggingSubtitle ? CANVAS_SUBTITLE_DRAG_Z : CANVAS_SUBTITLE_Z,
             }}
             onMouseDown={handleSubtitleMouseDown}
           >

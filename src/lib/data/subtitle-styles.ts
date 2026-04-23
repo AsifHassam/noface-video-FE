@@ -54,6 +54,22 @@ export const SUBTITLE_STYLES: SubtitleStyleConfig[] = [
     containerClassName: "bg-transparent px-2 py-2",
     icon: "💗",
   },
+  {
+    id: "fancy",
+    name: "Fancy",
+    description: "Large cinematic captions with gradient band — covers the bottom half of the frame",
+    className: "text-white font-black uppercase tracking-tight leading-tight",
+    containerClassName: "bg-transparent w-full",
+    icon: "✦",
+  },
+  {
+    id: "chip",
+    name: "Chip",
+    description: "Clean white text on a dark rounded pill — minimalist TikTok captions that hug the text",
+    className: "text-white font-bold text-xl tracking-tight",
+    containerClassName: "bg-transparent px-0 py-0",
+    icon: "💊",
+  },
 ];
 
 /**
@@ -100,6 +116,42 @@ export const STYLE_MAGIC_LOOPS = {
   MozOsxFontSmoothing: 'grayscale',
   color: '#FFFFFF',
 };
+
+/** Fancy: used by editor for half-frame gradient + oversized type */
+export const STYLE_FANCY = {
+  textShadow:
+    "0 4px 32px rgba(0,0,0,0.95), 0 2px 0 #000, 0 -1px 0 rgba(255,255,255,0.15)",
+  WebkitTextStroke: "1.5px rgba(0,0,0,0.85)",
+  paintOrder: "stroke fill" as const,
+  fontWeight: "900" as const,
+  textTransform: "uppercase" as const,
+  letterSpacing: "0.02em",
+  lineHeight: "1.05",
+};
+
+/**
+ * Chip style — white bold text on a dark rounded pill.
+ * Typography: sans-serif, bold (700), NOT uppercase (preserves sentence case).
+ * Container: semi-transparent black pill that hugs the text.
+ */
+export const STYLE_CHIP_TEXT = {
+  color: "#FFFFFF",
+  fontWeight: "700" as const,
+  letterSpacing: "0px",
+  lineHeight: "1.1",
+  textTransform: "none" as const,
+  textShadow: "0 1px 3px rgba(0,0,0,0.45)",
+  WebkitFontSmoothing: "antialiased",
+  MozOsxFontSmoothing: "grayscale",
+} as const;
+
+export const STYLE_CHIP_PILL = {
+  backgroundColor: "rgba(0, 0, 0, 0.70)",
+  borderRadius: "10px",
+  padding: "6px 14px",
+  boxShadow: "0 4px 14px rgba(0,0,0,0.28)",
+  display: "inline-block" as const,
+} as const;
 
 export const STYLE_BOLD_GREEN = {
   WebkitTextStroke: '2.5px #000000',

@@ -407,6 +407,39 @@ export const subscriptionApi = {
   },
 
   /**
+   * Re-initialise a Paystack transaction for a specific outstanding row and return a fresh
+   * checkout URL. The original payment_link is single-use; Paystack returns "We could not
+   * start this transaction" once it has been visited or abandoned.
+   */
+  async refreshOutstandingLink(rowId: string): Promise<{ success: boolean; paymentLink?: string; error?: string }> {
+    try {
+      const data = await apiRequest<{ success: boolean; paymentLink?: string; error?: string }>(
+        `/api/subscription/outstanding/${encodeURIComponent(rowId)}/refresh-link`,
+        { method: 'POST' }
+      );
+      return { success: !!data.success, paymentLink: data.paymentLink, error: data.error };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : 'Failed to refresh link' };
+    }
+  },
+
+  /**
+   * Fallback: re-initialise a Paystack transaction from profile.outstanding_amount_cents
+   * when there is no payment_transactions row for the outstanding amount.
+   */
+  async refreshOutstandingProfileLink(): Promise<{ success: boolean; paymentLink?: string; error?: string }> {
+    try {
+      const data = await apiRequest<{ success: boolean; paymentLink?: string; error?: string }>(
+        '/api/subscription/outstanding/refresh-profile-link',
+        { method: 'POST' }
+      );
+      return { success: !!data.success, paymentLink: data.paymentLink, error: data.error };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : 'Failed to refresh link' };
+    }
+  },
+
+  /**
    * Cancel current Paystack subscription and move to free tier.
    */
   async cancelSubscription(): Promise<{ success: boolean; error?: string }> {

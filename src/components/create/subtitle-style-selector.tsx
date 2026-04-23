@@ -235,6 +235,32 @@ export const SubtitleStyleSelector = ({
                           );
                         })}
                       </div>
+                    ) : style.id === "chip" ? (
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          backgroundColor: 'rgba(0, 0, 0, 0.70)',
+                          borderRadius: '10px',
+                          padding: '6px 14px',
+                          color: '#FFFFFF',
+                          fontWeight: 700,
+                          fontSize: '16px',
+                          letterSpacing: '0px',
+                          lineHeight: 1.1,
+                          textShadow: '0 1px 3px rgba(0,0,0,0.45)',
+                          boxShadow: '0 4px 14px rgba(0,0,0,0.28)',
+                          fontFamily: fontFamily === 'impact' ? 'var(--font-impact)' :
+                                     fontFamily === 'montserrat' ? 'var(--font-montserrat)' :
+                                     fontFamily === 'poppins' ? 'var(--font-poppins)' :
+                                     fontFamily === 'futura' ? 'var(--font-futura)' :
+                                     fontFamily === 'roboto' ? 'var(--font-roboto)' :
+                                     fontFamily === 'inter' ? 'var(--font-inter)' :
+                                     fontFamily === 'zy-resolve' ? 'var(--font-zy-resolve)' :
+                                     'var(--font-inter), system-ui, sans-serif',
+                        }}
+                      >
+                        Sample text
+                      </span>
                     ) : (
                     <p
                       className={cn(style.className, "text-sm md:text-base")}

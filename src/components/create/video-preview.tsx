@@ -6,7 +6,8 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import type { OverlayItem, RenderStatus, SubtitleSegment, SubtitleStyle, SubtitleFontFamily, TextOverlay } from "@/types";
 import { cn } from "@/lib/utils";
-import { getSubtitleStyle, OUTLINED_STYLE } from "@/lib/data/subtitle-styles";
+import { getSubtitleStyle, OUTLINED_STYLE, STYLE_FANCY } from "@/lib/data/subtitle-styles";
+import { CANVAS_SUBTITLE_Z } from "@/lib/canvas-subtitle-z";
 
 type VideoPreviewProps = {
   status: RenderStatus | null;
@@ -45,8 +46,51 @@ const SubtitleRenderer = ({
   const style = getSubtitleStyle(styleId);
   const isOutlined = styleId === "outlined";
 
+  const ff =
+    fontFamily === "impact"
+      ? "var(--font-impact)"
+      : fontFamily === "montserrat"
+        ? "var(--font-montserrat)"
+        : fontFamily === "poppins"
+          ? "var(--font-poppins)"
+          : fontFamily === "futura"
+            ? "var(--font-futura)"
+            : fontFamily === "roboto"
+              ? "var(--font-roboto)"
+              : fontFamily === "inter"
+                ? "var(--font-inter)"
+                : "var(--font-bebas-neue), Arial Black, Arial, sans-serif";
+
+  if (styleId === "fancy") {
+    return (
+      <div
+        className="pointer-events-none absolute bottom-0 left-0 right-0 flex h-1/2 flex-col justify-end"
+        style={{ zIndex: CANVAS_SUBTITLE_Z }}
+      >
+        <div
+          className="flex min-h-full w-full flex-col justify-end px-3 pb-4 pt-10"
+          style={{
+            background:
+              "linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.55) 42%, rgba(0,0,0,0.12) 78%, transparent 100%)",
+          }}
+        >
+          <p
+            className="w-full text-balance text-center font-black uppercase leading-[1.02] tracking-tight text-white"
+            style={{
+              ...STYLE_FANCY,
+              fontSize: "clamp(1.25rem, 5vw, 2.85rem)",
+              fontFamily: ff,
+            }}
+          >
+            {text}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="absolute inset-x-4 bottom-4 flex justify-center">
+    <div className="absolute inset-x-4 bottom-4 flex justify-center" style={{ zIndex: CANVAS_SUBTITLE_Z }}>
       <div
         className={cn(
           "text-center",
@@ -58,13 +102,7 @@ const SubtitleRenderer = ({
           style={{
             ...(isOutlined ? OUTLINED_STYLE : {}),
             ...(styleId === "elegant" ? { WebkitTextStroke: '4px #000000', paintOrder: 'stroke fill', textShadow: '0px 2px 4px rgba(0,0,0,0.3)' } : {}),
-            fontFamily: fontFamily === 'impact' ? 'var(--font-impact)' :
-                       fontFamily === 'montserrat' ? 'var(--font-montserrat)' :
-                       fontFamily === 'poppins' ? 'var(--font-poppins)' :
-                       fontFamily === 'futura' ? 'var(--font-futura)' :
-                       fontFamily === 'roboto' ? 'var(--font-roboto)' :
-                       fontFamily === 'inter' ? 'var(--font-inter)' :
-                       'var(--font-bebas-neue), Arial Black, Arial, sans-serif',
+            fontFamily: ff,
           }}
         >
           {text}

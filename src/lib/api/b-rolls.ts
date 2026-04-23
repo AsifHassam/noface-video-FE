@@ -34,7 +34,8 @@ async function getAuthToken(useCache: boolean = true): Promise<string | null> {
 async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {},
-  retryOn401: boolean = true
+  retryOn401: boolean = true,
+  timeoutMs: number = 25000
 ): Promise<T> {
   let token = await getAuthToken(true);
   
@@ -48,7 +49,7 @@ async function apiRequest<T>(
 
   const url = `${API_BASE_URL}${endpoint}`;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 25000);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     let response = await fetch(url, {
@@ -65,7 +66,7 @@ async function apiRequest<T>(
       if (refreshedToken) {
         headers['Authorization'] = `Bearer ${refreshedToken}`;
         const retryController = new AbortController();
-        const retryTimeoutId = setTimeout(() => retryController.abort(), 25000);
+        const retryTimeoutId = setTimeout(() => retryController.abort(), timeoutMs);
         try {
           response = await fetch(url, {
             ...options,
@@ -109,6 +110,44 @@ export type BRoll = {
   fileSize: number | null;
   createdAt: string;
   updatedAt: string;
+  /** User upload vs Freepik stock (when API key is set on server) */
+  source?: 'user' | 'freepik';
+};
+
+export type ListBRollsOptions = {
+  /** When set, server uses OpenAI to derive the Freepik stock video search term */
+  script?: string;
+  /**
+   * When set (non-empty), server resolves **one unique stock clip per scene** (no duplicate Freepik assets across scenes).
+   * Takes precedence over a single `script` for stock term.
+   */
+  scenes?: string[];
+  /** Overrides LLM when set */
+  stockTerm?: string;
+  includeStock?: boolean;
+  /**
+   * When true, only Freepik stock library clips are returned (no user uploads).
+   * Requires FREEPIK_API_KEY on the Remotion server.
+   */
+  stockOnly?: boolean;
+};
+
+export type SceneStockBRollRow = {
+  sceneIndex: number;
+  sceneText: string;
+  stockSearchTerm: string;
+  bRoll: BRoll | null;
+};
+
+export type ListBRollsResult = {
+  success: boolean;
+  bRolls: BRoll[];
+  /** Present when stock was fetched (Freepik + term resolution) */
+  stockSearchTerm?: string;
+  /** One term per scene when `scenes` was sent */
+  stockSearchTerms?: string[];
+  /** Per-scene stock clip (unique ids when API returns hits) */
+  sceneStockBRolls?: SceneStockBRollRow[];
 };
 
 /**
@@ -119,6 +158,7 @@ export const bRollsApi = {
    * Upload a B-roll video
    */
   async upload(file: File, name?: string): Promise<{ success: boolean; bRoll: BRoll }> {
+    console.log('[B-roll] bRollsApi.upload start', { name: name ?? file.name, size: file.size, type: file.type });
     const token = await getAuthToken();
     if (!token) {
       throw new Error('Authentication required');
@@ -144,26 +184,99 @@ export const bRollsApi = {
       const errorData = await response.json().catch(() => ({ 
         error: `HTTP ${response.status}: ${response.statusText}` 
       }));
+      console.log('[B-roll] bRollsApi.upload failed', errorData);
       throw new Error(errorData.error || errorData.message || 'Failed to upload B-roll');
     }
 
-    return await response.json();
+    const data = await response.json();
+    console.log('[B-roll] bRollsApi.upload success', { id: data.bRoll?.id, url: data.bRoll?.url?.slice(0, 64) });
+    return data;
   },
 
   /**
-   * Get all B-rolls for the current user
+   * Get all B-rolls for the current user (uploads + optional Freepik stock).
+   * Pass `script` to let the server use OpenAI to choose the stock footage search term.
    */
-  async list(): Promise<{ success: boolean; bRolls: BRoll[] }> {
-    return apiRequest('/api/b-rolls');
+  async list(opts?: ListBRollsOptions): Promise<ListBRollsResult> {
+    if (opts?.scenes && opts.scenes.length > 0) {
+      console.log('[B-roll] bRollsApi.list POST /api/b-rolls/list (per-scene)', {
+        sceneCount: opts.scenes.length,
+        stockOnly: opts.stockOnly,
+      });
+      const result = await apiRequest<ListBRollsResult>(
+        '/api/b-rolls/list',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            scenes: opts.scenes,
+            ...(opts.stockTerm ? { stockTerm: opts.stockTerm } : {}),
+            ...(opts.includeStock === false ? { includeStock: false } : {}),
+            ...(opts.stockOnly === true ? { stockOnly: true } : {}),
+          }),
+        },
+        true,
+        180000
+      );
+      console.log('[B-roll] bRollsApi.list per-scene response', {
+        count: result.bRolls?.length ?? 0,
+        sceneRows: result.sceneStockBRolls?.length ?? 0,
+      });
+      return result;
+    }
+    if (opts?.script?.trim()) {
+      console.log('[B-roll] bRollsApi.list POST /api/b-rolls/list', {
+        scriptLen: opts.script.trim().length,
+        stockTerm: opts.stockTerm ?? null,
+        includeStock: opts.includeStock,
+        stockOnly: opts.stockOnly,
+      });
+      const result = await apiRequest<ListBRollsResult>(
+        '/api/b-rolls/list',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            script: opts.script.trim(),
+            ...(opts.stockTerm ? { stockTerm: opts.stockTerm } : {}),
+            ...(opts.includeStock === false ? { includeStock: false } : {}),
+            ...(opts.stockOnly === true ? { stockOnly: true } : {}),
+          }),
+        },
+        true,
+        90000
+      );
+      console.log('[B-roll] bRollsApi.list response', {
+        count: result.bRolls?.length ?? 0,
+        stockSearchTerm: result.stockSearchTerm ?? null,
+      });
+      return result;
+    }
+    const p = new URLSearchParams();
+    if (opts?.stockTerm?.trim()) p.set('stockTerm', opts.stockTerm.trim());
+    if (opts?.includeStock === false) p.set('includeStock', 'false');
+    if (opts?.stockOnly === true) p.set('stockOnly', 'true');
+    const q = p.toString();
+    console.log('[B-roll] bRollsApi.list GET /api/b-rolls', q || '(no query)');
+    const result = await apiRequest<ListBRollsResult>(`/api/b-rolls${q ? `?${q}` : ''}`);
+    console.log('[B-roll] bRollsApi.list GET response', { count: result.bRolls?.length ?? 0 });
+    return result;
   },
 
   /**
    * Delete a B-roll
    */
   async delete(id: string): Promise<{ success: boolean; message: string }> {
-    return apiRequest(`/api/b-rolls/${id}`, {
+    console.log('[B-roll] bRollsApi.delete', id);
+    const r = await apiRequest(`/api/b-rolls/${id}`, {
       method: 'DELETE',
     });
+    console.log('[B-roll] bRollsApi.delete done', r);
+    return r;
   },
 
   /**

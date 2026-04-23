@@ -16,6 +16,39 @@ export const SubscriptionCard = () => {
   const [outstandingList, setOutstandingList] = useState<OutstandingItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
+  const [payingRowId, setPayingRowId] = useState<string | null>(null);
+
+  const handlePayOutstanding = async (rowId: string) => {
+    setPayingRowId(rowId);
+    try {
+      const result = await subscriptionApi.refreshOutstandingLink(rowId);
+      if (result.success && result.paymentLink) {
+        window.location.href = result.paymentLink;
+        return;
+      }
+      toast.error(result.error || "Could not start payment. Please try again in a moment.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not start payment");
+    } finally {
+      setPayingRowId(null);
+    }
+  };
+
+  const handlePayProfileOutstanding = async () => {
+    setPayingRowId("profile");
+    try {
+      const result = await subscriptionApi.refreshOutstandingProfileLink();
+      if (result.success && result.paymentLink) {
+        window.location.href = result.paymentLink;
+        return;
+      }
+      toast.error(result.error || "Could not start payment. Please try again in a moment.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not start payment");
+    } finally {
+      setPayingRowId(null);
+    }
+  };
 
   const loadSubscriptionInfo = useCallback(async () => {
     try {
@@ -226,9 +259,17 @@ export const SubscriptionCard = () => {
                     <Button
                       size="sm"
                       className="w-full sm:w-auto"
-                      onClick={() => window.location.href = item.paymentLink}
+                      onClick={() => handlePayOutstanding(item.id)}
+                      disabled={payingRowId === item.id}
                     >
-                      Pay outstanding amount
+                      {payingRowId === item.id ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Starting…
+                        </>
+                      ) : (
+                        "Pay outstanding amount"
+                      )}
                     </Button>
                   </li>
                 ))}
@@ -243,9 +284,17 @@ export const SubscriptionCard = () => {
                 <Button
                   size="sm"
                   className="w-full sm:w-auto"
-                  onClick={() => subscription.outstandingPaymentLink && (window.location.href = subscription.outstandingPaymentLink)}
+                  onClick={handlePayProfileOutstanding}
+                  disabled={payingRowId === "profile" || !subscription.outstandingPaymentLink}
                 >
-                  Pay outstanding amount
+                  {payingRowId === "profile" ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Starting…
+                    </>
+                  ) : (
+                    "Pay outstanding amount"
+                  )}
                 </Button>
               </>
             )}

@@ -31,8 +31,41 @@ export const DashboardView = () => {
   const [outstandingPaymentLink, setOutstandingPaymentLink] = useState<string | null>(null);
   const [outstandingAmountCents, setOutstandingAmountCents] = useState<number | null>(null);
   const [outstandingList, setOutstandingList] = useState<OutstandingItem[]>([]);
+  const [payingRowId, setPayingRowId] = useState<string | null>(null);
   const [isTemplateSelectorOpen, setIsTemplateSelectorOpen] = useState(false);
   const [selectedProjectType, setSelectedProjectType] = useState<"story" | "TWO_CHAR_CONVO">("TWO_CHAR_CONVO");
+
+  const handlePayOutstanding = async (rowId: string) => {
+    setPayingRowId(rowId);
+    try {
+      const result = await subscriptionApi.refreshOutstandingLink(rowId);
+      if (result.success && result.paymentLink) {
+        window.location.href = result.paymentLink;
+        return;
+      }
+      toast.error(result.error || "Could not start payment. Please try again in a moment.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not start payment");
+    } finally {
+      setPayingRowId(null);
+    }
+  };
+
+  const handlePayProfileOutstanding = async () => {
+    setPayingRowId("profile");
+    try {
+      const result = await subscriptionApi.refreshOutstandingProfileLink();
+      if (result.success && result.paymentLink) {
+        window.location.href = result.paymentLink;
+        return;
+      }
+      toast.error(result.error || "Could not start payment. Please try again in a moment.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not start payment");
+    } finally {
+      setPayingRowId(null);
+    }
+  };
 
   // Ensure auth is initialized on mount
   useEffect(() => {
@@ -282,9 +315,17 @@ export const DashboardView = () => {
                   <Button
                     size="sm"
                     className="rounded-2xl whitespace-nowrap shrink-0 w-full sm:w-auto"
-                    onClick={() => window.location.href = item.paymentLink}
+                    onClick={() => handlePayOutstanding(item.id)}
+                    disabled={payingRowId === item.id}
                   >
-                    Pay now
+                    {payingRowId === item.id ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Starting…
+                      </>
+                    ) : (
+                      "Pay now"
+                    )}
                   </Button>
                 </li>
               ))}
@@ -298,9 +339,17 @@ export const DashboardView = () => {
               )}
               <Button
                 className="rounded-2xl whitespace-nowrap shrink-0"
-                onClick={() => outstandingPaymentLink && (window.location.href = outstandingPaymentLink)}
+                onClick={handlePayProfileOutstanding}
+                disabled={payingRowId === "profile" || !outstandingPaymentLink}
               >
-                Pay now
+                {payingRowId === "profile" ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Starting…
+                  </>
+                ) : (
+                  "Pay now"
+                )}
               </Button>
             </div>
           )}

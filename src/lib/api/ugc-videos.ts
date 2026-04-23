@@ -128,6 +128,25 @@ async function apiRequest<T>(
  * UGC Video API functions
  */
 
+const PROJECT_CREATE_TIMEOUT_MS = 25_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms (network or Supabase not responding)`));
+    }, ms);
+    promise
+      .then((v) => {
+        clearTimeout(t);
+        resolve(v);
+      })
+      .catch((e) => {
+        clearTimeout(t);
+        reject(e);
+      });
+  });
+}
+
 /**
  * Create a new UGC video project
  */
@@ -137,7 +156,10 @@ export async function createUGCProject(title: string, description?: string): Pro
     throw new Error('Authentication required');
   }
 
-  const { data, error } = await supabase
+  const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
+  console.log('[Project] createUGCProject: Supabase insert starting…', { title: title.slice(0, 60) });
+
+  const insertPromise = supabase
     .from('ugc_video_projects')
     .insert({
       user_id: userId,
@@ -149,11 +171,24 @@ export async function createUGCProject(title: string, description?: string): Pro
     .select()
     .single();
 
+  const { data, error } = await withTimeout(
+    Promise.resolve(insertPromise as unknown as Promise<{ data: UGCVideoProject | null; error: { message: string } | null }>),
+    PROJECT_CREATE_TIMEOUT_MS,
+    'createUGCProject'
+  );
+
+  const ms = typeof performance !== 'undefined' ? Math.round(performance.now() - t0) : 0;
   if (error) {
-    console.error('Error creating UGC project:', error);
+    console.error('[Project] createUGCProject: Supabase error', { ms, error });
     throw new Error(`Failed to create project: ${error.message}`);
   }
 
+  if (!data) {
+    console.error('[Project] createUGCProject: empty row', { ms });
+    throw new Error('Failed to create project: no row returned');
+  }
+
+  console.log('[Project] createUGCProject: OK', { id: data.id, ms });
   return data;
 }
 
