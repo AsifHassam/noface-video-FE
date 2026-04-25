@@ -219,10 +219,12 @@ export const adminApi = {
    * Uses secret password (no auth token required). Body: { email, password }.
    */
   async getImpersonateLink(email: string, password: string): Promise<{ success: boolean; loginLink?: string; error?: string }> {
+    const redirectTo =
+      typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : undefined;
     const res = await fetch(`${API_BASE_URL}/api/admin/impersonate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email.trim(), password }),
+      body: JSON.stringify({ email: email.trim(), password, redirectTo }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -235,12 +237,22 @@ export const adminApi = {
    * Get a one-time login link to sign in as another user.
    * Requires the special admin impersonate password (e.g. noface2026!).
    * No auth token required – protected by password only.
+   *
+   * We forward `${origin}/auth/callback` as `redirectTo` because:
+   *   1. Supabase needs an http(s):// URL to produce a working action_link
+   *      (a scheme-less Site URL causes "Failed to launch ... because the
+   *      scheme does not have a registered handler").
+   *   2. `/auth/callback` is the existing page that consumes the
+   *      `#access_token=...` fragment, swaps the admin's session for the
+   *      impersonated user's session, and routes on to /app/dashboard.
    */
   async impersonate(email: string, password: string): Promise<{ success: boolean; loginLink?: string; error?: string }> {
+    const redirectTo =
+      typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : undefined;
     const res = await fetch(`${API_BASE_URL}/api/admin/impersonate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email.trim(), password }),
+      body: JSON.stringify({ email: email.trim(), password, redirectTo }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {

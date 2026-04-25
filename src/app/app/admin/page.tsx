@@ -139,8 +139,16 @@ export default function AdminDashboardPage() {
     try {
       const res = await adminApi.impersonate(impersonateUser.email, impersonatePassword);
       if (res.success && res.loginLink) {
+        // Defensive: make sure we're about to navigate to a real http(s):// URL.
+        // A scheme-less link (e.g. "localhost:3000#...") would be treated as a
+        // custom URI scheme and the browser would refuse to launch it.
+        let target = res.loginLink;
+        if (!/^https?:\/\//i.test(target)) {
+          console.warn("Impersonate loginLink missing http(s) scheme, prepending https://", target);
+          target = `https://${target.replace(/^\/+/, "")}`;
+        }
         toast.success("Redirecting to sign in as " + impersonateUser.email);
-        window.location.href = res.loginLink;
+        window.location.href = target;
         return;
       }
       toast.error(res.error || "Invalid password or failed to generate link");

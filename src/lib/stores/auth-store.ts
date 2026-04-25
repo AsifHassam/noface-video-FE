@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
 import {
+  applySessionFromUrl,
   persistAndSyncSession,
   readSessionFromStorage,
   refreshSessionIfStale,
@@ -88,6 +89,20 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
 
     try {
+      // If the URL carries a fresh auth payload (magic-link `#access_token=...`
+      // or PKCE `?code=...`) consume it FIRST so it overwrites any existing
+      // session in localStorage. Without this, admin impersonate links land on
+      // the page with `#access_token=...` but the auth store keeps reading the
+      // old (admin) session from storage and the user is never switched.
+      try {
+        const urlSession = await applySessionFromUrl();
+        if (urlSession?.access_token) {
+          console.log("[auth] Consumed session from URL hash");
+        }
+      } catch (urlErr) {
+        console.warn("[auth] applySessionFromUrl failed:", urlErr);
+      }
+
       // Get current session
       const session = await resolveInitialSession();
 
